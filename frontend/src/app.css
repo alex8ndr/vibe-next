@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+	/* Base palette */
+	--gold: hsl(38, 85%, 50%);
+	--gold-dim: hsl(38, 60%, 38%);
+	--gold-glow: hsla(38, 90%, 50%, 0.25);
+
+	/* Light mode */
+	--bg-primary: hsl(220, 20%, 97%);
+	--bg-secondary: hsl(220, 15%, 93%);
+	--bg-card: hsl(0, 0%, 100%);
+	--bg-input: hsl(220, 20%, 96%);
+	--text-primary: hsl(220, 25%, 12%);
+	--text-secondary: hsl(220, 15%, 40%);
+	--text-muted: hsl(220, 10%, 55%);
+	--border: hsl(220, 15%, 88%);
+	--border-accent: hsla(38, 70%, 50%, 0.4);
+	--shadow: hsla(220, 30%, 10%, 0.08);
+	--shadow-lg: hsla(220, 30%, 10%, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg-primary: hsl(225, 45%, 8%);
+		--bg-secondary: hsl(225, 40%, 12%);
+		--bg-card: hsl(225, 35%, 14%);
+		--bg-input: hsl(225, 35%, 10%);
+		--text-primary: hsl(0, 0%, 96%);
+		--text-secondary: hsl(220, 15%, 70%);
+		--text-muted: hsl(220, 10%, 50%);
+		--border: hsl(225, 30%, 20%);
+		--border-accent: hsla(38, 70%, 50%, 0.3);
+		--shadow: hsla(0, 0%, 0%, 0.3);
+		--shadow-lg: hsla(0, 0%, 0%, 0.5);
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+body {
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	min-height: 100vh;
+	line-height: 1.5;
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--text-muted);
+}
+
+button {
+	font-family: inherit;
+	cursor: pointer;
+}
+
+a {
+	color: var(--gold);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
