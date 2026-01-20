@@ -23,7 +23,7 @@
         return Math.abs(hash) % 360;
     }
 
-    const hue = getHue(artist);
+    const hue = $derived(getHue(artist));
     const isPlaying = $derived($nowPlaying?.artist === artist);
     const playingTrackId = $derived(isPlaying ? $nowPlaying?.trackId : null);
 
@@ -136,17 +136,17 @@
 
 <style>
     .card {
-        background: var(--bg-card);
+        background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 12px;
         padding: 1rem;
     }
 
     .title {
-        font-size: 1.1rem;
+        font-size: 1.05rem;
         font-weight: 600;
-        margin-bottom: 0.75rem;
-        color: var(--text-primary);
+        margin-bottom: 0.65rem;
+        color: var(--text);
     }
 
     .embed {
@@ -155,7 +155,7 @@
         border-radius: 12px;
         overflow: hidden;
         background: #121212;
-        margin-bottom: 0.75rem;
+        margin-bottom: 0.65rem;
     }
 
     .player {
@@ -182,7 +182,7 @@
         background-size: 200% 100%;
         animation: shimmer 1.5s infinite;
         border-radius: 12px;
-        transition: opacity 0.3s ease-out;
+        transition: opacity 0.3s;
         pointer-events: none;
     }
 
@@ -209,16 +209,16 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.55rem 0.75rem;
+        padding: 0.5rem 0.7rem;
         border: none;
         border-radius: 6px;
         background: linear-gradient(
             135deg,
-            hsl(var(--hue), 30%, 22%) 0%,
-            hsl(calc(var(--hue) + 30), 25%, 16%) 100%
+            hsl(var(--hue), 28%, 24%) 0%,
+            hsl(calc(var(--hue) + 25), 22%, 18%) 100%
         );
         color: #ddd;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
         text-align: left;
         cursor: pointer;
         position: relative;
@@ -232,12 +232,12 @@
         top: 0;
         bottom: 0;
         width: 3px;
-        background: hsl(var(--hue), 60%, 50%);
+        background: hsl(var(--hue), 55%, 50%);
         border-radius: 3px 0 0 3px;
     }
 
     .btn:hover {
-        filter: brightness(1.15);
+        filter: brightness(1.12);
     }
 
     .btn.active {
@@ -250,9 +250,9 @@
     }
 
     .ico {
-        width: 1rem;
+        width: 0.9rem;
         text-align: center;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         opacity: 0.7;
     }
 
@@ -272,8 +272,8 @@
         .btn {
             background: linear-gradient(
                 135deg,
-                hsl(var(--hue), 25%, 35%) 0%,
-                hsl(calc(var(--hue) + 30), 20%, 28%) 100%
+                hsl(var(--hue), 22%, 36%) 0%,
+                hsl(calc(var(--hue) + 25), 18%, 30%) 100%
             );
         }
     }

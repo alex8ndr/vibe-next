@@ -48,7 +48,7 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -138,3 +138,8 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         Track(track_id=row['track_id'], track_name=row['track_name'])
         for _, row in artist_tracks.drop_duplicates('track_name').iterrows()
     ]
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
