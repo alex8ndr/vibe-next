@@ -27,14 +27,17 @@ WORKDIR /app
 # Copy built output
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-lock.yaml ./
 
 # Minimal production deps
 RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN pnpm install --frozen-lockfile --prod
 
 EXPOSE 3000
 
 ENV HOST=0.0.0.0
 ENV PORT=3000
-ENV ORIGIN=http://localhost:3000
+ARG ORIGIN=http://localhost:3000
+ENV ORIGIN=$ORIGIN
 
 CMD ["node", "build"]

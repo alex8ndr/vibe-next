@@ -19,7 +19,6 @@
     let isOpen = $state(false);
 
     const filtered = $derived.by(() => {
-        //if (query.length < 1) return [];
         const q = query.toLowerCase();
         return $artistsList
             .filter((a) => a.toLowerCase().includes(q) && !selected.includes(a))
@@ -54,11 +53,11 @@
 </script>
 
 <div class="wrapper">
-    <div class="input-area">
+    <div class="input-box">
         {#each selected as artist (artist)}
-            <span class="tag">
+            <span class="chip">
                 {artist}
-                <button class="remove" onclick={() => remove(artist)}>×</button>
+                <button class="x" onclick={() => remove(artist)}>×</button>
             </span>
         {/each}
 
@@ -75,7 +74,7 @@
     </div>
 
     {#if isOpen && filtered.length > 0}
-        <ul class="dropdown">
+        <ul class="list">
             {#each filtered as artist (artist)}
                 <li>
                     <button onmousedown={() => add(artist)}>{artist}</button>
@@ -88,30 +87,31 @@
 <style>
     .wrapper {
         position: relative;
+        flex: 1;
     }
 
-    .input-area {
+    .input-box {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.4rem;
-        padding: 0.6rem 0.75rem;
-        background: var(--bg-input);
+        gap: 0.35rem;
+        padding: 0.5rem 0.65rem;
+        background: var(--bg-alt);
         border: 1px solid var(--border);
         border-radius: 8px;
-        min-height: 44px;
+        min-height: 42px;
         align-items: center;
     }
 
-    .input-area:focus-within {
+    .input-box:focus-within {
         border-color: var(--gold);
         box-shadow: 0 0 0 2px var(--gold-glow);
     }
 
-    .tag {
+    .chip {
         display: inline-flex;
         align-items: center;
-        gap: 0.3rem;
-        padding: 0.25rem 0.5rem;
+        gap: 0.25rem;
+        padding: 0.2rem 0.45rem;
         background: var(--gold);
         color: #111;
         border-radius: 4px;
@@ -119,7 +119,7 @@
         font-weight: 500;
     }
 
-    .remove {
+    .x {
         background: none;
         border: none;
         color: inherit;
@@ -129,59 +129,59 @@
         opacity: 0.7;
     }
 
-    .remove:hover {
+    .x:hover {
         opacity: 1;
     }
 
     input {
         flex: 1;
-        min-width: 100px;
+        min-width: 80px;
         background: transparent;
         border: none;
-        color: var(--text-primary);
-        font-size: 0.9rem;
+        color: var(--text);
+        font-size: 0.875rem;
         outline: none;
     }
 
     input::placeholder {
-        color: var(--text-muted);
+        color: var(--text-3);
     }
 
-    .dropdown {
+    .list {
         position: absolute;
         top: 100%;
         left: 0;
         right: 0;
         margin-top: 4px;
-        background: var(--bg-card);
+        background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 8px;
-        max-height: 240px;
+        max-height: 220px;
         overflow-y: auto;
-        z-index: 50;
+        z-index: 100;
         list-style: none;
-        box-shadow: 0 4px 12px var(--shadow-lg);
+        box-shadow: 0 6px 16px var(--shadow);
     }
 
-    .dropdown button {
+    .list button {
         width: 100%;
-        padding: 0.6rem 0.75rem;
+        padding: 0.55rem 0.7rem;
         background: none;
         border: none;
-        color: var(--text-primary);
-        font-size: 0.875rem;
+        color: var(--text);
+        font-size: 0.85rem;
         text-align: left;
     }
 
-    .dropdown button:hover {
-        background: var(--bg-secondary);
+    .list button:hover {
+        background: var(--bg-alt);
     }
 
-    .dropdown li:first-child button {
+    .list li:first-child button {
         border-radius: 8px 8px 0 0;
     }
 
-    .dropdown li:last-child button {
+    .list li:last-child button {
         border-radius: 0 0 8px 8px;
     }
 </style>
