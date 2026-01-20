@@ -12,6 +12,7 @@
         recommendations,
         isLoading,
         hasResults,
+        settings,
         type Track,
     } from "$lib/stores";
 
@@ -71,8 +72,9 @@
             const res = await fetchRecommendations({
                 artists: selected,
                 track_ids: trackIds.length ? trackIds : undefined,
-                diversity: 2,
-                max_artists: 6,
+                diversity: $settings.variety,
+                max_artists: $settings.maxResults,
+                genre_weight: $settings.genreWeight,
             });
             recommendations.set(res.recommendations);
         } catch (e) {
@@ -93,31 +95,20 @@
 </script>
 
 {#if !$hasResults}
-    <!-- Landing / Hero -->
+    <!-- Landing -->
     <div class="landing">
-        <div class="bg-decor">
-            {#each Array(8) as _, i}
-                <div
-                    class="fake-embed"
-                    style="
-						--x: {20 + (i % 4) * 22}%;
-						--y: {30 + Math.floor(i / 4) * 35}%;
-						--rot: {-15 + i * 4}deg;
-						--scale: {0.6 + (i % 3) * 0.15};
-						--delay: {i * 0.1}s;
-					"
-                ></div>
-            {/each}
-            <div class="gradient-overlay"></div>
-        </div>
+        {#if $settings.showBackground}
+            <div class="bg-image"></div>
+            <div class="bg-fade"></div>
+        {/if}
 
         <div class="hero">
             <h1>Discover your next<br />favorite artist</h1>
-            <p class="sub">
+            <p class="tagline">
                 Music recommendations based on what you already love
             </p>
 
-            <div class="search-box">
+            <div class="search-row">
                 <ArtistSelect
                     {selected}
                     onchange={(a) => (selected = a)}
@@ -125,60 +116,66 @@
                     placeholder="Search artists..."
                 />
                 <button
-                    class="btn-search"
+                    class="btn-go"
                     onclick={search}
                     disabled={!selected.length || $isLoading}
                 >
-                    {$isLoading ? "Searching..." : "Find Music"}
+                    {$isLoading ? "..." : "Go"}
                 </button>
             </div>
 
             {#if selected.length > 0}
-                <div class="fine-tune-section">
-                    <span class="ft-label">Fine-tune:</span>
-                    {#each selected as artist (artist)}
-                        <button
-                            class="ft-artist"
-                            class:expanded={expandedArtist === artist}
-                            onclick={() =>
-                                (expandedArtist =
-                                    expandedArtist === artist ? null : artist)}
-                        >
-                            {artist}
-                            {#if (fineTune[artist]?.length || 0) > 0}
-                                <span class="ft-count"
-                                    >{fineTune[artist].length}</span
-                                >
-                            {/if}
-                        </button>
-                    {/each}
-                </div>
-
-                {#if expandedArtist}
-                    <div class="song-picker">
-                        <div class="song-list">
-                            {#each artistTracks[expandedArtist] || [] as t (t.track_id)}
-                                {@const sel = (
-                                    fineTune[expandedArtist] || []
-                                ).includes(t.track_name)}
-                                <button
-                                    class="song"
-                                    class:selected={sel}
-                                    onclick={() =>
-                                        toggleSong(
-                                            expandedArtist!,
-                                            t.track_name,
-                                        )}
-                                >
-                                    {t.track_name}
-                                </button>
-                            {/each}
-                            {#if !artistTracks[expandedArtist]}
-                                <span class="loading">Loading songs...</span>
-                            {/if}
-                        </div>
+                <div class="fine-section">
+                    <div class="fine-row">
+                        <span class="fine-label">Fine-tune:</span>
+                        {#each selected as artist (artist)}
+                            <button
+                                class="fine-btn"
+                                class:open={expandedArtist === artist}
+                                onclick={() =>
+                                    (expandedArtist =
+                                        expandedArtist === artist
+                                            ? null
+                                            : artist)}
+                            >
+                                {artist}
+                                {#if (fineTune[artist]?.length || 0) > 0}
+                                    <span class="badge"
+                                        >{fineTune[artist].length}</span
+                                    >
+                                {/if}
+                            </button>
+                        {/each}
                     </div>
-                {/if}
+
+                    {#if expandedArtist}
+                        <div class="songs-box">
+                            <div class="songs-scroll">
+                                {#each artistTracks[expandedArtist] || [] as t (t.track_id)}
+                                    {@const sel = (
+                                        fineTune[expandedArtist] || []
+                                    ).includes(t.track_name)}
+                                    <button
+                                        class="song-chip"
+                                        class:on={sel}
+                                        onclick={() =>
+                                            toggleSong(
+                                                expandedArtist!,
+                                                t.track_name,
+                                            )}
+                                    >
+                                        {t.track_name.length > 35
+                                            ? t.track_name.slice(0, 35) + "…"
+                                            : t.track_name}
+                                    </button>
+                                {/each}
+                                {#if !artistTracks[expandedArtist]}
+                                    <span class="muted">Loading...</span>
+                                {/if}
+                            </div>
+                        </div>
+                    {/if}
+                </div>
             {/if}
 
             {#if error}
@@ -187,45 +184,47 @@
         </div>
     </div>
 {:else}
-    <!-- Results Layout: Sidebar + Grid -->
-    <div class="results-layout">
-        <aside class="sidebar">
+    <!-- Results -->
+    <div class="results-wrap">
+        <aside class="side">
             <h3>Search</h3>
-            <ArtistSelect
-                {selected}
-                onchange={(a) => (selected = a)}
-                max={5}
-                placeholder="Add artists..."
-            />
+            <div class="side-search">
+                <ArtistSelect
+                    {selected}
+                    onchange={(a) => (selected = a)}
+                    max={5}
+                    placeholder="Add artists..."
+                />
+            </div>
             <button
-                class="btn-search"
+                class="btn-update"
                 onclick={search}
                 disabled={!selected.length || $isLoading}
             >
-                {$isLoading ? "Searching..." : "Update"}
+                {$isLoading ? "Updating..." : "Update"}
             </button>
 
             {#if selected.length > 0}
-                <div class="sidebar-section">
+                <div class="side-section">
                     <h4>Fine-tune</h4>
                     {#each selected as artist (artist)}
-                        <div class="sidebar-artist">
+                        <div class="side-artist">
                             <button
-                                class="sidebar-artist-btn"
-                                class:expanded={expandedArtist === artist}
+                                class="side-artist-btn"
+                                class:open={expandedArtist === artist}
                                 onclick={() =>
                                     (expandedArtist =
                                         expandedArtist === artist
                                             ? null
                                             : artist)}
                             >
-                                <span>{artist}</span>
+                                <span class="name">{artist}</span>
                                 {#if (fineTune[artist]?.length || 0) > 0}
-                                    <span class="count"
+                                    <span class="cnt"
                                         >{fineTune[artist].length}</span
                                     >
                                 {/if}
-                                <span class="arrow"
+                                <span class="arr"
                                     >{expandedArtist === artist
                                         ? "▾"
                                         : "▸"}</span
@@ -233,22 +232,22 @@
                             </button>
 
                             {#if expandedArtist === artist}
-                                <div class="sidebar-songs">
+                                <div class="side-songs">
                                     {#each artistTracks[artist] || [] as t (t.track_id)}
                                         {@const sel = (
                                             fineTune[artist] || []
                                         ).includes(t.track_name)}
                                         <button
-                                            class="s-song"
-                                            class:selected={sel}
+                                            class="ss"
+                                            class:on={sel}
                                             onclick={() =>
                                                 toggleSong(
                                                     artist,
                                                     t.track_name,
                                                 )}
                                         >
-                                            {t.track_name.length > 28
-                                                ? t.track_name.slice(0, 28) +
+                                            {t.track_name.length > 26
+                                                ? t.track_name.slice(0, 26) +
                                                   "…"
                                                 : t.track_name}
                                         </button>
@@ -261,7 +260,7 @@
             {/if}
         </aside>
 
-        <section class="results">
+        <section class="main-results">
             <h2>{Object.keys($recommendations).length} artists for you</h2>
             <div class="grid">
                 {#each Object.entries($recommendations) as [artist, tracks] (artist)}
@@ -277,88 +276,80 @@
     .landing {
         flex: 1;
         display: flex;
-        align-items: center;
-        justify-content: center;
         position: relative;
         overflow: hidden;
-        padding: 2rem;
     }
 
-    .bg-decor {
+    .bg-image {
         position: absolute;
         inset: 0;
         pointer-events: none;
+        background: url("$lib/assets/background_dark.webp") center center
+            no-repeat;
+        background-size: 1920px auto;
+        opacity: 0.06;
+        filter: blur(2px) saturate(2);
     }
 
-    .fake-embed {
-        position: absolute;
-        left: var(--x);
-        top: var(--y);
-        width: 280px;
-        height: 80px;
-        background: linear-gradient(135deg, #282828 0%, #181818 100%);
-        border-radius: 12px;
-        transform: rotate(var(--rot)) scale(var(--scale));
-        opacity: 0.4;
-        animation: float 6s ease-in-out infinite;
-        animation-delay: var(--delay);
-    }
-
-    @keyframes float {
-        0%,
-        100% {
-            transform: rotate(var(--rot)) scale(var(--scale)) translateY(0);
-        }
-        50% {
-            transform: rotate(var(--rot)) scale(var(--scale)) translateY(-10px);
+    @media (prefers-color-scheme: light) {
+        .bg-image {
+            background-image: url("$lib/assets/background_light.webp");
         }
     }
 
-    .gradient-overlay {
+    :global([data-theme="light"]) .bg-image {
+        background-image: url("$lib/assets/background_light.webp");
+    }
+
+    :global([data-theme="dark"]) .bg-image {
+        background-image: url("$lib/assets/background_dark.webp");
+        opacity: 0.12;
+    }
+
+    .bg-fade {
         position: absolute;
         inset: 0;
-        background: linear-gradient(
-            to bottom,
+        pointer-events: none;
+        background: radial-gradient(
+            ellipse 60% 60% at center,
             var(--bg) 0%,
-            transparent 30%,
-            transparent 60%,
-            var(--bg) 100%
+            var(--bg) 20%,
+            transparent 80%
         );
     }
 
     .hero {
         position: relative;
         z-index: 1;
+        width: 100%;
         max-width: 560px;
+        margin: 0 auto;
+        padding: 25vh 1.5rem 2rem;
         text-align: center;
     }
 
     .hero h1 {
-        font-size: clamp(1.8rem, 5vw, 2.8rem);
+        font-size: clamp(1.6rem, 4.5vw, 2.4rem);
         font-weight: 800;
-        line-height: 1.2;
-        letter-spacing: -1px;
-        margin-bottom: 0.75rem;
+        line-height: 1.15;
+        letter-spacing: -0.5px;
+        margin-bottom: 0.5rem;
     }
 
-    .sub {
+    .tagline {
         color: var(--text-2);
-        font-size: 1rem;
-        margin-bottom: 2rem;
+        font-size: 0.95rem;
+        margin-bottom: 1.5rem;
     }
 
-    .search-box {
+    .search-row {
         display: flex;
         gap: 0.5rem;
-        margin-bottom: 1rem;
+        justify-content: center;
     }
 
-    .search-box :global(.wrapper) {
-        flex: 1;
-    }
-
-    .btn-search {
-        padding: 0.6rem 1.25rem;
+    .btn-go {
+        padding: 0 1.25rem;
         background: var(--gold);
         color: #111;
         font-weight: 600;
@@ -366,98 +357,99 @@
         border: none;
         border-radius: 8px;
         white-space: nowrap;
-        transition:
-            transform 0.15s,
-            box-shadow 0.15s;
     }
 
-    .btn-search:hover:not(:disabled) {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px var(--gold-glow);
+    .btn-go:hover:not(:disabled) {
+        filter: brightness(1.1);
     }
 
-    .btn-search:disabled {
+    .btn-go:disabled {
         opacity: 0.5;
         cursor: not-allowed;
     }
 
-    .fine-tune-section {
+    .fine-section {
+        margin-top: 1rem;
+    }
+
+    .fine-row {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        gap: 0.4rem;
+        gap: 0.35rem;
         margin-bottom: 0.75rem;
     }
 
-    .ft-label {
-        font-size: 0.8rem;
+    .fine-label {
+        font-size: 0.75rem;
         color: var(--text-3);
+        margin-right: 0.25rem;
     }
 
-    .ft-artist {
-        padding: 0.3rem 0.6rem;
+    .fine-btn {
+        padding: 0.25rem 0.5rem;
         background: var(--bg-alt);
         border: 1px solid var(--border);
         border-radius: 4px;
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         color: var(--text-2);
         display: inline-flex;
         align-items: center;
-        gap: 0.4rem;
+        gap: 0.3rem;
     }
 
-    .ft-artist:hover,
-    .ft-artist.expanded {
+    .fine-btn:hover,
+    .fine-btn.open {
         border-color: var(--gold);
         color: var(--text);
     }
 
-    .ft-count {
+    .badge {
         background: var(--gold);
         color: #111;
-        font-size: 0.65rem;
-        padding: 0.1rem 0.35rem;
+        font-size: 0.6rem;
+        padding: 0.1rem 0.3rem;
         border-radius: 3px;
         font-weight: 600;
     }
 
-    .song-picker {
+    .songs-box {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 8px;
         padding: 0.5rem;
-        margin-bottom: 1rem;
+        margin-bottom: 0.75rem;
     }
 
-    .song-list {
+    .songs-scroll {
         display: flex;
         flex-wrap: wrap;
         gap: 0.3rem;
-        max-height: 150px;
+        max-height: 140px;
         overflow-y: auto;
     }
 
-    .song {
-        padding: 0.25rem 0.5rem;
+    .song-chip {
+        padding: 0.2rem 0.45rem;
         background: var(--bg-alt);
         border: 1px solid transparent;
         border-radius: 4px;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: var(--text-2);
     }
 
-    .song:hover {
+    .song-chip:hover {
         border-color: var(--border);
     }
 
-    .song.selected {
+    .song-chip.on {
         background: var(--gold);
         color: #111;
     }
 
-    .loading {
-        font-size: 0.75rem;
+    .muted {
+        font-size: 0.7rem;
         color: var(--text-3);
     }
 
@@ -466,38 +458,61 @@
         background: rgba(220, 60, 60, 0.1);
         border-radius: 6px;
         color: #e55;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
     }
 
-    /* Results Layout */
-    .results-layout {
+    /* Results */
+    .results-wrap {
         flex: 1;
         display: grid;
-        grid-template-columns: 280px 1fr;
-        gap: 0;
+        grid-template-columns: 260px 1fr;
     }
 
-    .sidebar {
+    .side {
         background: var(--surface);
         border-right: 1px solid var(--border);
-        padding: 1.25rem;
+        padding: 1rem;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
-        height: calc(100vh - 53px);
+        gap: 0.75rem;
+        height: calc(100vh - 52px);
         overflow-y: auto;
         position: sticky;
-        top: 53px;
+        top: 52px;
     }
 
-    .sidebar h3 {
-        font-size: 0.9rem;
+    .side h3 {
+        font-size: 0.85rem;
         font-weight: 600;
         color: var(--text);
     }
 
-    .sidebar h4 {
-        font-size: 0.75rem;
+    .side-search {
+        position: relative;
+        z-index: 50;
+    }
+
+    .btn-update {
+        padding: 0.55rem;
+        background: var(--gold);
+        color: #111;
+        font-weight: 600;
+        font-size: 0.8rem;
+        border: none;
+        border-radius: 6px;
+    }
+
+    .btn-update:disabled {
+        opacity: 0.5;
+    }
+
+    .side-section {
+        border-top: 1px solid var(--border);
+        padding-top: 0.75rem;
+    }
+
+    .side-section h4 {
+        font-size: 0.65rem;
         font-weight: 600;
         color: var(--text-3);
         text-transform: uppercase;
@@ -505,108 +520,103 @@
         margin-bottom: 0.5rem;
     }
 
-    .sidebar-section {
-        border-top: 1px solid var(--border);
-        padding-top: 1rem;
+    .side-artist {
+        margin-bottom: 0.4rem;
     }
 
-    .sidebar-artist {
-        margin-bottom: 0.5rem;
-    }
-
-    .sidebar-artist-btn {
+    .side-artist-btn {
         width: 100%;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 0.6rem;
+        gap: 0.4rem;
+        padding: 0.45rem 0.5rem;
         background: var(--bg-alt);
         border: 1px solid var(--border);
-        border-radius: 6px;
-        font-size: 0.85rem;
+        border-radius: 5px;
+        font-size: 0.8rem;
         color: var(--text);
         text-align: left;
     }
 
-    .sidebar-artist-btn span:first-child {
+    .side-artist-btn .name {
         flex: 1;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    .sidebar-artist-btn .count {
+    .side-artist-btn .cnt {
         background: var(--gold);
         color: #111;
-        font-size: 0.65rem;
-        padding: 0.1rem 0.3rem;
+        font-size: 0.6rem;
+        padding: 0.1rem 0.25rem;
         border-radius: 3px;
         font-weight: 600;
     }
 
-    .sidebar-artist-btn .arrow {
+    .side-artist-btn .arr {
         color: var(--text-3);
-        font-size: 0.7rem;
+        font-size: 0.65rem;
     }
 
-    .sidebar-artist-btn:hover,
-    .sidebar-artist-btn.expanded {
+    .side-artist-btn:hover,
+    .side-artist-btn.open {
         border-color: var(--gold);
     }
 
-    .sidebar-songs {
-        margin-top: 0.4rem;
-        max-height: 180px;
+    .side-songs {
+        margin-top: 0.35rem;
+        max-height: 160px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 0.25rem;
-        padding-left: 0.5rem;
+        gap: 0.2rem;
+        padding-left: 0.4rem;
     }
 
-    .s-song {
-        padding: 0.35rem 0.5rem;
+    .ss {
+        padding: 0.3rem 0.4rem;
         background: var(--bg);
         border: 1px solid transparent;
         border-radius: 4px;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: var(--text-2);
         text-align: left;
     }
 
-    .s-song:hover {
+    .ss:hover {
         border-color: var(--border);
     }
 
-    .s-song.selected {
+    .ss.on {
         background: var(--gold);
         color: #111;
         border-color: var(--gold);
     }
 
-    .results {
-        padding: 1.5rem;
+    .main-results {
+        padding: 1.25rem;
     }
 
-    .results h2 {
-        font-size: 1rem;
+    .main-results h2 {
+        font-size: 0.95rem;
         font-weight: 500;
         color: var(--text-2);
-        margin-bottom: 1.25rem;
+        margin-bottom: 1rem;
     }
 
     .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
         gap: 1rem;
     }
 
-    @media (max-width: 800px) {
-        .results-layout {
+    @media (max-width: 768px) {
+        .results-wrap {
             grid-template-columns: 1fr;
         }
 
-        .sidebar {
+        .side {
             position: relative;
             top: 0;
             height: auto;
@@ -614,18 +624,12 @@
             border-bottom: 1px solid var(--border);
         }
 
-        .search-box {
+        .search-row {
             flex-direction: column;
         }
-    }
 
-    @media (max-width: 480px) {
-        .landing {
-            padding: 1rem;
-        }
-
-        .hero h1 {
-            font-size: 1.5rem;
+        .btn-go {
+            padding: 0.6rem;
         }
 
         .grid {
