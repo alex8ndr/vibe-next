@@ -28,6 +28,29 @@
 	}
 }
 
+/* Manual theme overrides */
+:root[data-theme="dark"] {
+	--bg: #0c0e14;
+	--bg-alt: #12151e;
+	--surface: #181c28;
+	--text: #f0f0f0;
+	--text-2: #aaa;
+	--text-3: #666;
+	--border: #2a2e3a;
+	--shadow: rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+	--bg: #f5f6f8;
+	--bg-alt: #ebedf0;
+	--surface: #fff;
+	--text: #1a1a1a;
+	--text-2: #555;
+	--text-3: #888;
+	--border: #ddd;
+	--shadow: rgba(0, 0, 0, 0.08);
+}
+
 *,
 *::before,
 *::after {
