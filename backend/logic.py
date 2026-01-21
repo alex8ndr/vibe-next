@@ -5,7 +5,6 @@ Handles vector similarity calculations for music recommendations.
 
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import cdist
 from pathlib import Path
 from typing import Protocol
 
@@ -82,12 +81,12 @@ class MusicData:
         self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in df.columns]
         
         # Audio Matrix (Weighted for Euclidean)
-        audio_data = df[self.audio_cols].values.astype(np.float32)
-        weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float32)
+        audio_data = df[self.audio_cols].values.astype(np.float16)
+        weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float16)
         self.matrix_audio = audio_data * weights
         
         # Genre Matrix (Unweighted for Cosine)
-        self.matrix_genre = df[self.genre_cols].values.astype(np.float32)
+        self.matrix_genre = df[self.genre_cols].values.astype(np.float16)
         
         # Sort artists by popularity (most popular first)
         artist_popularity = (
@@ -99,12 +98,12 @@ class MusicData:
         
         # Keep metadata for display/lookup
         keep_cols = ['artist_name', 'track_name', 'track_id']
-        # Add display columns if they exist
-        for col in ['popularity', 'genre', 'year']:
+        for col in ['popularity', 'genre']:
             if col in df.columns:
                 keep_cols.append(col)
         
         self.df = df[keep_cols].copy()
+        del df
         
         # Convert strings to categorical
         self.df['artist_name'] = self.df['artist_name'].astype('category')
@@ -112,10 +111,39 @@ class MusicData:
         if 'genre' in self.df.columns:
             self.df['genre'] = self.df['genre'].astype('category')
 
-    
+
     def reload(self) -> None:
         """Reload data from source. For future hot-reload capability."""
         self.load()
+
+
+def euclidean_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """
+    Calculate Euclidean distance between query vector and matrix rows.
+    Operates on float16 without upcasting.
+    """
+    diff = matrix - query
+    return np.sqrt(np.sum(diff**2, axis=1))
+
+
+def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """
+    Calculate cosine distance between query vector and matrix rows.
+    cosine_distance = 1 - cosine_similarity
+    """
+    query_norm = np.linalg.norm(query)
+    if query_norm == 0:
+        return np.ones(len(matrix), dtype=matrix.dtype)
+    
+    matrix_norms = np.linalg.norm(matrix, axis=1)
+    dot_products = np.dot(matrix, query.flatten())
+    
+    # Avoid division by zero
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cosine_sim = dot_products / (matrix_norms * query_norm)
+        cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
+    
+    return 1.0 - cosine_sim
 
 
 def get_representative_vector(
@@ -195,11 +223,9 @@ def generate_recommendations(
     
     n = 200 * diversity
     
-    # Calculate Audio Distance (Euclidean)
-    d_audio = cdist(vec_audio, matrix_audio, metric="euclidean")[0]
-    
-    # Calculate Genre Distance (Cosine)
-    d_genre = cdist(vec_genre, matrix_genre, metric="cosine")[0]
+    # Calculate distances using helper functions
+    d_audio = euclidean_distance(vec_audio, matrix_audio)
+    d_genre = cosine_distance(vec_genre, matrix_genre)
     
     # Combined Distance
     d_total = np.sqrt(d_audio**2 + (d_genre * genre_weight)**2)
@@ -232,8 +258,7 @@ def generate_recommendations(
             {
                 "track_id": row['track_id'],
                 "track_name": row['track_name'],
-                "year": int(row['year']) if 'year' in row else None,
-                "genre": row['genre'] if 'genre' in row else None
+                "genre": row.get('genre')
             }
             for _, row in artist_tracks.iterrows()
         ]
