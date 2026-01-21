@@ -66,6 +66,8 @@ class RecommendRequest(BaseModel):
 class Track(BaseModel):
     track_id: str
     track_name: str
+    year: int | None = None
+    genre: str | None = None
 
 
 class RecommendResponse(BaseModel):

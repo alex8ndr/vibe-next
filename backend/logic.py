@@ -12,7 +12,7 @@ from typing import Protocol
 # Audio Feature Weights (for Euclidean distance calculation)
 FEATURE_WEIGHTS = {
     'popularity': 0.6,
-    'year': 0.8,
+    'year': 0.6,
     'duration_ms': 0.4,
     'acousticness': 1.2,
     'danceability': 1.2,
@@ -72,31 +72,46 @@ class MusicData:
     
     def load(self) -> None:
         """Load data and precompute matrices. Call once at startup."""
-        self.df = self.source.load()
+        df = self.source.load()
         
         required = ['artist_name', 'track_name', 'track_id']
-        if not all(col in self.df.columns for col in required):
+        if not all(col in df.columns for col in required):
             raise ValueError(f"Missing required columns: {required}")
         
-        self.genre_cols = [c for c in self.df.columns if c.startswith('genre_')]
-        self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in self.df.columns]
+        self.genre_cols = [c for c in df.columns if c.startswith('genre_')]
+        self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in df.columns]
         
         # Audio Matrix (Weighted for Euclidean)
-        audio_df = self.df[self.audio_cols].copy()
-        for col in self.audio_cols:
-            audio_df[col] *= FEATURE_WEIGHTS[col]
-        self.matrix_audio = audio_df.values.astype(np.float32)
+        audio_data = df[self.audio_cols].values.astype(np.float32)
+        weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float32)
+        self.matrix_audio = audio_data * weights
         
         # Genre Matrix (Unweighted for Cosine)
-        self.matrix_genre = self.df[self.genre_cols].values.astype(np.float32)
+        self.matrix_genre = df[self.genre_cols].values.astype(np.float32)
         
         # Sort artists by popularity (most popular first)
         artist_popularity = (
-            self.df.groupby('artist_name', observed=True)['popularity']
+            df.groupby('artist_name', observed=True)['popularity']
             .sum()
             .sort_values(ascending=False)
         )
         self.artists_list = artist_popularity.index.tolist()
+        
+        # Keep metadata for display/lookup
+        keep_cols = ['artist_name', 'track_name', 'track_id']
+        # Add display columns if they exist
+        for col in ['popularity', 'genre', 'year']:
+            if col in df.columns:
+                keep_cols.append(col)
+        
+        self.df = df[keep_cols].copy()
+        
+        # Convert strings to categorical
+        self.df['artist_name'] = self.df['artist_name'].astype('category')
+        self.df['track_name'] = self.df['track_name'].astype('category')
+        if 'genre' in self.df.columns:
+            self.df['genre'] = self.df['genre'].astype('category')
+
     
     def reload(self) -> None:
         """Reload data from source. For future hot-reload capability."""
@@ -214,7 +229,12 @@ def generate_recommendations(
             .head(TRACKS_PER_ARTIST)
         )
         tracks = [
-            {"track_id": row['track_id'], "track_name": row['track_name']}
+            {
+                "track_id": row['track_id'],
+                "track_name": row['track_name'],
+                "year": int(row['year']) if 'year' in row else None,
+                "genre": row['genre'] if 'genre' in row else None
+            }
             for _, row in artist_tracks.iterrows()
         ]
         recommendations[artist] = tracks
