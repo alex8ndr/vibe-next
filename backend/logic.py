@@ -1,14 +1,12 @@
 """
-Recommendation engine - ported from Streamlit app.
-Handles vector similarity calculations for music recommendations.
+Recommendation logic for Vibe music recommendation app.
+Updated to use polars instead of pandas for memory efficiency.
 """
-
 import numpy as np
-import pandas as pd
+import polars as pl
 from pathlib import Path
 from typing import Protocol
 
-# Audio Feature Weights (for Euclidean distance calculation)
 FEATURE_WEIGHTS = {
     'popularity': 0.6,
     'year': 0.6,
@@ -24,10 +22,9 @@ FEATURE_WEIGHTS = {
     'liveness': 1.0,
 }
 
-# Genre Weight (for Cosine distance, combined with Audio distance)
 DEFAULT_GENRE_WEIGHT = 2.0
 
-# Artist Sampling Curve: (Total Tracks, Tracks to Keep)
+# Tracks to keep when computing representative vector for an artist 
 ARTIST_SAMPLING_CURVE = [
     (5, 5),
     (20, 12),
@@ -35,34 +32,27 @@ ARTIST_SAMPLING_CURVE = [
     (80, 30),
 ]
 
+# Number of tracks to recommend per artist
 TRACKS_PER_ARTIST = 4
 
 
 class DataSource(Protocol):
-    """Protocol for data sources - enables future extensibility (DB, API, etc.)"""
-    def load(self) -> pd.DataFrame:
+    def load(self) -> pl.DataFrame:
         ...
 
 
 class ParquetDataSource:
-    """Loads data from a local parquet file."""
-    
     def __init__(self, path: Path):
         self.path = path
     
-    def load(self) -> pd.DataFrame:
-        return pd.read_parquet(self.path)
+    def load(self) -> pl.DataFrame:
+        return pl.read_parquet(self.path)
 
 
 class MusicData:
-    """
-    Container for loaded music data and precomputed matrices.
-    Designed to be loaded once at startup and reused.
-    """
-    
     def __init__(self, source: DataSource):
         self.source = source
-        self.df: pd.DataFrame | None = None
+        self.df: pl.DataFrame | None = None
         self.matrix_audio: np.ndarray | None = None
         self.matrix_genre: np.ndarray | None = None
         self.artists_list: list[str] = []
@@ -70,31 +60,31 @@ class MusicData:
         self.genre_cols: list[str] = []
     
     def load(self) -> None:
-        """Load data and precompute matrices. Call once at startup."""
         df = self.source.load()
         
         required = ['artist_name', 'track_name', 'track_id']
-        if not all(col in df.columns for col in required):
-            raise ValueError(f"Missing required columns: {required}")
+        for col in required:
+            if col not in df.columns:
+                raise ValueError(f"Missing required column: {col}")
         
         self.genre_cols = [c for c in df.columns if c.startswith('genre_')]
         self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in df.columns]
         
         # Audio Matrix (Weighted for Euclidean)
-        audio_data = df[self.audio_cols].values.astype(np.float16)
+        audio_data = df.select(self.audio_cols).to_numpy().astype(np.float16)
         weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float16)
         self.matrix_audio = audio_data * weights
         
         # Genre Matrix (Unweighted for Cosine)
-        self.matrix_genre = df[self.genre_cols].values.astype(np.float16)
+        self.matrix_genre = df.select(self.genre_cols).to_numpy().astype(np.float16)
         
-        # Sort artists by popularity (most popular first)
+        # Sort artists by popularity
         artist_popularity = (
-            df.groupby('artist_name', observed=True)['popularity']
-            .sum()
-            .sort_values(ascending=False)
+            df.group_by('artist_name')
+            .agg(pl.col('popularity').sum())
+            .sort('popularity', descending=True)
         )
-        self.artists_list = artist_popularity.index.tolist()
+        self.artists_list = artist_popularity['artist_name'].to_list()
         
         # Keep metadata for display/lookup
         keep_cols = ['artist_name', 'track_name', 'track_id']
@@ -102,35 +92,15 @@ class MusicData:
             if col in df.columns:
                 keep_cols.append(col)
         
-        self.df = df[keep_cols].copy()
-        del df
-        
-        # Convert strings to categorical
-        self.df['artist_name'] = self.df['artist_name'].astype('category')
-        self.df['track_name'] = self.df['track_name'].astype('category')
-        if 'genre' in self.df.columns:
-            self.df['genre'] = self.df['genre'].astype('category')
-
-
-    def reload(self) -> None:
-        """Reload data from source. For future hot-reload capability."""
-        self.load()
+        self.df = df.select(keep_cols)
 
 
 def euclidean_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    """
-    Calculate Euclidean distance between query vector and matrix rows.
-    Operates on float16 without upcasting.
-    """
     diff = matrix - query
     return np.sqrt(np.sum(diff**2, axis=1))
 
 
 def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    """
-    Calculate cosine distance between query vector and matrix rows.
-    cosine_distance = 1 - cosine_similarity
-    """
     query_norm = np.linalg.norm(query)
     if query_norm == 0:
         return np.ones(len(matrix), dtype=matrix.dtype)
@@ -138,7 +108,6 @@ def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     matrix_norms = np.linalg.norm(matrix, axis=1)
     dot_products = np.dot(matrix, query.flatten())
     
-    # Avoid division by zero
     with np.errstate(divide='ignore', invalid='ignore'):
         cosine_sim = dot_products / (matrix_norms * query_norm)
         cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
@@ -147,46 +116,46 @@ def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 
 
 def get_representative_vector(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     matrix: np.ndarray,
     artists: list[str],
     track_ids: list[str] | None = None
 ) -> np.ndarray | None:
-    """
-    Calculate representative vector for selected items.
-    
-    Each artist gets one representative mean vector (from their top N tracks).
-    Each selected track is treated as a distinct entity.
-    All entities are averaged together with equal weight.
-    """
     entity_vectors = []
     
     if artists:
         for artist in artists:
-            mask = df["artist_name"] == artist
-            artist_df = df[mask]
+            artist_df = df.filter(pl.col("artist_name") == artist)
             
             if len(artist_df) > 0:
                 total_songs = len(artist_df)
                 
-                # Interpolate sample size from curve points
                 curve_x, curve_y = zip(*ARTIST_SAMPLING_CURVE)
                 n_target = np.interp(total_songs, curve_x, curve_y)
                 n_songs = min(total_songs, int(n_target))
                 
-                artist_df = artist_df.copy()
-                artist_df['popularity'] = artist_df['popularity'].astype(np.float32).fillna(0)
+                # Get top tracks by popularity
+                top_df = artist_df.sort('popularity', descending=True).head(n_songs)
                 
-                top_indices = artist_df.nlargest(n_songs, 'popularity').index
-                artist_vec = np.mean(matrix[top_indices], axis=0)
-                entity_vectors.append(artist_vec)
+                # Get row indices in original df (in polars, use row_nr() or join)
+                indices = []
+                for row in top_df.iter_rows(named=True):
+                    # Find matching row in original df
+                    mask = (df['track_id'] == row['track_id'])
+                    idx = mask.arg_true()
+                    if len(idx) > 0:
+                        indices.append(idx[0])
+                
+                if indices:
+                    artist_vec = np.mean(matrix[indices], axis=0)
+                    entity_vectors.append(artist_vec)
     
     if track_ids:
         for tid in track_ids:
-            mask = df["track_id"] == tid
-            indices = np.where(mask)[0]
-            if len(indices) > 0:
-                track_vec = matrix[indices[0]]
+            mask = df['track_id'] == tid
+            idx = mask.arg_true()
+            if len(idx) > 0:
+                track_vec = matrix[idx[0]]
                 entity_vectors.append(track_vec)
     
     if not entity_vectors:
@@ -206,11 +175,6 @@ def generate_recommendations(
     max_artists: int = 6,
     genre_weight: float = DEFAULT_GENRE_WEIGHT
 ) -> dict[str, list[dict]]:
-    """
-    Generate music recommendations based on selected artists/tracks.
-    
-    Returns dict mapping artist names to lists of track dicts.
-    """
     df = data.df
     matrix_audio = data.matrix_audio
     matrix_genre = data.matrix_genre
@@ -223,44 +187,53 @@ def generate_recommendations(
     
     n = 200 * diversity
     
-    # Calculate distances using helper functions
     d_audio = euclidean_distance(vec_audio, matrix_audio)
     d_genre = cosine_distance(vec_genre, matrix_genre)
     
-    # Combined Distance
     d_total = np.sqrt(d_audio**2 + (d_genre * genre_weight)**2)
     
     similar_indices = d_total.argsort()[:n]
     
-    similar_songs = df.iloc[similar_indices].copy()
-    similar_songs['score'] = np.arange(n, 0, -1)
+    # Get similar songs and add score
+    similar_df = df[similar_indices.tolist()]
+    scores = np.arange(n, 0, -1)
     
     if diversity > 1:
-        similar_songs['score'] = np.random.permutation(similar_songs['score'])
+        scores = np.random.permutation(scores)
+    
+    similar_df = similar_df.with_columns(pl.Series("score", scores))
     
     # Exclude input artists
-    pool = similar_songs[~similar_songs['artist_name'].isin(input_artists)]
+    pool = similar_df.filter(~pl.col('artist_name').is_in(input_artists))
     
-    artist_scores = pool.groupby('artist_name', observed=True)['score'].sum()
-    artist_counts = pool.groupby('artist_name', observed=True)['track_id'].count()
-    
-    # Require at least 2 songs in pool
-    qualified = artist_scores[artist_counts >= 2].sort_values(ascending=False)
+    # Group and aggregate
+    artist_stats = (
+        pool.group_by('artist_name')
+        .agg([
+            pl.col('score').sum().alias('total_score'),
+            pl.col('track_id').count().alias('track_count')
+        ])
+        .filter(pl.col('track_count') >= 2)
+        .sort('total_score', descending=True)
+        .head(max_artists)
+    )
     
     recommendations = {}
-    for artist in qualified.head(max_artists).index:
+    for row in artist_stats.iter_rows(named=True):
+        artist = row['artist_name']
         artist_tracks = (
-            pool[pool['artist_name'] == artist]
-            .sort_values('score', ascending=False)
+            pool.filter(pl.col('artist_name') == artist)
+            .sort('score', descending=True)
             .head(TRACKS_PER_ARTIST)
         )
+        
         tracks = [
             {
-                "track_id": row['track_id'],
-                "track_name": row['track_name'],
-                "genre": row.get('genre')
+                "track_id": r['track_id'],
+                "track_name": r['track_name'],
+                "genre": r.get('genre')
             }
-            for _, row in artist_tracks.iterrows()
+            for r in artist_tracks.iter_rows(named=True)
         ]
         recommendations[artist] = tracks
     
