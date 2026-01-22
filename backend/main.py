@@ -131,14 +131,17 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         raise HTTPException(status_code=503, detail="Data not loaded")
     
     df = music_data.df
-    artist_tracks = df[df['artist_name'] == artist_name][['track_id', 'track_name']]
+    artist_tracks = df.filter(df['artist_name'] == artist_name).select(['track_id', 'track_name'])
     
-    if artist_tracks.empty:
+    if len(artist_tracks) == 0:
         raise HTTPException(status_code=404, detail="Artist not found")
+    
+    # Remove duplicates and convert to Track objects
+    unique_tracks = artist_tracks.unique(subset=['track_name'])
     
     return [
         Track(track_id=row['track_id'], track_name=row['track_name'])
-        for _, row in artist_tracks.drop_duplicates('track_name').iterrows()
+        for row in unique_tracks.iter_rows(named=True)
     ]
 
 

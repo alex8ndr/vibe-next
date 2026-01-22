@@ -1,7 +1,5 @@
 # Runtime dependencies
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
-pandas>=2.2.0
-pyarrow>=18.0.0
+polars>=1.37.0
 numpy>=2.2.0
-

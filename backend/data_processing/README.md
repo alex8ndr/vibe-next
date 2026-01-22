@@ -62,5 +62,7 @@ Genre definitions used by `process_data.py`. Edit this to modify genre mappings.
 
 These scripts need additional packages not required by the production server:
 ```bash
-pip install scikit-learn requests
+pip install -r requirements.txt -r requirements-dev.txt
 ```
+
+Note: The production server uses Polars for memory efficiency, but these scripts still use pandas/scikit-learn for preprocessing.

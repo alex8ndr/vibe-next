@@ -1,0 +1,6 @@
+# Development dependencies (for data processing scripts)
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+
+pandas>=2.2.0
+scikit-learn>=1.5.0
+requests>=2.31.0
