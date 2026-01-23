@@ -1,15 +1,24 @@
 <script lang="ts">
 	import "../app.css";
-	import { hasResults, settings, themePreference } from "$lib/stores";
+	import {
+		hasResults,
+		settings,
+		themePreference,
+		recommendations,
+	} from "$lib/stores";
 	import { onMount } from "svelte";
+
+	const DEV_MODE = import.meta.env.DEV;
 
 	let { children } = $props();
 	let settingsOpen = $state(false);
+	let settingsDropdown = $state<HTMLDivElement | null>(null);
 	let mounted = $state(false);
 
 	onMount(() => {
 		mounted = true;
 		applyTheme($themePreference);
+		syncBackgroundAttr($settings.showBackground);
 	});
 
 	function applyTheme(pref: "light" | "dark" | "system") {
@@ -22,18 +31,53 @@
 		}
 	}
 
+	function syncBackgroundAttr(show: boolean) {
+		if (typeof document === "undefined") return;
+		if (show) {
+			document.documentElement.removeAttribute("data-no-bg");
+		} else {
+			document.documentElement.setAttribute("data-no-bg", "");
+		}
+	}
+
 	$effect(() => {
 		if (mounted) applyTheme($themePreference);
 	});
 
+	$effect(() => {
+		if (mounted) syncBackgroundAttr($settings.showBackground);
+	});
+
+	function getActualTheme(): "light" | "dark" {
+		if (typeof window === "undefined") return "dark";
+		return window.matchMedia("(prefers-color-scheme: dark)").matches
+			? "dark"
+			: "light";
+	}
+
 	function cycleTheme() {
-		const order: ("light" | "dark" | "system")[] = [
-			"system",
-			"light",
-			"dark",
-		];
-		const idx = order.indexOf($themePreference);
-		themePreference.set(order[(idx + 1) % 3]);
+		if ($themePreference === "system") {
+			// Switch to opposite of current actual appearance
+			const actual = getActualTheme();
+			themePreference.set(actual === "dark" ? "light" : "dark");
+		} else if ($themePreference === "light") {
+			themePreference.set("dark");
+		} else {
+			themePreference.set("system");
+		}
+	}
+
+	function handleOutsideClick(e: MouseEvent) {
+		if (
+			settingsOpen &&
+			settingsDropdown &&
+			!settingsDropdown.contains(e.target as Node)
+		) {
+			const btn = (e.target as HTMLElement).closest(
+				'.icon-btn[aria-label="Settings"]',
+			);
+			if (!btn) settingsOpen = false;
+		}
 	}
 
 	const themeIcon = $derived(
@@ -44,6 +88,8 @@
 				: "⚙️",
 	);
 </script>
+
+<svelte:window on:click={handleOutsideClick} />
 
 <svelte:head>
 	<title>Vibe</title>
@@ -64,7 +110,14 @@
 			rel="noopener">alext.dev</a
 		>
 
-		<div class="brand">
+		<a
+			href="/"
+			class="brand"
+			onclick={(e) => {
+				e.preventDefault();
+				recommendations.set({});
+			}}
+		>
 			<svg class="logo" viewBox="0 0 40 40" fill="none">
 				<circle
 					cx="20"
@@ -81,7 +134,7 @@
 				/>
 			</svg>
 			<span class="name">Vibe</span>
-		</div>
+		</a>
 
 		<div class="header-actions">
 			<button
@@ -111,7 +164,7 @@
 			</button>
 
 			{#if settingsOpen}
-				<div class="dropdown">
+				<div class="dropdown" bind:this={settingsDropdown}>
 					<h4>Settings</h4>
 
 					<label class="setting">
@@ -140,18 +193,25 @@
 						<input
 							type="number"
 							min="3"
-							max="12"
+							max="20"
 							bind:value={$settings.maxResults}
 						/>
 					</label>
 
-					<label class="setting">
-						<span>Show Background</span>
-						<input
-							type="checkbox"
-							bind:checked={$settings.showBackground}
-						/>
-					</label>
+					{#if DEV_MODE}
+						<label class="setting dev">
+							<span>Hide Background</span>
+							<input
+								type="checkbox"
+								checked={!$settings.showBackground}
+								onchange={() =>
+									settings.update((s) => ({
+										...s,
+										showBackground: !s.showBackground,
+									}))}
+							/>
+						</label>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -199,6 +259,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.brand:hover {
+		text-decoration: none;
 	}
 
 	.logo {

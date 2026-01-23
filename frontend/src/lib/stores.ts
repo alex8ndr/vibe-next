@@ -30,12 +30,32 @@ function createPersistedStore<T>(key: string, initial: T) {
     return store;
 }
 
+// Configurable limits
+export const LIMITS = {
+    MAX_INPUT_ARTISTS: 5,
+    MAX_INPUT_SONGS_PER_ARTIST: 3,
+    MAX_RESULT_ARTISTS: { min: 3, max: 20, default: 6 }
+} as const;
+
 export const settings = createPersistedStore('vibe-settings', {
     variety: 2,
     genreWeight: 2.0,
-    maxResults: 6,
+    maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
     showBackground: true
 });
 
 // Theme: 'light', 'dark', or 'system'
 export const themePreference = createPersistedStore<'light' | 'dark' | 'system'>('vibe-theme', 'system');
+
+// User lists (persistent)
+export interface FavoriteTrack {
+    track_id: string;
+    track_name: string;
+    artist_name: string;
+}
+
+export const knownArtists = createPersistedStore<string[]>('vibe-known-artists', []);
+export const favoriteTracks = createPersistedStore<FavoriteTrack[]>('vibe-favorites', []);
+
+// UI state for right panel
+export const rightPanelOpen = createPersistedStore<boolean>('vibe-right-panel', true);

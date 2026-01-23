@@ -13,14 +13,33 @@
         isLoading,
         hasResults,
         settings,
+        knownArtists,
+        favoriteTracks,
+        rightPanelOpen,
+        LIMITS,
         type Track,
     } from "$lib/stores";
 
     let selected = $state<string[]>([]);
     let fineTune = $state<Record<string, string[]>>({});
     let artistTracks = $state<Record<string, Track[]>>({});
-    let expandedArtist = $state<string | null>(null);
+    let expandedArtists = $state<Set<string>>(new Set());
+    let heroExpandedArtist = $state<string | null>(null);
     let error = $state<string | null>(null);
+    let globalSongSearch = $state("");
+    let loadingProgress = $state(0);
+
+    const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
+
+    // Group favorites by artist for display
+    const favoritesByArtist = $derived.by(() => {
+        const map: Record<string, typeof $favoriteTracks> = {};
+        for (const fav of $favoriteTracks) {
+            if (!map[fav.artist_name]) map[fav.artist_name] = [];
+            map[fav.artist_name].push(fav);
+        }
+        return map;
+    });
 
     onMount(async () => {
         (window as any).onSpotifyIframeApiReady = (IFrameAPI: any) => {
@@ -57,6 +76,14 @@
         if (!selected.length) return;
         error = null;
         isLoading.set(true);
+        loadingProgress = 0;
+
+        const progressInterval = setInterval(() => {
+            loadingProgress = Math.min(
+                loadingProgress + Math.random() * 15,
+                90,
+            );
+        }, 150);
 
         const trackIds: string[] = [];
         for (const a of selected) {
@@ -72,14 +99,20 @@
             const res = await fetchRecommendations({
                 artists: selected,
                 track_ids: trackIds.length ? trackIds : undefined,
+                exclude_artists: $knownArtists.length
+                    ? $knownArtists
+                    : undefined,
                 diversity: $settings.variety,
                 max_artists: $settings.maxResults,
                 genre_weight: $settings.genreWeight,
             });
+            loadingProgress = 100;
             recommendations.set(res.recommendations);
+            clearInterval(progressInterval);
+            isLoading.set(false);
         } catch (e) {
             error = e instanceof Error ? e.message : "Search failed";
-        } finally {
+            clearInterval(progressInterval);
             isLoading.set(false);
         }
     }
@@ -88,9 +121,90 @@
         const cur = fineTune[artist] || [];
         if (cur.includes(song)) {
             fineTune = { ...fineTune, [artist]: cur.filter((s) => s !== song) };
-        } else if (cur.length < 3) {
+        } else if (cur.length < LIMITS.MAX_INPUT_SONGS_PER_ARTIST) {
             fineTune = { ...fineTune, [artist]: [...cur, song] };
         }
+    }
+
+    function isAtSongLimit(artist: string): boolean {
+        return (
+            (fineTune[artist]?.length || 0) >= LIMITS.MAX_INPUT_SONGS_PER_ARTIST
+        );
+    }
+
+    function toggleExpanded(artist: string) {
+        const next = new Set(expandedArtists);
+        if (next.has(artist)) {
+            next.delete(artist);
+        } else {
+            next.add(artist);
+        }
+        expandedArtists = next;
+    }
+
+    function toggleHeroExpanded(artist: string) {
+        heroExpandedArtist = heroExpandedArtist === artist ? null : artist;
+    }
+
+    function getFilteredTracks(
+        artist: string,
+        searchQuery: string = "",
+    ): Track[] {
+        const tracks = artistTracks[artist] || [];
+        const query = searchQuery.toLowerCase();
+        if (!query) return tracks;
+        return tracks.filter((t) => t.track_name.toLowerCase().includes(query));
+    }
+
+    function addToKnown(artist: string) {
+        knownArtists.update((list) => {
+            if (list.includes(artist)) return list;
+            return [...list, artist];
+        });
+    }
+
+    function removeFromKnown(artist: string) {
+        knownArtists.update((list) => list.filter((a) => a !== artist));
+    }
+
+    function addToSearch(artist: string) {
+        if (
+            !selected.includes(artist) &&
+            selected.length < LIMITS.MAX_INPUT_ARTISTS
+        ) {
+            selected = [...selected, artist];
+        }
+    }
+
+    function addFavorite(track: Track, artist: string) {
+        favoriteTracks.update((list) => {
+            if (list.some((t) => t.track_id === track.track_id)) return list;
+            return [...list, { ...track, artist_name: artist }];
+        });
+    }
+
+    function removeFavorite(trackId: string) {
+        favoriteTracks.update((list) =>
+            list.filter((t) => t.track_id !== trackId),
+        );
+    }
+
+    function downloadResults() {
+        const data = Object.entries($recommendations).map(
+            ([artist, tracks]) => ({
+                artist,
+                tracks: tracks.map((t) => t.track_name),
+            }),
+        );
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+            type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vibe-recommendations.json";
+        a.click();
+        URL.revokeObjectURL(url);
     }
 </script>
 
@@ -103,7 +217,7 @@
         {/if}
 
         <div class="hero">
-            <h1>Discover your next<br />favorite artist</h1>
+            <h1>Discover your next<br />favourite artist</h1>
             <p class="tagline">
                 Music recommendations based on what you already love
             </p>
@@ -112,7 +226,7 @@
                 <ArtistSelect
                     {selected}
                     onchange={(a) => (selected = a)}
-                    max={5}
+                    max={LIMITS.MAX_INPUT_ARTISTS}
                     placeholder="Search artists..."
                 />
                 <button
@@ -124,6 +238,21 @@
                 </button>
             </div>
 
+            {#if atMaxArtists}
+                <p class="limit-msg">
+                    Maximum {LIMITS.MAX_INPUT_ARTISTS} artists reached
+                </p>
+            {/if}
+
+            {#if $isLoading}
+                <div class="loading-bar">
+                    <div
+                        class="loading-fill"
+                        style:width="{loadingProgress}%"
+                    ></div>
+                </div>
+            {/if}
+
             {#if selected.length > 0}
                 <div class="fine-section">
                     <div class="fine-row">
@@ -131,12 +260,8 @@
                         {#each selected as artist (artist)}
                             <button
                                 class="fine-btn"
-                                class:open={expandedArtist === artist}
-                                onclick={() =>
-                                    (expandedArtist =
-                                        expandedArtist === artist
-                                            ? null
-                                            : artist)}
+                                class:open={heroExpandedArtist === artist}
+                                onclick={() => toggleHeroExpanded(artist)}
                             >
                                 {artist}
                                 {#if (fineTune[artist]?.length || 0) > 0}
@@ -148,31 +273,49 @@
                         {/each}
                     </div>
 
-                    {#if expandedArtist}
+                    {#if heroExpandedArtist}
                         <div class="songs-box">
+                            <div class="songs-header">
+                                <span class="songs-title"
+                                    >{heroExpandedArtist}</span
+                                >
+                            </div>
                             <div class="songs-scroll">
-                                {#each artistTracks[expandedArtist] || [] as t (t.track_id)}
+                                {#each artistTracks[heroExpandedArtist] || [] as t (t.track_id)}
                                     {@const sel = (
-                                        fineTune[expandedArtist] || []
+                                        fineTune[heroExpandedArtist] || []
                                     ).includes(t.track_name)}
+                                    {@const atLimit =
+                                        isAtSongLimit(heroExpandedArtist)}
                                     <button
                                         class="song-chip"
                                         class:on={sel}
+                                        class:disabled={!sel && atLimit}
                                         onclick={() =>
                                             toggleSong(
-                                                expandedArtist!,
+                                                heroExpandedArtist!,
                                                 t.track_name,
                                             )}
+                                        title={!sel && atLimit
+                                            ? `Max ${LIMITS.MAX_INPUT_SONGS_PER_ARTIST} songs per artist`
+                                            : ""}
                                     >
                                         {t.track_name.length > 35
                                             ? t.track_name.slice(0, 35) + "…"
                                             : t.track_name}
                                     </button>
                                 {/each}
-                                {#if !artistTracks[expandedArtist]}
+                                {#if !artistTracks[heroExpandedArtist]}
                                     <span class="muted">Loading...</span>
                                 {/if}
                             </div>
+                            {#if isAtSongLimit(heroExpandedArtist)}
+                                <div class="limit-indicator">
+                                    {fineTune[heroExpandedArtist]
+                                        .length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST}
+                                    songs selected
+                                </div>
+                            {/if}
                         </div>
                     {/if}
                 </div>
@@ -185,17 +328,22 @@
     </div>
 {:else}
     <!-- Results -->
-    <div class="results-wrap">
-        <aside class="side">
+    <div class="results-wrap" class:right-open={$rightPanelOpen}>
+        <aside class="side left">
             <h3>Search</h3>
             <div class="side-search">
                 <ArtistSelect
                     {selected}
                     onchange={(a) => (selected = a)}
-                    max={5}
+                    max={LIMITS.MAX_INPUT_ARTISTS}
                     placeholder="Add artists..."
                 />
             </div>
+            {#if atMaxArtists}
+                <span class="side-limit"
+                    >Max {LIMITS.MAX_INPUT_ARTISTS} artists</span
+                >
+            {/if}
             <button
                 class="btn-update"
                 onclick={search}
@@ -206,17 +354,21 @@
 
             {#if selected.length > 0}
                 <div class="side-section">
-                    <h4>Fine-tune</h4>
+                    <div class="fine-header">
+                        <h4>Fine-tune</h4>
+                        <input
+                            type="text"
+                            class="side-song-search"
+                            placeholder="Search songs..."
+                            bind:value={globalSongSearch}
+                        />
+                    </div>
                     {#each selected as artist (artist)}
                         <div class="side-artist">
                             <button
                                 class="side-artist-btn"
-                                class:open={expandedArtist === artist}
-                                onclick={() =>
-                                    (expandedArtist =
-                                        expandedArtist === artist
-                                            ? null
-                                            : artist)}
+                                class:open={expandedArtists.has(artist)}
+                                onclick={() => toggleExpanded(artist)}
                             >
                                 <span class="name">{artist}</span>
                                 {#if (fineTune[artist]?.length || 0) > 0}
@@ -225,21 +377,23 @@
                                     >
                                 {/if}
                                 <span class="arr"
-                                    >{expandedArtist === artist
+                                    >{expandedArtists.has(artist)
                                         ? "▾"
                                         : "▸"}</span
                                 >
                             </button>
 
-                            {#if expandedArtist === artist}
+                            {#if expandedArtists.has(artist)}
                                 <div class="side-songs">
-                                    {#each artistTracks[artist] || [] as t (t.track_id)}
+                                    {#each getFilteredTracks(artist, globalSongSearch) as t (t.track_id)}
                                         {@const sel = (
                                             fineTune[artist] || []
                                         ).includes(t.track_name)}
+                                        {@const atLimit = isAtSongLimit(artist)}
                                         <button
                                             class="ss"
                                             class:on={sel}
+                                            class:disabled={!sel && atLimit}
                                             onclick={() =>
                                                 toggleSong(
                                                     artist,
@@ -252,6 +406,9 @@
                                                 : t.track_name}
                                         </button>
                                     {/each}
+                                    {#if getFilteredTracks(artist, globalSongSearch).length === 0 && globalSongSearch}
+                                        <span class="muted">No matches</span>
+                                    {/if}
                                 </div>
                             {/if}
                         </div>
@@ -261,13 +418,136 @@
         </aside>
 
         <section class="main-results">
-            <h2>{Object.keys($recommendations).length} artists for you</h2>
+            <div class="results-header">
+                <h2>{Object.keys($recommendations).length} artists for you</h2>
+                <div class="results-actions">
+                    <button
+                        class="btn-action"
+                        onclick={downloadResults}
+                        title="Download results"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path
+                                d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
+                            />
+                        </svg>
+                        Download
+                    </button>
+                    <button
+                        class="btn-action"
+                        onclick={search}
+                        disabled={$isLoading}
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path d="M23 4v6h-6M1 20v-6h6" />
+                            <path
+                                d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"
+                            />
+                        </svg>
+                        Regenerate
+                    </button>
+                    <button
+                        class="btn-action btn-panel-toggle"
+                        onclick={() => rightPanelOpen.update((v) => !v)}
+                        title={$rightPanelOpen ? "Hide lists" : "Show lists"}
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <path d="M15 3v18" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
             <div class="grid">
                 {#each Object.entries($recommendations) as [artist, tracks] (artist)}
-                    <ArtistCard {artist} {tracks} />
+                    <ArtistCard
+                        {artist}
+                        {tracks}
+                        onAddToKnown={() => addToKnown(artist)}
+                        onAddToSearch={() => addToSearch(artist)}
+                        onAddFavorite={(track) => addFavorite(track, artist)}
+                        isKnown={$knownArtists.includes(artist)}
+                    />
                 {/each}
             </div>
         </section>
+
+        {#if $rightPanelOpen}
+            <aside class="side right">
+                <div class="side-section">
+                    <h4>
+                        Known Artists <span class="cnt-badge"
+                            >{$knownArtists.length}</span
+                        >
+                    </h4>
+                    <p class="side-hint">Won't be recommended</p>
+                    {#if $knownArtists.length === 0}
+                        <p class="side-empty">No artists added yet</p>
+                    {:else}
+                        <div class="known-chips">
+                            {#each $knownArtists as artist (artist)}
+                                <button
+                                    class="known-chip"
+                                    onclick={() => removeFromKnown(artist)}
+                                    title="Remove {artist}"
+                                >
+                                    {artist} <span class="x">×</span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+
+                <div class="side-section favorites-section">
+                    <h4>
+                        Favorites <span class="cnt-badge"
+                            >{$favoriteTracks.length}</span
+                        >
+                    </h4>
+                    {#if $favoriteTracks.length === 0}
+                        <p class="side-empty">No favorites yet</p>
+                    {:else}
+                        <div class="favorites-grouped">
+                            {#each Object.entries(favoritesByArtist) as [artist, tracks] (artist)}
+                                <div class="fav-group">
+                                    <span class="fav-artist-name">{artist}</span
+                                    >
+                                    {#each tracks as fav (fav.track_id)}
+                                        <div class="fav-track-row">
+                                            <span class="fav-track-name"
+                                                >{fav.track_name}</span
+                                            >
+                                            <button
+                                                class="fav-remove"
+                                                onclick={() =>
+                                                    removeFavorite(
+                                                        fav.track_id,
+                                                    )}>×</button
+                                            >
+                                        </div>
+                                    {/each}
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+            </aside>
+        {/if}
     </div>
 {/if}
 
@@ -368,6 +648,26 @@
         cursor: not-allowed;
     }
 
+    .limit-msg {
+        margin-top: 0.5rem;
+        font-size: 0.75rem;
+        color: var(--gold);
+    }
+
+    .loading-bar {
+        margin-top: 1rem;
+        height: 3px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    .loading-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--gold), var(--gold-dim));
+        transition: width 0.15s ease-out;
+    }
+
     .fine-section {
         margin-top: 1rem;
     }
@@ -422,6 +722,20 @@
         margin-bottom: 0.75rem;
     }
 
+    .songs-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .songs-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text);
+    }
+
     .songs-scroll {
         display: flex;
         flex-wrap: wrap;
@@ -439,13 +753,25 @@
         color: var(--text-2);
     }
 
-    .song-chip:hover {
+    .song-chip:hover:not(.disabled) {
         border-color: var(--border);
     }
 
     .song-chip.on {
         background: var(--gold);
         color: #111;
+    }
+
+    .song-chip.disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    .limit-indicator {
+        margin-top: 0.4rem;
+        font-size: 0.65rem;
+        color: var(--gold);
+        text-align: right;
     }
 
     .muted {
@@ -466,6 +792,11 @@
         flex: 1;
         display: grid;
         grid-template-columns: 260px 1fr;
+        overflow: hidden;
+    }
+
+    .results-wrap.right-open {
+        grid-template-columns: 260px 1fr 280px;
     }
 
     .side {
@@ -481,6 +812,11 @@
         top: 52px;
     }
 
+    .side.right {
+        border-right: none;
+        border-left: 1px solid var(--border);
+    }
+
     .side h3 {
         font-size: 0.85rem;
         font-weight: 600;
@@ -490,6 +826,11 @@
     .side-search {
         position: relative;
         z-index: 50;
+    }
+
+    .side-limit {
+        font-size: 0.7rem;
+        color: var(--gold);
     }
 
     .btn-update {
@@ -518,6 +859,28 @@
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .cnt-badge {
+        background: var(--bg-alt);
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.6rem;
+    }
+
+    .side-hint {
+        font-size: 0.65rem;
+        color: var(--text-3);
+        margin-bottom: 0.5rem;
+    }
+
+    .side-empty {
+        font-size: 0.75rem;
+        color: var(--text-3);
+        font-style: italic;
     }
 
     .side-artist {
@@ -566,12 +929,32 @@
 
     .side-songs {
         margin-top: 0.35rem;
-        max-height: 160px;
+        max-height: 200px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
         gap: 0.2rem;
         padding-left: 0.4rem;
+    }
+
+    .side-song-search {
+        padding: 0.3rem 0.4rem;
+        font-size: 0.7rem;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text);
+        margin-bottom: 0.2rem;
+        max-width: 140px;
+    }
+
+    .side-song-search:focus {
+        outline: none;
+        border-color: white;
+    }
+
+    .side-song-search::placeholder {
+        color: var(--text-3);
     }
 
     .ss {
@@ -584,7 +967,7 @@
         text-align: left;
     }
 
-    .ss:hover {
+    .ss:hover:not(.disabled) {
         border-color: var(--border);
     }
 
@@ -594,15 +977,70 @@
         border-color: var(--gold);
     }
 
-    .main-results {
-        padding: 1.25rem;
+    .ss.disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
 
-    .main-results h2 {
+    .main-results {
+        padding: 1.25rem;
+        overflow-y: auto;
+        max-height: calc(100vh - 52px);
+    }
+
+    .results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .results-header h2 {
         font-size: 0.95rem;
         font-weight: 500;
         color: var(--text-2);
-        margin-bottom: 1rem;
+    }
+
+    .results-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .btn-action {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.4rem 0.65rem;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        font-size: 0.75rem;
+        color: var(--text-2);
+    }
+
+    .btn-action:hover:not(:disabled) {
+        border-color: var(--gold);
+        color: var(--text);
+    }
+
+    .btn-action:disabled {
+        opacity: 0.5;
+    }
+
+    .btn-action svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .btn-panel-toggle {
+        padding: 0.4rem;
+    }
+
+    .btn-panel-toggle svg {
+        width: 16px;
+        height: 16px;
     }
 
     .grid {
@@ -611,8 +1049,125 @@
         gap: 1rem;
     }
 
+    /* Right panel lists */
+    .known-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+    }
+
+    .known-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.4rem;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        color: var(--text);
+    }
+
+    .known-chip:hover {
+        border-color: #e55;
+    }
+
+    .known-chip .x {
+        color: var(--text-3);
+        font-size: 0.8rem;
+    }
+
+    .known-chip:hover .x {
+        color: #e55;
+    }
+
+    .favorites-section {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .favorites-grouped {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .fav-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+
+    .fav-artist-name {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--gold);
+        margin-bottom: 0.15rem;
+    }
+
+    .fav-track-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.35rem 0.5rem;
+        background: var(--bg-alt);
+        border-radius: 4px;
+        margin-left: 0.5rem;
+    }
+
+    .fav-track-name {
+        font-size: 0.75rem;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .fav-remove {
+        background: none;
+        border: none;
+        color: var(--text-3);
+        font-size: 0.9rem;
+        padding: 0;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+
+    .fav-remove:hover {
+        color: #e55;
+    }
+
+    .fine-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .fine-header h4 {
+        margin: 0;
+    }
+
+    @media (max-width: 1024px) {
+        .results-wrap.right-open {
+            grid-template-columns: 260px 1fr;
+        }
+
+        .side.right {
+            display: none;
+        }
+    }
+
     @media (max-width: 768px) {
-        .results-wrap {
+        .results-wrap,
+        .results-wrap.right-open {
             grid-template-columns: 1fr;
         }
 
@@ -620,8 +1175,13 @@
             position: relative;
             top: 0;
             height: auto;
+            max-height: 300px;
             border-right: none;
             border-bottom: 1px solid var(--border);
+        }
+
+        .side.right {
+            display: none;
         }
 
         .search-row {
@@ -634,6 +1194,14 @@
 
         .grid {
             grid-template-columns: 1fr;
+        }
+
+        .main-results {
+            max-height: none;
+        }
+
+        .btn-panel-toggle {
+            display: none;
         }
     }
 </style>
