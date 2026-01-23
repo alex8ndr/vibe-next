@@ -34,3 +34,5 @@ Thumbs.db
 # Backend dev/testing files
 backend/dev/
 
+# Analytics
+backend/data/analytics.jsonl

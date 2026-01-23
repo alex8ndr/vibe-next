@@ -8,9 +8,11 @@ export interface Track {
 export interface RecommendRequest {
     artists: string[];
     track_ids?: string[];
+    exclude_artists?: string[];
     diversity?: number;
     max_artists?: number;
     genre_weight?: number;
+    tracks_per_artist?: number;
 }
 
 export interface RecommendResponse {

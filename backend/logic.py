@@ -58,6 +58,7 @@ class MusicData:
         self.artists_list: list[str] = []
         self.audio_cols: list[str] = []
         self.genre_cols: list[str] = []
+        self.track_id_to_idx: dict[str, int] = {}
     
     def load(self) -> None:
         df = self.source.load()
@@ -85,6 +86,9 @@ class MusicData:
             .sort('popularity', descending=True)
         )
         self.artists_list = artist_popularity['artist_name'].to_list()
+        
+        # Build track_id lookup for O(1) index access
+        self.track_id_to_idx = {tid: i for i, tid in enumerate(df['track_id'].to_list())}
         
         # Keep metadata for display/lookup
         keep_cols = ['artist_name', 'track_name', 'track_id']
@@ -119,6 +123,7 @@ def get_representative_vector(
     df: pl.DataFrame,
     matrix: np.ndarray,
     artists: list[str],
+    track_id_to_idx: dict[str, int],
     track_ids: list[str] | None = None
 ) -> np.ndarray | None:
     entity_vectors = []
@@ -137,14 +142,12 @@ def get_representative_vector(
                 # Get top tracks by popularity
                 top_df = artist_df.sort('popularity', descending=True).head(n_songs)
                 
-                # Get row indices in original df (in polars, use row_nr() or join)
-                indices = []
-                for row in top_df.iter_rows(named=True):
-                    # Find matching row in original df
-                    mask = (df['track_id'] == row['track_id'])
-                    idx = mask.arg_true()
-                    if len(idx) > 0:
-                        indices.append(idx[0])
+                # O(1) index lookup via pre-built dict
+                indices = [
+                    track_id_to_idx[tid]
+                    for tid in top_df['track_id'].to_list()
+                    if tid in track_id_to_idx
+                ]
                 
                 if indices:
                     artist_vec = np.mean(matrix[indices], axis=0)
@@ -152,10 +155,8 @@ def get_representative_vector(
     
     if track_ids:
         for tid in track_ids:
-            mask = df['track_id'] == tid
-            idx = mask.arg_true()
-            if len(idx) > 0:
-                track_vec = matrix[idx[0]]
+            if tid in track_id_to_idx:
+                track_vec = matrix[track_id_to_idx[tid]]
                 entity_vectors.append(track_vec)
     
     if not entity_vectors:
@@ -171,16 +172,19 @@ def generate_recommendations(
     data: MusicData,
     input_artists: list[str],
     track_ids: list[str] | None = None,
+    exclude_artists: list[str] | None = None,
     diversity: int = 2,
     max_artists: int = 6,
-    genre_weight: float = DEFAULT_GENRE_WEIGHT
+    genre_weight: float = DEFAULT_GENRE_WEIGHT,
+    tracks_per_artist: int = TRACKS_PER_ARTIST
 ) -> dict[str, list[dict]]:
     df = data.df
     matrix_audio = data.matrix_audio
     matrix_genre = data.matrix_genre
+    lookup = data.track_id_to_idx
     
-    vec_audio = get_representative_vector(df, matrix_audio, input_artists, track_ids)
-    vec_genre = get_representative_vector(df, matrix_genre, input_artists, track_ids)
+    vec_audio = get_representative_vector(df, matrix_audio, input_artists, lookup, track_ids)
+    vec_genre = get_representative_vector(df, matrix_genre, input_artists, lookup, track_ids)
     
     if vec_audio is None or vec_genre is None:
         return {}
@@ -203,8 +207,11 @@ def generate_recommendations(
     
     similar_df = similar_df.with_columns(pl.Series("score", scores))
     
-    # Exclude input artists
-    pool = similar_df.filter(~pl.col('artist_name').is_in(input_artists))
+    # Exclude input artists and any explicitly excluded artists
+    excluded = set(input_artists)
+    if exclude_artists:
+        excluded.update(exclude_artists)
+    pool = similar_df.filter(~pl.col('artist_name').is_in(list(excluded)))
     
     # Group and aggregate
     artist_stats = (
@@ -224,7 +231,7 @@ def generate_recommendations(
         artist_tracks = (
             pool.filter(pl.col('artist_name') == artist)
             .sort('score', descending=True)
-            .head(TRACKS_PER_ARTIST)
+            .head(tracks_per_artist)
         )
         
         tracks = [

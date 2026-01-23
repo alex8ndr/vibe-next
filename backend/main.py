@@ -2,10 +2,12 @@
 FastAPI backend for Vibe music recommendation app.
 """
 
+import json
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -13,6 +15,7 @@ from logic import MusicData, ParquetDataSource, generate_recommendations
 
 # Data path - configurable via environment in production
 DATA_PATH = Path(__file__).parent / "data" / "data_encoded.parquet"
+ANALYTICS_PATH = Path(__file__).parent / "data" / "analytics.jsonl"
 
 # Global data container
 music_data: MusicData | None = None
@@ -34,7 +37,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Cleanup if needed
     music_data = None
 
 
@@ -58,9 +60,11 @@ app.add_middleware(
 class RecommendRequest(BaseModel):
     artists: list[str]
     track_ids: list[str] | None = None
+    exclude_artists: list[str] | None = None
     diversity: int = 2
     max_artists: int = 6
     genre_weight: float = 2.0
+    tracks_per_artist: int = 4
 
 
 class Track(BaseModel):
@@ -72,6 +76,24 @@ class Track(BaseModel):
 
 class RecommendResponse(BaseModel):
     recommendations: dict[str, list[Track]]
+
+
+class SearchLog(BaseModel):
+    input_artists: list[str]
+    track_ids: list[str] | None = None
+    exclude_artists: list[str] | None = None
+    settings: dict
+    result_artists: list[str]
+    result_count: int
+
+
+def log_search_async(log_data: dict):
+    """Append search log to JSONL file (background task)."""
+    try:
+        with open(ANALYTICS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_data) + "\n")
+    except Exception as e:
+        print(f"Failed to log search: {e}")
 
 
 @app.get("/health")
@@ -99,7 +121,10 @@ async def get_artists(q: str = "", limit: int = 100) -> list[str]:
 
 
 @app.post("/recommend", response_model=RecommendResponse)
-async def recommend(request: RecommendRequest) -> RecommendResponse:
+async def recommend(
+    request: RecommendRequest, 
+    background_tasks: BackgroundTasks
+) -> RecommendResponse:
     """Generate music recommendations based on selected artists."""
     if not music_data:
         raise HTTPException(status_code=503, detail="Data not loaded")
@@ -112,14 +137,41 @@ async def recommend(request: RecommendRequest) -> RecommendResponse:
     if not valid_artists:
         raise HTTPException(status_code=400, detail="No valid artists found")
     
+    # Also validate exclude_artists if provided (just filter to valid ones)
+    valid_exclude = None
+    if request.exclude_artists:
+        valid_exclude = [a for a in request.exclude_artists if a in music_data.artists_list]
+    
     recs = generate_recommendations(
         data=music_data,
         input_artists=valid_artists,
         track_ids=request.track_ids,
+        exclude_artists=valid_exclude,
         diversity=request.diversity,
         max_artists=request.max_artists,
-        genre_weight=request.genre_weight
+        genre_weight=request.genre_weight,
+        tracks_per_artist=request.tracks_per_artist
     )
+    
+    # Log search in background
+    log_data = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "input_artists": valid_artists,
+        "track_ids": request.track_ids,
+        "exclude_artists": valid_exclude,
+        "settings": {
+            "diversity": request.diversity,
+            "max_artists": request.max_artists,
+            "genre_weight": request.genre_weight,
+            "tracks_per_artist": request.tracks_per_artist
+        },
+        "results": {
+            artist: [t["track_id"] for t in tracks]
+            for artist, tracks in recs.items()
+        },
+        "result_count": len(recs)
+    }
+    background_tasks.add_task(log_search_async, log_data)
     
     return RecommendResponse(recommendations=recs)
 
@@ -143,6 +195,30 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         Track(track_id=row['track_id'], track_name=row['track_name'])
         for row in unique_tracks.iter_rows(named=True)
     ]
+
+
+@app.get("/analytics/stats")
+async def get_analytics_stats():
+    """Get basic analytics stats (for dev/admin use)."""
+    if not ANALYTICS_PATH.exists():
+        return {"total_searches": 0, "unique_artists_searched": 0}
+    
+    try:
+        total = 0
+        artists = set()
+        with open(ANALYTICS_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    total += 1
+                    data = json.loads(line)
+                    artists.update(data.get("input_artists", []))
+        
+        return {
+            "total_searches": total,
+            "unique_artists_searched": len(artists)
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":
