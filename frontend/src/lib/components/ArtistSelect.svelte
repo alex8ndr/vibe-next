@@ -21,12 +21,14 @@
     const filtered = $derived.by(() => {
         const q = query.toLowerCase();
         return $artistsList
-            .filter((a) => a.toLowerCase().includes(q) && !selected.includes(a))
+            .filter((a) => a.toLowerCase().includes(q))
             .slice(0, 15);
     });
 
-    function add(artist: string) {
-        if (selected.length < max && !selected.includes(artist)) {
+    function toggle(artist: string) {
+        if (selected.includes(artist)) {
+            onchange(selected.filter((a) => a !== artist));
+        } else if (selected.length < max) {
             onchange([...selected, artist]);
         }
         query = "";
@@ -40,7 +42,7 @@
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === "Enter" && filtered.length > 0) {
             e.preventDefault();
-            add(filtered[0]);
+            toggle(filtered[0]);
         }
         if (e.key === "Escape") {
             isOpen = false;
@@ -76,8 +78,12 @@
     {#if isOpen && filtered.length > 0}
         <ul class="list">
             {#each filtered as artist (artist)}
+                {@const isSelected = selected.includes(artist)}
                 <li>
-                    <button onmousedown={() => add(artist)}>{artist}</button>
+                    <button class:selected={isSelected} onmousedown={() => toggle(artist)}>
+                        {#if isSelected}<span class="check">✓</span>{/if}
+                        {artist}
+                    </button>
                 </li>
             {/each}
         </ul>
@@ -117,6 +123,10 @@
         border-radius: 4px;
         font-size: 0.8rem;
         font-weight: 500;
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .x {
@@ -158,9 +168,22 @@
         border-radius: 8px;
         max-height: 220px;
         overflow-y: auto;
-        z-index: 100;
+        z-index: 1000;
         list-style: none;
         box-shadow: 0 6px 16px var(--shadow);
+    }
+
+    @media (max-width: 768px) {
+        .list {
+            position: fixed;
+            left: 1rem;
+            right: 1rem;
+            top: auto;
+            bottom: 50%;
+            max-height: 40vh;
+            border-radius: 12px;
+            z-index: 1000;
+        }
     }
 
     .list button {
@@ -175,6 +198,16 @@
 
     .list button:hover {
         background: var(--bg-alt);
+    }
+
+    .list button.selected {
+        background: var(--gold-glow);
+        color: var(--gold);
+    }
+
+    .check {
+        margin-right: 0.4rem;
+        color: var(--gold);
     }
 
     .list li:first-child button {

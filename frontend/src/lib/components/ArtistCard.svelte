@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Track } from "$lib/stores";
-    import { nowPlaying } from "$lib/stores";
+    import { nowPlaying, sidebarPlaying } from "$lib/stores";
     import { onMount } from "svelte";
 
     interface Props {
@@ -99,7 +99,7 @@
             );
     });
 
-    function play(trackId: string) {
+    function play(trackId: string, trackName: string) {
         if (!controller) return;
 
         const prev = $nowPlaying;
@@ -116,9 +116,18 @@
             );
         }
 
+        // Pause sidebar player if playing and clear its highlight
+        const sidebarCtrl = (window as any).vibeSidebarController;
+        if (sidebarCtrl) {
+            try {
+                sidebarCtrl.pause();
+            } catch {}
+        }
+        sidebarPlaying.set(null);
+
         controller.loadUri(`spotify:track:${trackId}`);
         controller.play();
-        nowPlaying.set({ artist, trackId });
+        nowPlaying.set({ artist, trackId, trackName });
     }
 </script>
 
@@ -167,7 +176,7 @@
                 <button
                     class="trk"
                     class:playing={playingTrackId === t.track_id}
-                    onclick={() => play(t.track_id)}
+                    onclick={() => play(t.track_id, t.track_name)}
                 >
                     <span class="ico"
                         >{playingTrackId === t.track_id ? "❚❚" : "♪"}</span
@@ -178,7 +187,7 @@
                     <button
                         class="fav-btn"
                         onclick={() => onAddFavorite(t)}
-                        title="Add to favorites"
+                        title="Add to favourites"
                     >
                         ♥
                     </button>
