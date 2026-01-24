@@ -105,6 +105,7 @@
                 diversity: $settings.variety,
                 max_artists: $settings.maxResults,
                 genre_weight: $settings.genreWeight,
+                tracks_per_artist: $settings.tracksPerArtist,
             });
             loadingProgress = 100;
             recommendations.set(res.recommendations);
@@ -353,7 +354,7 @@
             </button>
 
             {#if selected.length > 0}
-                <div class="side-section">
+                <div class="side-section fine-tune-section">
                     <div class="fine-header">
                         <h4>Fine-tune</h4>
                         <input
@@ -363,58 +364,128 @@
                             bind:value={globalSongSearch}
                         />
                     </div>
-                    {#each selected as artist (artist)}
-                        <div class="side-artist">
-                            <button
-                                class="side-artist-btn"
-                                class:open={expandedArtists.has(artist)}
-                                onclick={() => toggleExpanded(artist)}
-                            >
-                                <span class="name">{artist}</span>
-                                {#if (fineTune[artist]?.length || 0) > 0}
-                                    <span class="cnt"
-                                        >{fineTune[artist].length}</span
-                                    >
-                                {/if}
-                                <span class="arr"
-                                    >{expandedArtists.has(artist)
-                                        ? "▾"
-                                        : "▸"}</span
+                    <div class="fine-tune-artists">
+                        {#each selected as artist (artist)}
+                            <div class="side-artist">
+                                <button
+                                    class="side-artist-btn"
+                                    class:open={expandedArtists.has(artist)}
+                                    onclick={() => toggleExpanded(artist)}
                                 >
-                            </button>
-
-                            {#if expandedArtists.has(artist)}
-                                <div class="side-songs">
-                                    {#each getFilteredTracks(artist, globalSongSearch) as t (t.track_id)}
-                                        {@const sel = (
-                                            fineTune[artist] || []
-                                        ).includes(t.track_name)}
-                                        {@const atLimit = isAtSongLimit(artist)}
-                                        <button
-                                            class="ss"
-                                            class:on={sel}
-                                            class:disabled={!sel && atLimit}
-                                            onclick={() =>
-                                                toggleSong(
-                                                    artist,
-                                                    t.track_name,
-                                                )}
+                                    <span class="name">{artist}</span>
+                                    {#if (fineTune[artist]?.length || 0) > 0}
+                                        <span class="cnt"
+                                            >{fineTune[artist].length}</span
                                         >
-                                            {t.track_name.length > 26
-                                                ? t.track_name.slice(0, 26) +
-                                                  "…"
-                                                : t.track_name}
-                                        </button>
-                                    {/each}
-                                    {#if getFilteredTracks(artist, globalSongSearch).length === 0 && globalSongSearch}
-                                        <span class="muted">No matches</span>
                                     {/if}
-                                </div>
-                            {/if}
-                        </div>
-                    {/each}
+                                    <span class="arr"
+                                        >{expandedArtists.has(artist)
+                                            ? "▾"
+                                            : "▸"}</span
+                                    >
+                                </button>
+
+                                {#if expandedArtists.has(artist)}
+                                    <div class="side-songs">
+                                        {#each getFilteredTracks(artist, globalSongSearch) as t (t.track_id)}
+                                            {@const sel = (
+                                                fineTune[artist] || []
+                                            ).includes(t.track_name)}
+                                            {@const atLimit =
+                                                isAtSongLimit(artist)}
+                                            <button
+                                                class="ss"
+                                                class:on={sel}
+                                                class:disabled={!sel && atLimit}
+                                                onclick={() =>
+                                                    toggleSong(
+                                                        artist,
+                                                        t.track_name,
+                                                    )}
+                                            >
+                                                {t.track_name.length > 26
+                                                    ? t.track_name.slice(
+                                                          0,
+                                                          26,
+                                                      ) + "…"
+                                                    : t.track_name}
+                                            </button>
+                                        {/each}
+                                        {#if getFilteredTracks(artist, globalSongSearch).length === 0 && globalSongSearch}
+                                            <span class="muted">No matches</span
+                                            >
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
                 </div>
             {/if}
+
+            <div class="side-section customize-section">
+                <h4>Customize Your Vibe</h4>
+                <div class="setting-group">
+                    <label for="variety">
+                        <span>Variety</span>
+                        <span class="val">
+                            {#if $settings.variety === 1}Low
+                            {:else if $settings.variety === 2}Med
+                            {:else}High{/if}
+                        </span>
+                    </label>
+                    <input
+                        id="variety"
+                        type="range"
+                        min="1"
+                        max="3"
+                        bind:value={$settings.variety}
+                    />
+                </div>
+
+                <div class="setting-group">
+                    <label for="genre">
+                        <span>Genre Match</span>
+                        <span class="val">{$settings.genreWeight}</span>
+                    </label>
+                    <input
+                        id="genre"
+                        type="range"
+                        min="0"
+                        max="5"
+                        step="0.5"
+                        bind:value={$settings.genreWeight}
+                    />
+                </div>
+
+                <div class="setting-group">
+                    <label for="count">
+                        <span>Result Artists</span>
+                        <span class="val">{$settings.maxResults}</span>
+                    </label>
+                    <input
+                        id="count"
+                        type="range"
+                        min={LIMITS.MAX_RESULT_ARTISTS.min}
+                        max={LIMITS.MAX_RESULT_ARTISTS.max}
+                        bind:value={$settings.maxResults}
+                    />
+                </div>
+
+                <div class="setting-group">
+                    <label for="tracks">
+                        <span>Songs per artist</span>
+                        <span class="val">{$settings.tracksPerArtist}</span>
+                    </label>
+                    <input
+                        id="tracks"
+                        type="range"
+                        min={LIMITS.MAX_TRACKS_PER_ARTIST.min}
+                        max={LIMITS.MAX_TRACKS_PER_ARTIST.max}
+                        bind:value={$settings.tracksPerArtist}
+                    />
+                </div>
+            </div>
         </aside>
 
         <section class="main-results">
@@ -807,9 +878,30 @@
         flex-direction: column;
         gap: 0.75rem;
         height: calc(100vh - 52px);
-        overflow-y: auto;
         position: sticky;
         top: 52px;
+    }
+
+    .side.left {
+        overflow: hidden;
+    }
+
+    .fine-tune-section {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .fine-tune-artists {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    .customize-section {
+        flex-shrink: 0;
     }
 
     .side.right {
@@ -862,6 +954,11 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
+    }
+
+    .fine-tune-artists {
+        max-height: 50vh;
+        overflow-y: auto;
     }
 
     .cnt-badge {
@@ -1203,5 +1300,41 @@
         .btn-panel-toggle {
             display: none;
         }
+    }
+    .setting-group {
+        margin-bottom: 0.8rem;
+    }
+
+    .setting-group label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.75rem;
+        color: var(--text-2);
+        margin-bottom: 0.3rem;
+    }
+
+    .setting-group .val {
+        color: var(--gold);
+        font-weight: 600;
+        font-size: 0.7rem;
+    }
+
+    .setting-group input[type="range"] {
+        width: 100%;
+        height: 4px;
+        background: var(--bg-alt);
+        border-radius: 2px;
+        appearance: none;
+        outline: none;
+    }
+
+    .setting-group input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        background: var(--gold);
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid var(--surface);
     }
 </style>

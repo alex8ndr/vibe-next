@@ -167,43 +167,12 @@
 				<div class="dropdown" bind:this={settingsDropdown}>
 					<h4>Settings</h4>
 
-					<label class="setting">
-						<span>Variety</span>
-						<select bind:value={$settings.variety}>
-							<option value={1}>Low</option>
-							<option value={2}>Medium</option>
-							<option value={3}>High</option>
-						</select>
-					</label>
-
-					<label class="setting">
-						<span>Genre Weight</span>
-						<input
-							type="range"
-							min="0"
-							max="5"
-							step="0.5"
-							bind:value={$settings.genreWeight}
-						/>
-						<span class="val">{$settings.genreWeight}</span>
-					</label>
-
-					<label class="setting">
-						<span>Max Results</span>
-						<input
-							type="number"
-							min="3"
-							max="20"
-							bind:value={$settings.maxResults}
-						/>
-					</label>
-
 					{#if DEV_MODE}
 						<label class="setting dev">
-							<span>Hide Background</span>
+							<span>Show Background</span>
 							<input
 								type="checkbox"
-								checked={!$settings.showBackground}
+								checked={$settings.showBackground}
 								onchange={() =>
 									settings.update((s) => ({
 										...s,
@@ -211,6 +180,8 @@
 									}))}
 							/>
 						</label>
+					{:else}
+						<p class="empty-msg">No global settings</p>
 					{/if}
 				</div>
 			{/if}
@@ -345,35 +316,20 @@
 		color: var(--text-2);
 	}
 
-	.setting span:first-child {
-		flex: 1;
-	}
-
-	.setting select,
-	.setting input[type="number"] {
-		padding: 0.25rem 0.4rem;
-		background: var(--bg-alt);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text);
-		font-size: 0.75rem;
-		width: 70px;
-	}
-
-	.setting input[type="range"] {
-		width: 60px;
-		accent-color: var(--gold);
+	.setting.dev {
+		color: #e55;
 	}
 
 	.setting input[type="checkbox"] {
 		accent-color: var(--gold);
 	}
 
-	.setting .val {
-		font-size: 0.7rem;
+	.empty-msg {
+		font-size: 0.75rem;
 		color: var(--text-3);
-		width: 24px;
-		text-align: right;
+		font-style: italic;
+		text-align: center;
+		padding: 0.5rem 0;
 	}
 
 	.main {
