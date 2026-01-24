@@ -15,7 +15,16 @@ export const artistsList = writable<string[]>([]);
 export const isLoading = writable(false);
 export const hasResults = derived(recommendations, ($r) => Object.keys($r).length > 0);
 
-export const nowPlaying = writable<{ artist: string; trackId: string } | null>(null);
+export const nowPlaying = writable<{ artist: string; trackId: string; trackName: string } | null>(null);
+
+// Separate store for sidebar player (favorites only, doesn't interfere with result cards)
+export const sidebarPlaying = writable<{ artist: string; trackId: string; trackName: string } | null>(null);
+
+// Mobile sidebar visibility
+export const mobileSidebarOpen = writable(false);
+
+// Sidebar player compact mode (hides embed, shows only track info)
+export const playerCompact = createPersistedStore<boolean>('vibe-player-compact', true);
 
 // Settings with localStorage persistence
 function createPersistedStore<T>(key: string, initial: T) {

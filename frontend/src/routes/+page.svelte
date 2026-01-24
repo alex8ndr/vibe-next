@@ -7,6 +7,8 @@
         fetchRecommendations,
         fetchArtistTracks,
     } from "$lib/api";
+    import bgDark from "$lib/assets/background_dark.webp";
+    import bgLight from "$lib/assets/background_light.webp";
     import {
         artistsList,
         recommendations,
@@ -16,8 +18,12 @@
         knownArtists,
         favoriteTracks,
         rightPanelOpen,
+        nowPlaying,
+        sidebarPlaying,
+        mobileSidebarOpen,
         LIMITS,
         type Track,
+        type FavoriteTrack,
     } from "$lib/stores";
 
     let selected = $state<string[]>([]);
@@ -28,6 +34,11 @@
     let error = $state<string | null>(null);
     let globalSongSearch = $state("");
     let loadingProgress = $state(0);
+
+    // Sidebar player
+    let sidebarPlayerEl = $state<HTMLDivElement | null>(null);
+    let sidebarController: any = null;
+    let sidebarReady = $state(false);
 
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
 
@@ -190,7 +201,191 @@
         );
     }
 
-    function downloadResults() {
+    function playTrack(track: FavoriteTrack) {
+        // Pause any playing result card first
+        const prevNowPlaying = $nowPlaying;
+        if (prevNowPlaying) {
+            window.dispatchEvent(
+                new CustomEvent("vibeReset", { detail: prevNowPlaying.artist }),
+            );
+            nowPlaying.set(null);
+        }
+
+        // Update sidebar playing state
+        sidebarPlaying.set({
+            artist: track.artist_name,
+            trackId: track.track_id,
+            trackName: track.track_name,
+        });
+    }
+
+    // Initialize sidebar player when element is available
+    $effect(() => {
+        if (!sidebarPlayerEl || sidebarController) return;
+
+        const initPlayer = () => {
+            const api = (window as any).SpotifyIframeApi;
+            if (!api || !sidebarPlayerEl) return;
+
+            api.createController(
+                sidebarPlayerEl,
+                { width: "100%", height: 80, uri: "" },
+                (c: any) => {
+                    sidebarController = c;
+                    (window as any).vibeSidebarController = c;
+                    c.addListener("ready", () => {
+                        sidebarReady = true;
+                    });
+                    setTimeout(() => {
+                        sidebarReady = true;
+                    }, 2000);
+                },
+            );
+        };
+
+        if ((window as any).SpotifyIframeApi) {
+            initPlayer();
+        } else {
+            const handler = () => {
+                initPlayer();
+                window.removeEventListener("SpotifyIframeApiReady", handler);
+            };
+            window.addEventListener("SpotifyIframeApiReady", handler);
+        }
+    });
+
+    // Update sidebar player when track changes
+    $effect(() => {
+        const track = $sidebarPlaying;
+        if (!track || !sidebarController) return;
+
+        sidebarController.loadUri(`spotify:track:${track.trackId}`);
+        sidebarController.play();
+    });
+
+    function generateHTML(): string {
+        const inputArtists = selected.join(" • ");
+
+        let cards = "";
+        for (const [artist, tracks] of Object.entries($recommendations)) {
+            const artistId = artist.replace(/[^a-zA-Z0-9]/g, "_");
+            const firstTrack = tracks[0]?.track_id || "";
+
+            let trackButtons = "";
+            for (let i = 0; i < tracks.length; i++) {
+                const track = tracks[i];
+                const active = i === 0 ? "active" : "";
+                const safeName = track.track_name.replace(/"/g, "&quot;");
+                trackButtons += `<button class="track-btn ${active}" onclick="playTrack(this, '${track.track_id}')">${safeName}</button>`;
+            }
+
+            cards += `<div class="card" data-artist="${artistId}">
+                <h2>${artist}</h2>
+                <div class="player-container" id="player_${artistId}" data-track="${firstTrack}"></div>
+                ${trackButtons}
+            </div>`;
+        }
+
+        return `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vibe Recommendations</title>
+<style>
+* { box-sizing: border-box; }
+body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+    max-width: 1200px; margin: 0 auto; padding: 20px; 
+    background: #0e1117; color: #fafafa;
+}
+h1 { color: #fafafa; border-bottom: 2px solid #1db954; padding-bottom: 10px; }
+.input { 
+    background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; 
+    margin-bottom: 20px; border-left: 4px solid #1db954;
+}
+.grid { 
+    display: grid; 
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
+    gap: 20px; 
+}
+.card { 
+    background: rgba(255,255,255,0.03); 
+    padding: 20px; border-radius: 12px; 
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.card h2 { color: #fafafa; margin: 0 0 15px 0; font-size: 1.2rem; }
+.player-container { 
+    background: rgba(0,0,0,0.3); 
+    border-radius: 12px; 
+    min-height: 80px; 
+    margin-bottom: 10px;
+}
+.track-btn {
+    display: block; width: 100%; padding: 10px 12px;
+    margin: 4px 0; border: none; border-radius: 8px;
+    background: rgba(255,255,255,0.05); color: #fafafa;
+    text-align: left; cursor: pointer; font-size: 14px;
+    transition: background 0.2s;
+}
+.track-btn:hover { background: rgba(29, 185, 84, 0.2); }
+.track-btn.active { background: rgba(29, 185, 84, 0.3); border-left: 3px solid #1db954; }
+</style>
+</head><body>
+<h1>🎵 Vibe Recommendations</h1>
+<div class="input"><strong>Based on:</strong> ${inputArtists}</div>
+<div class="grid">${cards}</div>
+${"<"}script src="https://open.spotify.com/embed/iframe-api/v1" async>${"<"}/script>
+${"<"}script>
+const controllers = {};
+
+window.onSpotifyIframeApiReady = (IFrameAPI) => {
+    document.querySelectorAll('.player-container').forEach(container => {
+        const artistId = container.id.replace('player_', '');
+        const trackId = container.dataset.track;
+        
+        IFrameAPI.createController(container, {
+            width: '100%',
+            height: '80',
+            uri: trackId ? 'spotify:track:' + trackId : ''
+        }, (controller) => {
+            controllers[artistId] = controller;
+        });
+    });
+};
+
+let currentArtist = null;
+
+function playTrack(btn, trackId) {
+    const card = btn.closest('.card');
+    const artistId = card.dataset.artist;
+    
+    if (currentArtist && currentArtist !== artistId && controllers[currentArtist]) {
+        controllers[currentArtist].pause();
+    }
+    
+    if (controllers[artistId]) {
+        controllers[artistId].loadUri('spotify:track:' + trackId);
+        controllers[artistId].play();
+        currentArtist = artistId;
+        card.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+}
+${"<"}/script>
+</body></html>`;
+    }
+
+    function downloadHTML() {
+        const html = generateHTML();
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vibe-recommendations.html";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function downloadJSON() {
         const data = Object.entries($recommendations).map(
             ([artist, tracks]) => ({
                 artist,
@@ -208,6 +403,11 @@
         URL.revokeObjectURL(url);
     }
 </script>
+
+<svelte:head>
+    <link rel="preload" as="image" href={bgDark} />
+    <link rel="preload" as="image" href={bgLight} />
+</svelte:head>
 
 {#if !$hasResults}
     <!-- Landing -->
@@ -494,8 +694,8 @@
                 <div class="results-actions">
                     <button
                         class="btn-action"
-                        onclick={downloadResults}
-                        title="Download results"
+                        onclick={downloadHTML}
+                        title="Download as HTML with Spotify players"
                     >
                         <svg
                             viewBox="0 0 24 24"
@@ -507,7 +707,24 @@
                                 d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
                             />
                         </svg>
-                        Download
+                        HTML
+                    </button>
+                    <button
+                        class="btn-action"
+                        onclick={downloadJSON}
+                        title="Download as JSON"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path
+                                d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
+                            />
+                        </svg>
+                        JSON
                     </button>
                     <button
                         class="btn-action"
@@ -558,8 +775,35 @@
             </div>
         </section>
 
-        {#if $rightPanelOpen}
-            <aside class="side right">
+        <!-- Mobile sidebar toggle button -->
+        <button
+            class="mobile-sidebar-toggle"
+            onclick={() => mobileSidebarOpen.update((v) => !v)}
+            title="Toggle favourites"
+        >
+            {#if $mobileSidebarOpen}
+                ✕
+            {:else}
+                ♥ <span class="toggle-badge">{$favoriteTracks.length}</span>
+            {/if}
+        </button>
+
+        {#if $mobileSidebarOpen}
+            <button
+                class="sidebar-backdrop"
+                onclick={() => mobileSidebarOpen.set(false)}
+                aria-label="Close sidebar"
+            ></button>
+        {/if}
+
+        {#if $rightPanelOpen || $mobileSidebarOpen}
+            <aside class="side right" class:mobile-open={$mobileSidebarOpen}>
+                <button
+                    class="mobile-close-btn"
+                    onclick={() => mobileSidebarOpen.set(false)}
+                >
+                    ✕
+                </button>
                 <div class="side-section">
                     <h4>
                         Known Artists <span class="cnt-badge"
@@ -586,12 +830,12 @@
 
                 <div class="side-section favorites-section">
                     <h4>
-                        Favorites <span class="cnt-badge"
+                        Favourites <span class="cnt-badge"
                             >{$favoriteTracks.length}</span
                         >
                     </h4>
                     {#if $favoriteTracks.length === 0}
-                        <p class="side-empty">No favorites yet</p>
+                        <p class="side-empty">No favourites yet</p>
                     {:else}
                         <div class="favorites-grouped">
                             {#each Object.entries(favoritesByArtist) as [artist, tracks] (artist)}
@@ -599,16 +843,28 @@
                                     <span class="fav-artist-name">{artist}</span
                                     >
                                     {#each tracks as fav (fav.track_id)}
-                                        <div class="fav-track-row">
+                                        <div
+                                            class="fav-track-row"
+                                            class:playing={$sidebarPlaying?.trackId ===
+                                                fav.track_id}
+                                            role="button"
+                                            tabindex="0"
+                                            onclick={() => playTrack(fav)}
+                                            onkeydown={(e) =>
+                                                e.key === "Enter" &&
+                                                playTrack(fav)}
+                                        >
                                             <span class="fav-track-name"
                                                 >{fav.track_name}</span
                                             >
                                             <button
                                                 class="fav-remove"
-                                                onclick={() =>
+                                                onclick={(e) => {
+                                                    e.stopPropagation();
                                                     removeFavorite(
                                                         fav.track_id,
-                                                    )}>×</button
+                                                    );
+                                                }}>×</button
                                             >
                                         </div>
                                     {/each}
@@ -616,6 +872,26 @@
                             {/each}
                         </div>
                     {/if}
+                </div>
+
+                {#if $sidebarPlaying}
+                    <div class="player-section">
+                        <div class="player-info">
+                            <span class="player-track"
+                                >{$sidebarPlaying.trackName}</span
+                            >
+                            <span class="player-artist"
+                                >{$sidebarPlaying.artist}</span
+                            >
+                        </div>
+                    </div>
+                {/if}
+                <!-- Hidden player - always mounted for audio -->
+                <div class="player-embed-wrap hidden">
+                    <div
+                        class="sidebar-player"
+                        bind:this={sidebarPlayerEl}
+                    ></div>
                 </div>
             </aside>
         {/if}
@@ -1163,6 +1439,10 @@
         border-radius: 4px;
         font-size: 0.7rem;
         color: var(--text);
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .known-chip:hover {
@@ -1214,6 +1494,8 @@
         background: var(--bg-alt);
         border-radius: 4px;
         margin-left: 0.5rem;
+        cursor: pointer;
+        transition: background 0.15s;
     }
 
     .fav-track-name {
@@ -1240,6 +1522,150 @@
         color: #e55;
     }
 
+    .fav-track-row:hover {
+        background: var(--border);
+    }
+
+    .fav-track-row.playing {
+        background: var(--gold);
+        color: #111;
+    }
+
+    .fav-track-row.playing .fav-track-name {
+        color: #111;
+    }
+
+    .fav-track-row.playing .fav-remove {
+        color: #333;
+    }
+
+    .fav-track-row.playing .fav-remove:hover {
+        color: #900;
+    }
+
+    .player-section {
+        flex-shrink: 0;
+        border-top: 1px solid var(--border);
+        padding-top: 0.75rem;
+        margin-top: auto;
+    }
+
+    .player-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .player-track {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .player-artist {
+        font-size: 0.65rem;
+        color: var(--text-3);
+    }
+
+    .player-embed-wrap {
+        position: relative;
+        height: 80px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #121212;
+    }
+
+    .player-embed-wrap.hidden {
+        height: 0;
+        overflow: hidden;
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .sidebar-player {
+        position: absolute;
+        inset: 0;
+    }
+
+    .sidebar-player :global(iframe) {
+        border: none !important;
+        border-radius: 10px !important;
+        width: 100% !important;
+        height: 80px !important;
+    }
+
+    /* Mobile sidebar toggle */
+    .mobile-sidebar-toggle {
+        display: none;
+        position: fixed;
+        right: 1rem;
+        bottom: 1rem;
+        z-index: 250;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: var(--gold);
+        color: #111;
+        border: none;
+        font-size: 1.1rem;
+        box-shadow: 0 4px 12px var(--shadow);
+        align-items: center;
+        justify-content: center;
+    }
+
+    .toggle-badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: #e55;
+        color: #fff;
+        font-size: 0.6rem;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 290;
+        border: none;
+        cursor: pointer;
+    }
+
+    .mobile-close-btn {
+        display: none;
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        width: 28px;
+        height: 28px;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        color: var(--text-2);
+        font-size: 0.9rem;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+    }
+
+    .mobile-close-btn:hover {
+        background: var(--border);
+        color: var(--text);
+    }
+
     .fine-header {
         display: flex;
         align-items: center;
@@ -1257,8 +1683,52 @@
             grid-template-columns: 260px 1fr;
         }
 
+        /* Hide sidebar on tablet/mobile by default, show toggle button */
         .side.right {
             display: none;
+        }
+
+        .side.right.mobile-open {
+            display: flex;
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: auto;
+            width: 280px;
+            max-width: 85vw;
+            height: 100vh;
+            max-height: none;
+            border-left: 1px solid var(--border);
+            border-radius: 0;
+            z-index: 300;
+            box-shadow: -4px 0 20px var(--shadow);
+            animation: slideIn 0.2s ease-out;
+        }
+
+        .mobile-sidebar-toggle {
+            display: flex;
+        }
+
+        .sidebar-backdrop {
+            display: block;
+        }
+
+        .mobile-close-btn {
+            display: flex;
+        }
+
+        .btn-panel-toggle {
+            display: none;
+        }
+    }
+
+    @keyframes slideIn {
+        from {
+            transform: translateX(100%);
+        }
+        to {
+            transform: translateX(0);
         }
     }
 
@@ -1268,17 +1738,23 @@
             grid-template-columns: 1fr;
         }
 
-        .side {
+        .side.left {
             position: relative;
             top: 0;
             height: auto;
             max-height: 300px;
             border-right: none;
             border-bottom: 1px solid var(--border);
+            z-index: 100;
         }
 
-        .side.right {
-            display: none;
+        .fine-tune-section {
+            z-index: 50;
+        }
+
+        .side-songs {
+            z-index: 60;
+            position: relative;
         }
 
         .search-row {
@@ -1295,10 +1771,7 @@
 
         .main-results {
             max-height: none;
-        }
-
-        .btn-panel-toggle {
-            display: none;
+            padding-bottom: 80px;
         }
     }
     .setting-group {
