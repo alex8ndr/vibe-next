@@ -39,8 +39,16 @@
     let sidebarPlayerEl = $state<HTMLDivElement | null>(null);
     let sidebarController: any = null;
     let sidebarReady = $state(false);
+    let sidebarActuallyPlaying = $state(false);
 
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
+
+    // Check if returning user (has any persisted data)
+    const isReturningUser = $derived(
+        $knownArtists.length > 0 || $favoriteTracks.length > 0
+    );
+    let showLandingPanel = $state(false);
+    let showVibePanel = $state(false);
 
     // Group favorites by artist for display
     const favoritesByArtist = $derived.by(() => {
@@ -117,6 +125,9 @@
                 max_artists: $settings.maxResults,
                 genre_weight: $settings.genreWeight,
                 tracks_per_artist: $settings.tracksPerArtist,
+                vibe_mood: $settings.vibeMood,
+                vibe_sound: $settings.vibeSound,
+                popularity: $settings.popularity,
             });
             loadingProgress = 100;
             recommendations.set(res.recommendations);
@@ -188,6 +199,19 @@
         }
     }
 
+    function resetSettings() {
+        settings.set({
+            variety: 2,
+            genreWeight: 2.0,
+            maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
+            tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
+            showBackground: true,
+            vibeMood: 0,
+            vibeSound: 0,
+            popularity: 0,
+        });
+    }
+
     function addFavorite(track: Track, artist: string) {
         favoriteTracks.update((list) => {
             if (list.some((t) => t.track_id === track.track_id)) return list;
@@ -202,6 +226,12 @@
     }
 
     function playTrack(track: FavoriteTrack) {
+        // Toggle if clicking the same track
+        if ($sidebarPlaying?.trackId === track.track_id && sidebarController) {
+            sidebarController.togglePlay();
+            return;
+        }
+
         // Pause any playing result card first
         const prevNowPlaying = $nowPlaying;
         if (prevNowPlaying) {
@@ -235,6 +265,9 @@
                     (window as any).vibeSidebarController = c;
                     c.addListener("ready", () => {
                         sidebarReady = true;
+                    });
+                    c.addListener("playback_update", (e: any) => {
+                        sidebarActuallyPlaying = !e.data.isPaused;
                     });
                     setTimeout(() => {
                         sidebarReady = true;
@@ -402,12 +435,35 @@ ${"<"}/script>
         a.click();
         URL.revokeObjectURL(url);
     }
+
+    function downloadFavoritesJSON() {
+        const data = $favoriteTracks.map((t) => ({
+            track_id: t.track_id,
+            track_name: t.track_name,
+            artist_name: t.artist_name,
+        }));
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+            type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vibe-favorites.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
 </script>
 
 <svelte:head>
     <link rel="preload" as="image" href={bgDark} />
     <link rel="preload" as="image" href={bgLight} />
 </svelte:head>
+
+<div
+    style="position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;"
+>
+    <div class="sidebar-player" bind:this={sidebarPlayerEl}></div>
+</div>
 
 {#if !$hasResults}
     <!-- Landing -->
@@ -525,6 +581,148 @@ ${"<"}/script>
             {#if error}
                 <p class="error">{error}</p>
             {/if}
+
+            {#if isReturningUser}
+                <button
+                    class="landing-vibe-toggle"
+                    onclick={() => (showVibePanel = !showVibePanel)}
+                >
+                    {showVibePanel ? "✕" : "⚙"}
+                </button>
+                <button
+                    class="landing-lists-toggle"
+                    onclick={() => (showLandingPanel = !showLandingPanel)}
+                >
+                    {showLandingPanel ? "✕" : `♥ ${$favoriteTracks.length}`}
+                </button>
+            {/if}
+
+            {#if showLandingPanel}
+                <aside class="landing-lists-panel">
+                    <div class="landing-panel-section">
+                        <h4>Known Artists <span class="cnt">{$knownArtists.length}</span></h4>
+                        {#if $knownArtists.length > 0}
+                            <div class="landing-chips">
+                                {#each $knownArtists as artist (artist)}
+                                    <button class="landing-chip" onclick={() => removeFromKnown(artist)}>
+                                        {artist} <span class="x">×</span>
+                                    </button>
+                                {/each}
+                            </div>
+                        {:else}
+                            <p class="empty">No known artists</p>
+                        {/if}
+                    </div>
+                    <div class="landing-panel-section">
+                        <div class="landing-panel-header">
+                            <h4>Favorites <span class="cnt">{$favoriteTracks.length}</span></h4>
+                            {#if $favoriteTracks.length > 0}
+                                <button class="landing-export-btn" onclick={downloadFavoritesJSON} title="Export favorites">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7 10 12 15 17 10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/></svg
+                                    >
+                                </button>
+                            {/if}
+                        </div>
+                        {#if $favoriteTracks.length > 0}
+                            <div class="landing-favorites">
+                                {#each Object.entries(favoritesByArtist) as [artist, tracks] (artist)}
+                                    <div class="landing-fav-group">
+                                        <span class="landing-fav-artist">{artist}</span>
+                                        {#each tracks as fav (fav.track_id)}
+                                            <div
+                                                class="landing-fav-row"
+                                                class:playing={$sidebarPlaying?.trackId === fav.track_id}
+                                                role="button"
+                                                tabindex="0"
+                                                onclick={() => playTrack(fav)}
+                                                onkeydown={(e) => e.key === "Enter" && playTrack(fav)}
+                                            >
+                                                <span class="landing-fav-track">{fav.track_name}</span>
+                                                <button class="landing-fav-remove" onclick={(e) => { e.stopPropagation(); removeFavorite(fav.track_id); }}>×</button>
+                                            </div>
+                                        {/each}
+                                    </div>
+                                {/each}
+                            </div>
+                        {:else}
+                            <p class="empty">No favorites yet</p>
+                        {/if}
+                    </div>
+                </aside>
+            {/if}
+
+            <!-- Hidden sidebar player for landing page favorites playback -->
+            {#if $sidebarPlaying}
+                <div class="landing-player-wrap">
+                    <div class="landing-player-info">
+                        <span class="landing-player-track">{$sidebarPlaying.trackName}</span>
+                        <span class="landing-player-artist">{$sidebarPlaying.artist}</span>
+                    </div>
+                </div>
+            {/if}
+
+            {#if showVibePanel}
+                <aside class="landing-vibe-panel">
+                    <div class="vibe-header">
+                        <h4>Customize Your Vibe</h4>
+                        <button class="icon-btn custom-reset-btn" onclick={resetSettings} title="Reset to defaults">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg
+                            >
+                        </button>
+                    </div>
+
+                    <div class="vibe-slider">
+                        <div class="vibe-labels">
+                            <span>Chill</span>
+                            <span>Energetic</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="-1"
+                            max="1"
+                            step="0.1"
+                            bind:value={$settings.vibeMood}
+                        />
+                    </div>
+
+                    <div class="vibe-slider">
+                        <div class="vibe-labels">
+                            <span>Acoustic</span>
+                            <span>Electronic</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="-1"
+                            max="1"
+                            step="0.1"
+                            bind:value={$settings.vibeSound}
+                        />
+                    </div>
+
+                    <div class="settings-compact">
+                        <div class="setting-mini">
+                            <span>Variety</span>
+                            <input type="range" min="1" max="3" bind:value={$settings.variety} />
+                        </div>
+                        <div class="setting-mini">
+                            <span>Genre</span>
+                            <input type="range" min="0" max="5" step="0.5" bind:value={$settings.genreWeight} />
+                        </div>
+                        <div class="setting-mini">
+                            <span>Artists</span>
+                            <input type="range" min={LIMITS.MAX_RESULT_ARTISTS.min} max={LIMITS.MAX_RESULT_ARTISTS.max} bind:value={$settings.maxResults} />
+                        </div>
+                        <div class="setting-mini">
+                            <span>Songs</span>
+                            <input type="range" min={LIMITS.MAX_TRACKS_PER_ARTIST.min} max={LIMITS.MAX_TRACKS_PER_ARTIST.max} bind:value={$settings.tracksPerArtist} />
+                        </div>
+                    </div>
+                </aside>
+            {/if}
         </div>
     </div>
 {:else}
@@ -623,67 +821,89 @@ ${"<"}/script>
                 </div>
             {/if}
 
+            {#if selected.length === 0}
+                <div class="spacer"></div>
+            {/if}
+
             <div class="side-section customize-section">
-                <h4>Customize Your Vibe</h4>
-                <div class="setting-group">
-                    <label for="variety">
-                        <span>Variety</span>
-                        <span class="val">
-                            {#if $settings.variety === 1}Low
-                            {:else if $settings.variety === 2}Med
-                            {:else}High{/if}
-                        </span>
-                    </label>
+                <div class="customize-header">
+                    <h4>Customize Your Vibe</h4>
+                    <button class="reset-btn" onclick={resetSettings} title="Reset to defaults">↺</button>
+                </div>
+
+                <!-- Vibe sliders (new) -->
+                <div class="vibe-slider">
+                    <div class="vibe-labels">
+                        <span>Chill</span>
+                        <span>Energetic</span>
+                    </div>
                     <input
-                        id="variety"
                         type="range"
-                        min="1"
-                        max="3"
-                        bind:value={$settings.variety}
+                        min="-1"
+                        max="1"
+                        step="0.1"
+                        bind:value={$settings.vibeMood}
                     />
                 </div>
 
-                <div class="setting-group">
-                    <label for="genre">
-                        <span>Genre Match</span>
-                        <span class="val">{$settings.genreWeight}</span>
-                    </label>
+                <div class="vibe-slider">
+                    <div class="vibe-labels">
+                        <span>Acoustic</span>
+                        <span>Electronic</span>
+                    </div>
                     <input
-                        id="genre"
                         type="range"
-                        min="0"
-                        max="5"
-                        step="0.5"
-                        bind:value={$settings.genreWeight}
+                        min="-1"
+                        max="1"
+                        step="0.1"
+                        bind:value={$settings.vibeSound}
                     />
                 </div>
 
-                <div class="setting-group">
-                    <label for="count">
-                        <span>Result Artists</span>
-                        <span class="val">{$settings.maxResults}</span>
-                    </label>
+                <div class="vibe-slider">
+                    <div class="vibe-labels">
+                        <span>Hidden Gems</span>
+                        <span>Mainstream</span>
+                    </div>
                     <input
-                        id="count"
                         type="range"
-                        min={LIMITS.MAX_RESULT_ARTISTS.min}
-                        max={LIMITS.MAX_RESULT_ARTISTS.max}
-                        bind:value={$settings.maxResults}
+                        min="-1"
+                        max="1"
+                        step="0.1"
+                        bind:value={$settings.popularity}
                     />
                 </div>
 
-                <div class="setting-group">
-                    <label for="tracks">
-                        <span>Songs per artist</span>
-                        <span class="val">{$settings.tracksPerArtist}</span>
-                    </label>
-                    <input
-                        id="tracks"
-                        type="range"
-                        min={LIMITS.MAX_TRACKS_PER_ARTIST.min}
-                        max={LIMITS.MAX_TRACKS_PER_ARTIST.max}
-                        bind:value={$settings.tracksPerArtist}
-                    />
+                <!-- Compact settings row -->
+                <div class="settings-compact">
+                    <div class="setting-mini">
+                        <div class="setting-label-row">
+                            <span>Variety</span>
+                            <span class="setting-value">{$settings.variety}</span>
+                        </div>
+                        <input type="range" min="1" max="3" bind:value={$settings.variety} />
+                    </div>
+                    <div class="setting-mini">
+                        <div class="setting-label-row">
+                            <span>Genre</span>
+                            <span class="setting-value">{$settings.genreWeight}</span>
+                        </div>
+                        <input type="range" min="0" max="5" step="0.5" bind:value={$settings.genreWeight} />
+                    </div>
+                    <div class="setting-mini">
+                        <div class="setting-label-row">
+                            <span>Artists</span>
+                            <span class="setting-value">{$settings.maxResults}</span>
+                        </div>
+                        <input type="range" min={LIMITS.MAX_RESULT_ARTISTS.min} max={LIMITS.MAX_RESULT_ARTISTS.max} bind:value={$settings.maxResults} />
+                    </div>
+                    <div class="setting-mini">
+                        <div class="setting-label-row">
+                            <span>Songs</span>
+                            <span class="setting-value">{$settings.tracksPerArtist}</span>
+                        </div>
+                        <input type="range" min={LIMITS.MAX_TRACKS_PER_ARTIST.min} max={LIMITS.MAX_TRACKS_PER_ARTIST.max} bind:value={$settings.tracksPerArtist} />
+                    </div>
                 </div>
             </div>
         </aside>
@@ -730,6 +950,7 @@ ${"<"}/script>
                         class="btn-action"
                         onclick={search}
                         disabled={$isLoading}
+                        title="Regenerate with different artists"
                     >
                         <svg
                             viewBox="0 0 24 24"
@@ -762,7 +983,7 @@ ${"<"}/script>
                 </div>
             </div>
             <div class="grid">
-                {#each Object.entries($recommendations) as [artist, tracks] (artist)}
+                {#each Object.entries($recommendations) as [artist, tracks] (artist + '-' + tracks[0]?.track_id)}
                     <ArtistCard
                         {artist}
                         {tracks}
@@ -829,11 +1050,22 @@ ${"<"}/script>
                 </div>
 
                 <div class="side-section favorites-section">
-                    <h4>
-                        Favourites <span class="cnt-badge"
-                            >{$favoriteTracks.length}</span
-                        >
-                    </h4>
+                    <div class="favorites-header">
+                        <h4>
+                            Favourites <span class="cnt-badge"
+                                >{$favoriteTracks.length}</span
+                            >
+                        </h4>
+                        {#if $favoriteTracks.length > 0}
+                            <button
+                                class="fav-download-btn"
+                                onclick={downloadFavoritesJSON}
+                                title="Download favourites as JSON"
+                            >
+                                ⬇
+                            </button>
+                        {/if}
+                    </div>
                     {#if $favoriteTracks.length === 0}
                         <p class="side-empty">No favourites yet</p>
                     {:else}
@@ -990,9 +1222,282 @@ ${"<"}/script>
         filter: brightness(1.1);
     }
 
+    /* Landing vibe toggle (fixed left edge) */
+    .landing-vibe-toggle {
+        position: fixed;
+        left: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 100;
+        width: 42px;
+        height: 42px;
+        background: var(--gold);
+        border: none;
+        border-radius: 50%;
+        color: #111;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px var(--shadow);
+    }
+
+    .landing-vibe-toggle:hover {
+        filter: brightness(1.1);
+    }
+
+    /* Landing vibe panel (slides from left) */
+    .landing-vibe-panel {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        bottom: 0;
+        width: 280px;
+        max-width: 85vw;
+        padding: 1rem;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        z-index: 90;
+        animation: slideInLeft 0.2s ease-out;
+    }
+
+    .landing-vibe-panel h4 {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 0.75rem;
+    }
+
+    @keyframes slideInLeft {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(0); }
+    }
+
+    /* Landing lists toggle (fixed right edge) */
+    .landing-lists-toggle {
+        position: fixed;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 100;
+        width: 42px;
+        height: 42px;
+        background: var(--gold);
+        border: none;
+        border-radius: 50%;
+        color: #111;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px var(--shadow);
+    }
+
+    .landing-lists-toggle:hover {
+        filter: brightness(1.1);
+    }
+
+    /* Landing lists panel (slides from right) */
+    .landing-lists-panel {
+        position: fixed;
+        top: 60px;
+        right: 0;
+        bottom: 0;
+        width: 280px;
+        max-width: 85vw;
+        padding: 1rem;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        overflow-y: auto;
+        z-index: 90;
+        animation: slideInRight 0.2s ease-out;
+    }
+
+    @keyframes slideInRight {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+    }
+
+    .landing-panel-section {
+        margin-bottom: 1rem;
+    }
+
+    .landing-panel-section:last-child {
+        margin-bottom: 0;
+    }
+
+    .landing-panel-section h4 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 0.5rem;
+    }
+
+    .landing-panel-section h4 .cnt {
+        color: var(--gold);
+        font-weight: 500;
+    }
+
+    .landing-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .landing-export-btn {
+        width: 24px;
+        height: 24px;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-2);
+        font-size: 0.8rem;
+    }
+
+    .landing-export-btn:hover {
+        border-color: var(--gold);
+        color: var(--text);
+    }
+
+    .landing-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    .landing-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        padding: 0.15rem 0.35rem;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        color: var(--text);
+    }
+
+    .landing-chip:hover {
+        border-color: #e55;
+    }
+
+    .landing-chip .x {
+        color: var(--text-3);
+    }
+
+    .landing-chip:hover .x {
+        color: #e55;
+    }
+
+    .landing-favorites {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .landing-fav-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    .landing-fav-artist {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--gold);
+    }
+
+    .landing-fav-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.25rem 0.4rem;
+        background: var(--bg-alt);
+        border-radius: 4px;
+        margin-left: 0.5rem;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .landing-fav-row:hover {
+        background: var(--border);
+    }
+
+    .landing-fav-row.playing {
+        background: rgba(29, 185, 84, 0.25);
+        border-left: 2px solid #1db954;
+    }
+
+    .landing-fav-track {
+        font-size: 0.7rem;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .landing-fav-remove {
+        background: none;
+        border: none;
+        color: var(--text-3);
+        font-size: 0.8rem;
+        padding: 0;
+    }
+
+    .landing-fav-remove:hover {
+        color: #e55;
+    }
+
+    .landing-lists-panel .empty {
+        font-size: 0.7rem;
+        color: var(--text-3);
+        font-style: italic;
+    }
+
     .btn-go:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+    }
+
+    /* Landing page player */
+    .landing-player-wrap {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        z-index: 100;
+        box-shadow: 0 4px 12px var(--shadow);
+    }
+
+    .landing-player-info {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.1rem;
+    }
+
+    .landing-player-track {
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: var(--text);
+    }
+
+    .landing-player-artist {
+        font-size: 0.65rem;
+        color: var(--gold);
+    }
+
+    .hidden {
+        position: fixed;
+        left: -9999px;
+        visibility: hidden;
     }
 
     .limit-msg {
@@ -1178,6 +1683,29 @@ ${"<"}/script>
 
     .customize-section {
         flex-shrink: 0;
+    }
+
+    .spacer {
+        flex: 1;
+    }
+
+    .customize-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .reset-btn {
+        background: none;
+        border: none;
+        color: var(--text-3);
+        font-size: 0.85rem;
+        padding: 0.15rem;
+        cursor: pointer;
+    }
+
+    .reset-btn:hover {
+        color: var(--gold);
     }
 
     .side.right {
@@ -1463,6 +1991,36 @@ ${"<"}/script>
         min-height: 0;
         display: flex;
         flex-direction: column;
+    }
+
+    .favorites-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+    }
+
+    .favorites-header h4 {
+        margin: 0;
+    }
+
+    .fav-download-btn {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        color: var(--text-2);
+        cursor: pointer;
+    }
+
+    .fav-download-btn:hover {
+        border-color: var(--gold);
+        color: var(--text);
     }
 
     .favorites-grouped {
@@ -1774,34 +2332,34 @@ ${"<"}/script>
             padding-bottom: 80px;
         }
     }
-    .setting-group {
-        margin-bottom: 0.8rem;
+    /* Vibe sliders - prominent, labeled endpoints */
+    .vibe-slider {
+        margin-bottom: 0.75rem;
     }
 
-    .setting-group label {
+    .vibe-labels {
         display: flex;
         justify-content: space-between;
-        font-size: 0.75rem;
-        color: var(--text-2);
-        margin-bottom: 0.3rem;
+        font-size: 0.65rem;
+        color: var(--text-3);
+        margin-bottom: 0.2rem;
     }
 
-    .setting-group .val {
-        color: var(--gold);
-        font-weight: 600;
-        font-size: 0.7rem;
-    }
-
-    .setting-group input[type="range"] {
+    .vibe-slider input[type="range"] {
         width: 100%;
         height: 4px;
-        background: var(--bg-alt);
+        background: linear-gradient(
+            to right,
+            var(--bg-alt),
+            var(--gold-dim),
+            var(--bg-alt)
+        );
         border-radius: 2px;
         appearance: none;
         outline: none;
     }
 
-    .setting-group input[type="range"]::-webkit-slider-thumb {
+    .vibe-slider input[type="range"]::-webkit-slider-thumb {
         appearance: none;
         width: 14px;
         height: 14px;
@@ -1809,5 +2367,98 @@ ${"<"}/script>
         border-radius: 50%;
         cursor: pointer;
         border: 2px solid var(--surface);
+    }
+
+    /* Compact settings row */
+    .settings-compact {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem 0.75rem;
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--border);
+    }
+
+    .setting-mini {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    .setting-mini span {
+        font-size: 0.6rem;
+        color: var(--text-3);
+    }
+
+    .setting-mini input[type="range"] {
+        width: 100%;
+        height: 3px;
+        background: var(--bg-alt);
+        border-radius: 2px;
+        appearance: none;
+        outline: none;
+    }
+
+    .setting-mini input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        width: 10px;
+        height: 10px;
+        background: var(--gold);
+        border-radius: 50%;
+        cursor: pointer;
+    }
+
+    .setting-label-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .setting-value {
+        font-size: 0.6rem;
+        color: var(--gold);
+        font-weight: 600;
+    }
+
+    .vibe-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+    }
+
+    .vibe-header h4 {
+        margin: 0;
+    }
+
+    .icon-btn {
+        background: none;
+        border: none;
+        color: var(--text-3);
+        cursor: pointer;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition:
+            color 0.2s,
+            background 0.2s;
+    }
+
+    .icon-btn:hover {
+        color: var(--text);
+        background: var(--bg-alt);
+    }
+
+    .custom-reset-btn {
+        margin: 0;
+        padding: 4px;
+        line-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 24px;
+        width: 24px;
     }
 </style>

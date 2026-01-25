@@ -52,7 +52,11 @@ export const settings = createPersistedStore('vibe-settings', {
     genreWeight: 2.0,
     maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
     tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
-    showBackground: true
+    showBackground: true,
+    // Vibe modifiers: -1 to +1 sliders
+    vibeMood: 0,   // Chill (-1) to Energetic (+1)
+    vibeSound: 0,  // Acoustic (-1) to Electronic (+1)
+    popularity: 0, // Hidden Gems (-1) to Mainstream (+1)
 });
 
 // Theme: 'light', 'dark', or 'system'

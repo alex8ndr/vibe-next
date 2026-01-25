@@ -1,5 +1,6 @@
 <script lang="ts">
     import { artistsList } from "$lib/stores";
+    import { fetchArtists } from "$lib/api";
 
     interface Props {
         selected: string[];
@@ -17,22 +18,51 @@
 
     let query = $state("");
     let isOpen = $state(false);
+    let searchResults = $state<string[]>([]);
+    let isSearching = $state(false);
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const filtered = $derived.by(() => {
+        if (query.trim()) {
+            return searchResults;
+        }
         const q = query.toLowerCase();
         return $artistsList
             .filter((a) => a.toLowerCase().includes(q))
             .slice(0, 15);
     });
 
+    $effect(() => {
+        const q = query.trim();
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+        if (!q) {
+            searchResults = [];
+            isSearching = false;
+            return;
+        }
+        isSearching = true;
+        debounceTimer = setTimeout(async () => {
+            try {
+                searchResults = await fetchArtists(q, 15);
+            } catch {
+                searchResults = [];
+            }
+            isSearching = false;
+        }, 150);
+    });
+
     function toggle(artist: string) {
         if (selected.includes(artist)) {
+            // Removing - keep dropdown open
             onchange(selected.filter((a) => a !== artist));
         } else if (selected.length < max) {
+            // Adding - close dropdown
             onchange([...selected, artist]);
+            query = "";
+            isOpen = false;
         }
-        query = "";
-        isOpen = false;
     }
 
     function remove(artist: string) {
@@ -75,18 +105,24 @@
         {/if}
     </div>
 
-    {#if isOpen && filtered.length > 0}
-        <ul class="list">
-            {#each filtered as artist (artist)}
-                {@const isSelected = selected.includes(artist)}
-                <li>
-                    <button class:selected={isSelected} onmousedown={() => toggle(artist)}>
-                        {#if isSelected}<span class="check">✓</span>{/if}
-                        {artist}
-                    </button>
-                </li>
-            {/each}
-        </ul>
+    {#if isOpen}
+        {#if isSearching}
+            <ul class="list">
+                <li><span class="loading">Searching...</span></li>
+            </ul>
+        {:else if filtered.length > 0}
+            <ul class="list">
+                {#each filtered as artist (artist)}
+                    {@const isSelected = selected.includes(artist)}
+                    <li>
+                        <button class:selected={isSelected} onmousedown={() => toggle(artist)}>
+                            {#if isSelected}<span class="check">✓</span>{/if}
+                            {artist}
+                        </button>
+                    </li>
+                {/each}
+            </ul>
+        {/if}
     {/if}
 </div>
 
@@ -208,6 +244,13 @@
     .check {
         margin-right: 0.4rem;
         color: var(--gold);
+    }
+
+    .loading {
+        display: block;
+        padding: 0.55rem 0.7rem;
+        color: var(--text-3);
+        font-size: 0.85rem;
     }
 
     .list li:first-child button {

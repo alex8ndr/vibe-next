@@ -13,6 +13,9 @@ export interface RecommendRequest {
     max_artists?: number;
     genre_weight?: number;
     tracks_per_artist?: number;
+    vibe_mood?: number;  // -1 (chill) to +1 (energetic)
+    vibe_sound?: number; // -1 (acoustic) to +1 (electronic)
+    popularity?: number; // -1 (hidden gems) to +1 (mainstream)
 }
 
 export interface RecommendResponse {

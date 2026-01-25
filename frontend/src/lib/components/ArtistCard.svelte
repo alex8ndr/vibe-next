@@ -25,7 +25,9 @@
     let controller: any = null;
     let isReady = $state(false);
     let firstTrack = "";
+    let currentTrackId = "";
     let showActions = $state(false);
+    let isActuallyPlaying = $state(false);
 
     function getHue(name: string): number {
         let hash = 0;
@@ -41,6 +43,7 @@
 
     onMount(() => {
         firstTrack = tracks[0]?.track_id || "";
+        currentTrackId = firstTrack;
 
         const tryInit = () => {
             const api = (window as any).SpotifyIframeApi;
@@ -64,8 +67,9 @@
                     c.addListener("ready", () => {
                         isReady = true;
                     });
-                    c.addListener("playback_update", () => {
+                    c.addListener("playback_update", (e: any) => {
                         isReady = true;
+                        isActuallyPlaying = !e.data.isPaused;
                     });
                     setTimeout(() => {
                         isReady = true;
@@ -87,8 +91,8 @@
         const resetHandler = (e: CustomEvent) => {
             if (e.detail === artist && controller) {
                 controller.pause();
-                if (firstTrack)
-                    controller.loadUri(`spotify:track:${firstTrack}`);
+                if (currentTrackId)
+                    controller.loadUri(`spotify:track:${currentTrackId}`);
             }
         };
         window.addEventListener("vibeReset", resetHandler as EventListener);
@@ -104,9 +108,10 @@
 
         const prev = $nowPlaying;
 
+        // Toggle play/pause if clicking the same track
         if (prev?.artist === artist && prev?.trackId === trackId) {
             controller.togglePlay();
-            nowPlaying.set(null);
+            isActuallyPlaying = !isActuallyPlaying;
             return;
         }
 
@@ -125,8 +130,10 @@
         }
         sidebarPlaying.set(null);
 
+        currentTrackId = trackId;
         controller.loadUri(`spotify:track:${trackId}`);
         controller.play();
+        isActuallyPlaying = true;
         nowPlaying.set({ artist, trackId, trackName });
     }
 </script>
@@ -179,7 +186,9 @@
                     onclick={() => play(t.track_id, t.track_name)}
                 >
                     <span class="ico"
-                        >{playingTrackId === t.track_id ? "❚❚" : "♪"}</span
+                        >{playingTrackId === t.track_id && isActuallyPlaying
+                            ? "❚❚"
+                            : "♪"}</span
                     >
                     <span class="txt">{t.track_name}</span>
                 </button>
@@ -332,6 +341,7 @@
 
     .trk {
         flex: 1;
+        min-width: 0;
         display: flex;
         align-items: center;
         gap: 0.45rem;

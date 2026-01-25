@@ -145,6 +145,7 @@
 				{themeIcon}
 			</button>
 
+			<!-- Settings button hidden for now
 			<button
 				class="icon-btn"
 				onclick={() => (settingsOpen = !settingsOpen)}
@@ -185,6 +186,7 @@
 					{/if}
 				</div>
 			{/if}
+			-->
 		</div>
 	</header>
 
