@@ -65,6 +65,9 @@ class RecommendRequest(BaseModel):
     max_artists: int = 6
     genre_weight: float = 2.0
     tracks_per_artist: int = 4
+    vibe_mood: float = 0.0  # -1 (chill) to +1 (energetic)
+    vibe_sound: float = 0.0  # -1 (acoustic) to +1 (electronic)
+    popularity: float = 0.0  # -1 (hidden gems) to +1 (mainstream)
 
 
 class Track(BaseModel):
@@ -142,6 +145,13 @@ async def recommend(
     if request.exclude_artists:
         valid_exclude = [a for a in request.exclude_artists if a in music_data.artists_list]
     
+    # Build vibe modifiers dict (only include non-zero values)
+    vibe_modifiers = {}
+    if request.vibe_mood != 0.0:
+        vibe_modifiers['mood'] = request.vibe_mood
+    if request.vibe_sound != 0.0:
+        vibe_modifiers['sound'] = request.vibe_sound
+    
     recs = generate_recommendations(
         data=music_data,
         input_artists=valid_artists,
@@ -150,7 +160,9 @@ async def recommend(
         diversity=request.diversity,
         max_artists=request.max_artists,
         genre_weight=request.genre_weight,
-        tracks_per_artist=request.tracks_per_artist
+        tracks_per_artist=request.tracks_per_artist,
+        vibe_modifiers=vibe_modifiers if vibe_modifiers else None,
+        popularity=request.popularity
     )
     
     # Log search in background
