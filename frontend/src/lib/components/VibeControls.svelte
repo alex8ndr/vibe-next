@@ -1,8 +1,21 @@
 <script lang="ts">
     import { settings, LIMITS } from "$lib/stores";
 
-    // Since this is a specialized component, we can use the stores directly
-    // instead of passing props, which clean up the parent component.
+    function getVarietyLabel(v: number) {
+        if (v <= 1) return "None";
+        if (v === 2) return "Low";
+        if (v === 3) return "Medium";
+        return "High";
+    }
+
+    function getGenreLabel(v: number) {
+        if (v === 0) return "Ignore";
+        if (v <= 1) return "Low";
+        if (v <= 2) return "Medium";
+        if (v <= 3) return "High";
+        if (v <= 4) return "Very High";
+        return "Max";
+    }
 </script>
 
 <div class="vibe-slider">
@@ -51,16 +64,16 @@
     <div class="setting-mini">
         <div class="setting-label-row">
             <span>Variety</span>
-            <span class="setting-value">{$settings.variety}</span>
+            <span class="setting-value">{getVarietyLabel($settings.variety)}</span>
         </div>
-        <input type="range" min="1" max="3" bind:value={$settings.variety} />
+        <input type="range" min="1" max="4" bind:value={$settings.variety} />
     </div>
     <div class="setting-mini">
         <div class="setting-label-row">
-            <span>Genre</span>
-            <span class="setting-value">{$settings.genreWeight}</span>
+            <span>Genre Focus</span>
+            <span class="setting-value">{getGenreLabel($settings.genreWeight)}</span>
         </div>
-        <input type="range" min="0" max="5" step="0.5" bind:value={$settings.genreWeight} />
+        <input type="range" min="0" max="4" step="0.5" bind:value={$settings.genreWeight} />
     </div>
     <div class="setting-mini">
         <div class="setting-label-row">

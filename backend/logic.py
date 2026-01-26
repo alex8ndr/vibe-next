@@ -58,7 +58,7 @@ ARTIST_SAMPLING_CURVE = [
 TRACKS_PER_ARTIST = 4
 
 # Noise strength for variety control (easy to tune)
-VARIETY_NOISE_SCALE = 0.15  # Higher = more randomness
+VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
 
 
 class DataSource(Protocol):
@@ -274,7 +274,7 @@ def generate_recommendations(
         d_total = d_total - pop_bias
     
     # Use Gumbel noise for variety - gives controlled randomness while respecting relevance
-    n = 200 * diversity
+    n = 1000
     if diversity > 1:
         # Add noise scaled by diversity level
         noise_scale = VARIETY_NOISE_SCALE * (diversity - 1)
@@ -299,7 +299,8 @@ def generate_recommendations(
     artist_stats = (
         pool.group_by('artist_name')
         .agg([
-            pl.col('score').sum().alias('total_score'),
+            # Get scores of top K tracks for this artist
+            pl.col('score').sort(descending=True).head(tracks_per_artist).sum().alias('total_score'),
             pl.col('track_id').count().alias('track_count')
         ])
         .filter(pl.col('track_count') >= 2)
