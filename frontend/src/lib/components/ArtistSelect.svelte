@@ -3,14 +3,14 @@
     import { fetchArtists } from "$lib/api";
 
     interface Props {
-        selected: string[];
-        onchange: (artists: string[]) => void;
+        selected?: string[];
+        onchange?: (artists: string[]) => void;
         max?: number;
         placeholder?: string;
     }
 
     let {
-        selected = [],
+        selected = $bindable([]),
         onchange,
         max = 5,
         placeholder = "Search artists...",
@@ -56,17 +56,20 @@
     function toggle(artist: string) {
         if (selected.includes(artist)) {
             // Removing - keep dropdown open
-            onchange(selected.filter((a) => a !== artist));
+            selected = selected.filter((a) => a !== artist);
+            onchange?.(selected);
         } else if (selected.length < max) {
             // Adding - close dropdown
-            onchange([...selected, artist]);
+            selected = [...selected, artist];
+            onchange?.(selected);
             query = "";
             isOpen = false;
         }
     }
 
     function remove(artist: string) {
-        onchange(selected.filter((a) => a !== artist));
+        selected = selected.filter((a) => a !== artist);
+        onchange?.(selected);
     }
 
     function handleKeydown(e: KeyboardEvent) {
@@ -130,6 +133,7 @@
     .wrapper {
         position: relative;
         flex: 1;
+        width: 100%;
     }
 
     .input-box {
