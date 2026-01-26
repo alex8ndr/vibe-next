@@ -80,7 +80,7 @@
     <div class="hero">
         <h1>Discover your next<br />favourite artist</h1>
         <p class="tagline">
-            Music recommendations based on what you already love
+            Personalized music recommendations based on your unique taste
         </p>
 
         <div class="search-row">

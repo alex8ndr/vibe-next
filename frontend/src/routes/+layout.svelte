@@ -279,6 +279,7 @@
 		background: var(--bg-alt);
 	}
 
+	/* 
 	.icon-btn svg {
 		width: 18px;
 		height: 18px;
@@ -333,6 +334,7 @@
 		text-align: center;
 		padding: 0.5rem 0;
 	}
+	*/
 
 	.main {
 		flex: 1;
@@ -349,11 +351,13 @@
 			display: none;
 		}
 
+		/* 
 		.dropdown {
 			position: fixed;
 			left: 1rem;
 			right: 1rem;
 			width: auto;
 		}
+		*/
 	}
 </style>
