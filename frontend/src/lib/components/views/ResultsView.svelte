@@ -247,11 +247,7 @@
                                         <span class="muted">No matches</span>
                                     {/if}
                                 </div>
-                                {#if (fineTune[artist]?.length || 0) > 0}
-                                    <div class="limit-indicator">
-                                        {fineTune[artist].length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST} songs selected
-                                    </div>
-                                {/if}
+
                             {/if}
                         </div>
                     {/each}

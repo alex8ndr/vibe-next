@@ -60,6 +60,9 @@ TRACKS_PER_ARTIST = 4
 # Noise strength for variety control (easy to tune)
 VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
 
+# Sample size for Gumbel noise distribution
+SAMPLE_SIZE = 1000
+
 
 class DataSource(Protocol):
     def load(self) -> pl.DataFrame:
@@ -248,7 +251,7 @@ def generate_recommendations(
         return {}
     
     # Apply vibe modifiers to audio vector
-    if vibe_modifiers:
+    if vibe_modifiers is not None:
         vec_audio = vec_audio.copy().astype(np.float32)
         for vibe_name, slider_value in vibe_modifiers.items():
             if vibe_name in VIBE_DIMENSIONS and slider_value != 0:
@@ -274,7 +277,7 @@ def generate_recommendations(
         d_total = d_total - pop_bias
     
     # Use Gumbel noise for variety - gives controlled randomness while respecting relevance
-    n = 1000
+    n = SAMPLE_SIZE
     if diversity > 1:
         # Add noise scaled by diversity level
         noise_scale = VARIETY_NOISE_SCALE * (diversity - 1)

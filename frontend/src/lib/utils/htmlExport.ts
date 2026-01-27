@@ -5,8 +5,20 @@ export interface ExportOptions {
     selectedArtists: string[];
 }
 
+// Helper to escape HTML entities
+function escapeHtml(unsafe: string): string {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 export function generateHTML({ recommendations, selectedArtists }: ExportOptions): string {
-    const inputArtists = selectedArtists.join(" • ");
+    // Escape input artists
+    const inputArtists = selectedArtists.map(escapeHtml).join(" • ");
+    
     const date = new Date().toLocaleDateString("en-US", {
         year: "numeric",
         month: "long",
@@ -15,19 +27,22 @@ export function generateHTML({ recommendations, selectedArtists }: ExportOptions
 
     let cards = "";
     for (const [artist, tracks] of Object.entries(recommendations)) {
+        // Safe ID for DOM elements (alphanumeric only)
         const artistId = artist.replace(/[^a-zA-Z0-9]/g, "_");
+        // Escape display name
+        const displayArtist = escapeHtml(artist);
         const firstTrack = tracks[0]?.track_id || "";
 
         let trackButtons = "";
         for (let i = 0; i < tracks.length; i++) {
             const track = tracks[i];
-            const active = i === 0 ? "active" : "";
-            const safeName = track.track_name.replace(/"/g, "&quot;");
-            trackButtons += `<button class="track-btn ${active}" onclick="playTrack(this, '${track.track_id}')">${safeName}</button>`;
+            // Escape track name
+            const safeName = escapeHtml(track.track_name);
+            trackButtons += `<button class="track-btn" onclick="playTrack(this, '${track.track_id}')">${safeName}</button>`;
         }
 
         cards += `<div class="card" data-artist="${artistId}">
-            <h2>${artist}</h2>
+            <h2>${displayArtist}</h2>
             <div class="player-container" id="player_${artistId}" data-track="${firstTrack}"></div>
             <div class="tracks">${trackButtons}</div>
         </div>`;
@@ -237,23 +252,44 @@ window.onSpotifyIframeApiReady = (IFrameAPI) => {
     });
 };
 
-let currentArtist = null;
+// State tracking
+let currentArtistId = null;
+let currentTrackId = null;
 
 function playTrack(btn, trackId) {
     const card = btn.closest('.card');
     const artistId = card.dataset.artist;
+    const controller = controllers[artistId];
     
-    if (currentArtist && currentArtist !== artistId && controllers[currentArtist]) {
-        controllers[currentArtist].pause();
+    if (!controller) return;
+
+    // Case 1: Clicked the same track that is already active
+    if (currentArtistId === artistId && currentTrackId === trackId) {
+        controller.togglePlay();
+        return;
+    }
+
+    // Case 2: Switching artists - pause the old one
+    if (currentArtistId && currentArtistId !== artistId && controllers[currentArtistId]) {
+        controllers[currentArtistId].pause();
     }
     
-    if (controllers[artistId]) {
-        controllers[artistId].loadUri('spotify:track:' + trackId);
-        controllers[artistId].play();
-        currentArtist = artistId;
-        card.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-    }
+    // Case 3: Play new track
+    controller.loadUri('spotify:track:' + trackId);
+    controller.play();
+    
+    // Update state
+    currentArtistId = artistId;
+    currentTrackId = trackId;
+    
+    // Update UI highlights
+    document.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // Also update this card's other buttons to ensure only one is active
+    card.querySelectorAll('.track-btn').forEach(b => {
+        if (b !== btn) b.classList.remove('active');
+    });
 }
 ${"<"}/script>
 </body></html>`;

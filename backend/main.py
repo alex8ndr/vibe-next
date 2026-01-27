@@ -229,6 +229,10 @@ async def get_analytics_stats():
             "total_searches": total,
             "unique_artists_searched": len(artists)
         }
+    except json.JSONDecodeError as e:
+        return {"error": f"Invalid analytics data: {e}"}
+    except OSError as e:
+        return {"error": f"Unable to read analytics data: {e}"}
     except Exception as e:
         return {"error": str(e)}
 
