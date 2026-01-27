@@ -37,6 +37,7 @@
     let showLandingPanel = $state(false);
     let showVibePanel = $state(false);
     let heroExpandedArtist = $state<string | null>(null);
+    let songSearch = $state("");
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -47,7 +48,12 @@
 
     // Actions
     function toggleHeroExpanded(artist: string) {
-        heroExpandedArtist = heroExpandedArtist === artist ? null : artist;
+        if (heroExpandedArtist === artist) {
+            heroExpandedArtist = null;
+        } else {
+            heroExpandedArtist = artist;
+            songSearch = "";
+        }
     }
 
     function toggleSong(artist: string, song: string) {
@@ -139,9 +145,16 @@
                             <span class="songs-title"
                                 >{heroExpandedArtist}</span
                             >
+                            <input
+                                type="text"
+                                class="landing-song-search"
+                                placeholder="Search..."
+                                bind:value={songSearch}
+                                onclick={(e) => e.stopPropagation()}
+                            />
                         </div>
                         <div class="songs-scroll">
-                            {#each artistTracks[heroExpandedArtist] || [] as t (t.track_id)}
+                            {#each (artistTracks[heroExpandedArtist] || []).filter((t: Track) => !songSearch || t.track_name.toLowerCase().includes(songSearch.toLowerCase())) as t (t.track_id)}
                                 {@const sel = (
                                     fineTune[heroExpandedArtist] || []
                                 ).includes(t.track_name)}
@@ -169,10 +182,9 @@
                                 <span class="muted">Loading...</span>
                             {/if}
                         </div>
-                        {#if isAtSongLimit(heroExpandedArtist)}
+                        {#if (fineTune[heroExpandedArtist]?.length || 0) > 0}
                             <div class="limit-indicator">
-                                {fineTune[heroExpandedArtist]
-                                    .length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST}
+                                {fineTune[heroExpandedArtist].length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST}
                                 songs selected
                             </div>
                         {/if}

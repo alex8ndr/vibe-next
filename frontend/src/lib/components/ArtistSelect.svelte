@@ -90,10 +90,10 @@
 <div class="wrapper">
     <div class="input-box">
         {#each selected as artist (artist)}
-            <span class="chip">
+            <button class="chip" onclick={() => remove(artist)} title="Remove {artist}">
                 {artist}
-                <button class="x" onclick={() => remove(artist)}>×</button>
-            </span>
+                <span class="x">×</span>
+            </button>
         {/each}
 
         {#if selected.length < max}
@@ -160,6 +160,7 @@
         padding: 0.2rem 0.45rem;
         background: var(--gold);
         color: #111;
+        border: none;
         border-radius: 4px;
         font-size: 0.8rem;
         font-weight: 500;
@@ -167,6 +168,12 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        cursor: pointer;
+        transition: filter 0.2s;
+    }
+
+    .chip:hover {
+        filter: brightness(0.9);
     }
 
     .x {

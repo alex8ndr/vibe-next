@@ -10,6 +10,7 @@
         onAddToSearch?: () => void;
         onAddFavorite?: (track: Track) => void;
         isKnown?: boolean;
+        isAdded?: boolean;
     }
 
     let {
@@ -19,6 +20,7 @@
         onAddToSearch,
         onAddFavorite,
         isKnown = false,
+        isAdded = false,
     }: Props = $props();
 
     let playerEl: HTMLDivElement;
@@ -151,11 +153,11 @@
             {#if onAddToKnown}
                 <button
                     class="action-btn"
+                    class:active={isKnown}
                     onclick={onAddToKnown}
                     title={isKnown
-                        ? "Already in known list"
+                        ? "Remove from known list"
                         : "Add to known list"}
-                    disabled={isKnown}
                 >
                     {isKnown ? "✓" : "👁"}
                 </button>
@@ -164,9 +166,10 @@
                 <button
                     class="action-btn"
                     onclick={onAddToSearch}
-                    title="Add to search"
+                    class:active={isAdded}
+                    title={isAdded ? "Remove from search" : "Add to search"}
                 >
-                    +
+                    {isAdded ? "-" : "+"}
                 </button>
             {/if}
         </div>
@@ -261,11 +264,18 @@
         border-radius: 4px;
         font-size: 0.7rem;
         color: var(--text-2);
+        transition: all 0.15s;
     }
 
     .action-btn:hover:not(:disabled) {
         border-color: var(--gold);
         color: var(--text);
+    }
+
+    .action-btn.active {
+        background: var(--gold-glow);
+        border-color: var(--gold);
+        color: var(--gold);
     }
 
     .action-btn:disabled {

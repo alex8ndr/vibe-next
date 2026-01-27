@@ -3,15 +3,14 @@
     import ArtistCard from "$lib/components/ArtistCard.svelte";
     import UserLibrary from "$lib/components/UserLibrary.svelte";
     import VibeControls from "$lib/components/VibeControls.svelte";
+    import { generateHTML } from "$lib/utils/htmlExport";
     import {
-        artistsList,
         recommendations,
         isLoading,
         settings,
         knownArtists,
         favoriteTracks,
         rightPanelOpen,
-        nowPlaying,
         sidebarPlaying,
         mobileSidebarOpen,
         LIMITS,
@@ -39,13 +38,17 @@
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
+    const hasRecommendations = $derived(Object.keys($recommendations).length > 0);
     
+    const SINGLE_EXPAND = true;
+
     // Actions
     function toggleExpanded(artist: string) {
         const next = new Set(expandedArtists);
         if (next.has(artist)) {
             next.delete(artist);
         } else {
+            if (SINGLE_EXPAND) next.clear();
             next.add(artist);
         }
         expandedArtists = next;
@@ -91,16 +94,17 @@
 
     function addToKnown(artist: string) {
         knownArtists.update((list) => {
-            if (list.includes(artist)) return list;
+            if (list.includes(artist)) {
+                return list.filter(a => a !== artist);
+            }
             return [...list, artist];
         });
     }
 
     function addToSearch(artist: string) {
-         if (
-            !selected.includes(artist) &&
-            selected.length < LIMITS.MAX_INPUT_ARTISTS
-        ) {
+        if (selected.includes(artist)) {
+            selected = selected.filter((a: string) => a !== artist);
+        } else if (selected.length < LIMITS.MAX_INPUT_ARTISTS) {
             selected = [...selected, artist];
         }
     }
@@ -115,119 +119,11 @@
         };
     }
 
-    function generateHTML(): string {
-        const inputArtists = selected.join(" • ");
-
-        let cards = "";
-        for (const [artist, tracks] of Object.entries($recommendations)) {
-            const artistId = artist.replace(/[^a-zA-Z0-9]/g, "_");
-            const firstTrack = tracks[0]?.track_id || "";
-
-            let trackButtons = "";
-            for (let i = 0; i < tracks.length; i++) {
-                const track = tracks[i];
-                const active = i === 0 ? "active" : "";
-                const safeName = track.track_name.replace(/"/g, "&quot;");
-                trackButtons += `<button class="track-btn ${active}" onclick="playTrack(this, '${track.track_id}')">${safeName}</button>`;
-            }
-
-            cards += `<div class="card" data-artist="${artistId}">
-                <h2>${artist}</h2>
-                <div class="player-container" id="player_${artistId}" data-track="${firstTrack}"></div>
-                ${trackButtons}
-            </div>`;
-        }
-
-        return `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vibe Recommendations</title>
-<style>
-* { box-sizing: border-box; }
-body { 
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-    max-width: 1200px; margin: 0 auto; padding: 20px; 
-    background: #0e1117; color: #fafafa;
-}
-h1 { color: #fafafa; border-bottom: 2px solid #1db954; padding-bottom: 10px; }
-.input { 
-    background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; 
-    margin-bottom: 20px; border-left: 4px solid #1db954;
-}
-.grid { 
-    display: grid; 
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
-    gap: 20px; 
-}
-.card { 
-    background: rgba(255,255,255,0.03); 
-    padding: 20px; border-radius: 12px; 
-    border: 1px solid rgba(255,255,255,0.1);
-}
-.card h2 { color: #fafafa; margin: 0 0 15px 0; font-size: 1.2rem; }
-.player-container { 
-    background: rgba(0,0,0,0.3); 
-    border-radius: 12px; 
-    min-height: 80px; 
-    margin-bottom: 10px;
-}
-.track-btn {
-    display: block; width: 100%; padding: 10px 12px;
-    margin: 4px 0; border: none; border-radius: 8px;
-    background: rgba(255,255,255,0.05); color: #fafafa;
-    text-align: left; cursor: pointer; font-size: 14px;
-    transition: background 0.2s;
-}
-.track-btn:hover { background: rgba(29, 185, 84, 0.2); }
-.track-btn.active { background: rgba(29, 185, 84, 0.3); border-left: 3px solid #1db954; }
-</style>
-</head><body>
-<h1>🎵 Vibe Recommendations</h1>
-<div class="input"><strong>Based on:</strong> ${inputArtists}</div>
-<div class="grid">${cards}</div>
-${"<"}script src="https://open.spotify.com/embed/iframe-api/v1" async>${"<"}/script>
-${"<"}script>
-const controllers = {};
-
-window.onSpotifyIframeApiReady = (IFrameAPI) => {
-    document.querySelectorAll('.player-container').forEach(container => {
-        const artistId = container.id.replace('player_', '');
-        const trackId = container.dataset.track;
-        
-        IFrameAPI.createController(container, {
-            width: '100%',
-            height: '80',
-            uri: trackId ? 'spotify:track:' + trackId : ''
-        }, (controller) => {
-            controllers[artistId] = controller;
-        });
-    });
-};
-
-let currentArtist = null;
-
-function playTrack(btn, trackId) {
-    const card = btn.closest('.card');
-    const artistId = card.dataset.artist;
-    
-    if (currentArtist && currentArtist !== artistId && controllers[currentArtist]) {
-        controllers[currentArtist].pause();
-    }
-    
-    if (controllers[artistId]) {
-        controllers[artistId].loadUri('spotify:track:' + trackId);
-        controllers[artistId].play();
-        currentArtist = artistId;
-        card.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-    }
-}
-${"<"}/script>
-</body></html>`;
-    }
-
     function downloadHTML() {
-        const html = generateHTML();
+        const html = generateHTML({
+            recommendations: $recommendations,
+            selectedArtists: selected,
+        });
         const blob = new Blob([html], { type: "text/html" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -258,7 +154,6 @@ ${"<"}/script>
 
 <div class="results-wrap" class:right-open={$rightPanelOpen}>
     <aside class="side left">
-        <h3>Search</h3>
         <div class="side-search">
             <ArtistSelect
                 bind:selected
@@ -349,10 +244,14 @@ ${"<"}/script>
                                         </button>
                                     {/each}
                                     {#if getFilteredTracks(artist, globalSongSearch).length === 0 && globalSongSearch}
-                                        <span class="muted">No matches</span
-                                        >
+                                        <span class="muted">No matches</span>
                                     {/if}
                                 </div>
+                                {#if (fineTune[artist]?.length || 0) > 0}
+                                    <div class="limit-indicator">
+                                        {fineTune[artist].length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST} songs selected
+                                    </div>
+                                {/if}
                             {/if}
                         </div>
                     {/each}
@@ -385,6 +284,7 @@ ${"<"}/script>
                 <button
                     class="btn-action"
                     onclick={downloadHTML}
+                    disabled={!hasRecommendations}
                     title="Download as HTML with Spotify players"
                 >
                     <svg
@@ -402,6 +302,7 @@ ${"<"}/script>
                 <button
                     class="btn-action"
                     onclick={downloadJSON}
+                    disabled={!hasRecommendations}
                     title="Download as JSON"
                 >
                     <svg
@@ -419,18 +320,26 @@ ${"<"}/script>
             </div>
         </div>
 
+        {#if !hasRecommendations}
+            <div class="empty-state">
+                <p>No recommendations yet.</p>
+                <p class="muted">Add artists and click Update to get started.</p>
+            </div>
+        {:else}
         <div class="grid">
             {#each Object.entries($recommendations) as [artist, tracks] (artist + '-' + (tracks[0]?.track_id || ''))}
                 <ArtistCard 
                     {artist} 
                     {tracks}
                     isKnown={$knownArtists.includes(artist)}
+                    isAdded={selected.includes(artist)}
                     onAddToKnown={() => addToKnown(artist)}
                     onAddToSearch={() => addToSearch(artist)}
                     onAddFavorite={createAddFavoriteHandler(artist)}
                 />
             {/each}
         </div>
+        {/if}
     </section>
 
     <div class="side-right-toggle" class:hidden={$rightPanelOpen}>
@@ -472,4 +381,12 @@ ${"<"}/script>
             </div>
         {/if}
     </aside>
+
+    <!-- Mobile library toggle (matches landing page style) -->
+    <button
+        class="landing-lists-toggle mobile-only"
+        onclick={() => mobileSidebarOpen.update(v => !v)}
+    >
+        ♥ {$favoriteTracks.length}
+    </button>
 </div>
