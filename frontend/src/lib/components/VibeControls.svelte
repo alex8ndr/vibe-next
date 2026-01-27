@@ -46,6 +46,7 @@
     />
 </div>
 
+<!--
 <div class="vibe-slider">
     <div class="vibe-labels">
         <span>Hidden Gems</span>
@@ -59,6 +60,7 @@
         bind:value={$settings.popularity}
     />
 </div>
+-->
 
 <div class="settings-compact">
     <div class="setting-mini">

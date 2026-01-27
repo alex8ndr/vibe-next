@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Protocol
 
 FEATURE_WEIGHTS = {
-    'popularity': 0.6,
-    'year': 0.6,
+    'popularity': 0.4,
+    'year': 0.4,
     'duration_ms': 0.4,
     'acousticness': 1.2,
     'danceability': 1.2,
@@ -31,9 +31,9 @@ VIBE_DIMENSIONS = {
     # Chill (-1) to Energetic (+1): affects energy, danceability, tempo, loudness
     'mood': {
         'energy': 1.0,
+        'loudness': 0.2,
         'danceability': 0.0,
         'valence': 0.0,
-        'loudness': 0.0,
     },
     # Acoustic (-1) to Electronic (+1): affects acousticness (inverted), instrumentalness
     'sound': {
@@ -44,7 +44,7 @@ VIBE_DIMENSIONS = {
 }
 
 # How strongly vibe sliders affect the search (in feature units, 0-1 scale)
-VIBE_SLIDER_STRENGTH = 1
+VIBE_SLIDER_STRENGTH = 0.8
 
 # Tracks to keep when computing representative vector for an artist 
 ARTIST_SAMPLING_CURVE = [
