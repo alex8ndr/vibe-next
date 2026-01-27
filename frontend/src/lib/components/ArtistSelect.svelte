@@ -46,7 +46,8 @@
         debounceTimer = setTimeout(async () => {
             try {
                 searchResults = await fetchArtists(q, 15);
-            } catch {
+            } catch (e) {
+                console.error("Artist search failed:", e);
                 searchResults = [];
             }
             isSearching = false;

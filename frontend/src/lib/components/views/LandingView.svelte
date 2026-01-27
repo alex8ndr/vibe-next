@@ -182,7 +182,7 @@
                                 <span class="muted">Loading...</span>
                             {/if}
                         </div>
-                        {#if (fineTune[heroExpandedArtist]?.length || 0) > 0}
+                        {#if (fineTune[heroExpandedArtist]?.length || 0) >= LIMITS.MAX_INPUT_SONGS_PER_ARTIST}
                             <div class="limit-indicator">
                                 {fineTune[heroExpandedArtist].length}/{LIMITS.MAX_INPUT_SONGS_PER_ARTIST}
                                 songs selected

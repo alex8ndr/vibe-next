@@ -132,8 +132,12 @@
                             role="button"
                             tabindex="0"
                             onclick={() => onplay(track)}
-                            onkeydown={(e) =>
-                                e.key === "Enter" && onplay(track)}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    onplay(track);
+                                }
+                            }}
                         >
                             <span class="fav-track-name">{track.track_name}</span>
                             <button

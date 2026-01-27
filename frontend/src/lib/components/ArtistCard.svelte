@@ -188,11 +188,17 @@
                     class:playing={playingTrackId === t.track_id}
                     onclick={() => play(t.track_id, t.track_name)}
                 >
-                    <span class="ico"
-                        >{playingTrackId === t.track_id && isActuallyPlaying
-                            ? "❚❚"
-                            : "♪"}</span
-                    >
+                    <span class="ico">
+                        {#if playingTrackId === t.track_id && isActuallyPlaying}
+                            <!-- Pause Icon -->
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5V19M16 5V19" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+                        {:else}
+                            <!-- Note Icon -->
+                            <svg class="note" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                            <!-- Play Icon -->
+                            <svg class="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        {/if}
+                    </span>
                     <span class="txt">{t.track_name}</span>
                 </button>
                 {#if onAddFavorite}
@@ -391,20 +397,36 @@
         color: #fff;
     }
 
-    .trk.playing::before {
-        background: #fff;
-    }
+
 
     .ico {
-        width: 0.85rem;
-        text-align: center;
-        font-size: 0.65rem;
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         opacity: 0.7;
+    }
+
+    .trk:hover .ico {
+        opacity: 1;
     }
 
     .trk.playing .ico {
         opacity: 1;
-        letter-spacing: -2px;
+    }
+
+    /* Show play icon on hover if not playing */
+    .trk:hover .note {
+        display: none;
+    }
+    
+    .trk .play-icon {
+        display: none;
+    }
+
+    .trk:hover .play-icon {
+        display: block;
     }
 
     .txt {
