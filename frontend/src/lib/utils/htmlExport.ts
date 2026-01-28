@@ -31,14 +31,15 @@ export function generateHTML({ recommendations, selectedArtists }: ExportOptions
         const artistId = artist.replace(/[^a-zA-Z0-9]/g, "_");
         // Escape display name
         const displayArtist = escapeHtml(artist);
-        const firstTrack = tracks[0]?.track_id || "";
+        const firstTrack = tracks[0]?.track_id ? escapeHtml(tracks[0].track_id) : "";
 
         let trackButtons = "";
         for (let i = 0; i < tracks.length; i++) {
             const track = tracks[i];
             // Escape track name
             const safeName = escapeHtml(track.track_name);
-            trackButtons += `<button class="track-btn" onclick="playTrack(this, '${track.track_id}')">${safeName}</button>`;
+            const safeId = escapeHtml(track.track_id);
+            trackButtons += `<button class="track-btn" onclick="playTrack(this, '${safeId}')">${safeName}</button>`;
         }
 
         cards += `<div class="card" data-artist="${artistId}">
