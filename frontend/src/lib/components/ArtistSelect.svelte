@@ -29,7 +29,7 @@
         const q = query.toLowerCase();
         return $artistsList
             .filter((a) => a.toLowerCase().includes(q))
-            .slice(0, 15);
+            .slice(0, 100);
     });
 
     $effect(() => {
@@ -45,7 +45,7 @@
         isSearching = true;
         debounceTimer = setTimeout(async () => {
             try {
-                searchResults = await fetchArtists(q, 15);
+                searchResults = await fetchArtists(q, 100);
             } catch (e) {
                 console.error("Artist search failed:", e);
                 searchResults = [];
@@ -102,14 +102,16 @@
         {/each}
 
         {#if selected.length < max}
-            <input
-                type="text"
-                bind:value={query}
-                {placeholder}
-                onkeydown={handleKeydown}
-                onfocus={() => (isOpen = true)}
-                onblur={() => setTimeout(() => (isOpen = false), 120)}
-            />
+            <div style="flex: 1; min-width: 80px; display: flex;">
+                <input
+                    type="text"
+                    bind:value={query}
+                    {placeholder}
+                    onkeydown={handleKeydown}
+                    onfocus={() => (isOpen = true)}
+                    onblur={() => setTimeout(() => (isOpen = false), 120)}
+                />
+            </div>
         {/if}
     </div>
 
@@ -196,8 +198,8 @@
     }
 
     input {
-        flex: 1;
-        min-width: 80px;
+        width: 100%;
+        min-width: 0;
         background: transparent;
         border: none;
         color: var(--text);
