@@ -116,6 +116,7 @@
 
 /* Landing vibe panel (slides from left) */
 .landing-vibe-panel {
+    position: fixed;
     top: 52px;
     left: 0;
     bottom: 0;
@@ -191,6 +192,7 @@
 
 /* Landing lists panel (slides from right) */
 .landing-lists-panel {
+    position: fixed;
     top: 52px;
     right: 0;
     bottom: 0;
@@ -540,7 +542,13 @@
     color: var(--gold);
 }
 
+.btn-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
 .btn-update {
+    flex: 1;
     padding: 0.55rem;
     background: var(--gold);
     color: #111;
@@ -552,6 +560,28 @@
 
 .btn-update:disabled {
     opacity: 0.5;
+}
+
+.btn-regenerate {
+    width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-2);
+    transition: all 0.15s;
+}
+
+.btn-regenerate:hover:not(:disabled) {
+    border-color: var(--gold);
+    color: var(--gold);
+}
+
+.btn-regenerate:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .side-section {
@@ -1063,5 +1093,83 @@
 }
 
 @media (max-width: 1024px) { .desktop-close-btn { display: none; } }
+
+/* Dev mode section */
+.dev-section {
+    border-top: 1px dashed var(--border);
+    margin-top: auto;
+}
+
+.dev-header h4 {
+    font-size: 0.65rem;
+    color: var(--text-3);
+}
+
+.dev-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 0.25rem 0;
+}
+
+.dev-toggle input {
+    accent-color: var(--gold);
+}
+
+.dev-pool-status {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--text-2);
+}
+
+.pool-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Debug info display in results header */
+.debug-input-profile {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--text-3);
+    margin-bottom: 0.5rem;
+}
+
+.debug-search-vector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    font-size: 0.65rem;
+    color: var(--text-3);
+    margin-bottom: 0.5rem;
+}
+
+.debug-label {
+    font-weight: 600;
+}
+
+.debug-artist-profile {
+    background: var(--bg-alt);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+}
+
+.debug-feature {
+    background: var(--bg-alt);
+    padding: 0.15rem 0.35rem;
+    border-radius: 3px;
+    font-family: monospace;
+}
 
 

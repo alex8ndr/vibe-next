@@ -6,6 +6,7 @@
     import { generateHTML } from "$lib/utils/htmlExport";
     import {
         recommendations,
+        recommendationsMeta,
         isLoading,
         settings,
         knownArtists,
@@ -13,6 +14,7 @@
         rightPanelOpen,
         sidebarPlaying,
         mobileSidebarOpen,
+        devSettings,
         LIMITS,
         type Track,
         type FavoriteTrack,
@@ -22,13 +24,19 @@
         selected = $bindable(),
         fineTune = $bindable(),
         artistTracks,
+        lastSearchParams = "",
+        hitArtistLimit = false,
         onsearch,
-        onplay, // event prop
+        onregenerate,
+        onplay,
     } = $props<{
         selected: string[];
         fineTune: Record<string, string[]>;
         artistTracks: Record<string, Track[]>;
+        lastSearchParams?: string;
+        hitArtistLimit?: boolean;
         onsearch: () => void;
+        onregenerate: () => void;
         onplay: (track: FavoriteTrack) => void;
     }>();
 
@@ -37,8 +45,25 @@
     let globalSongSearch = $state("");
 
     // Derived
+    const currentParams = $derived(JSON.stringify({ selected, fineTune }));
+    const paramsChanged = $derived(lastSearchParams !== "" && currentParams !== lastSearchParams);
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
     const hasRecommendations = $derived(Object.keys($recommendations).length > 0);
+    const hasFineTuneSelections = $derived(
+        (Object.values(fineTune) as string[][]).some(tracks => tracks.length > 0)
+    );
+    const canRegenerate = $derived(
+        hasRecommendations && ($recommendationsMeta?.has_more_candidates ?? true)
+    );
+    const debugInfo = $derived($recommendationsMeta?.debug);
+    const inputGenreProfile = $derived($recommendationsMeta?.input_genre_profile);
+    const searchVectorAudio = $derived($recommendationsMeta?.search_vector_audio);
+    const searchVectorGenre = $derived($recommendationsMeta?.search_vector_genre);
+    
+    // Helper to format genre profile for display
+    function formatGenreProfile(genres: Array<{genre: string, pct: number}>): string {
+        return genres.map(g => `${Math.round(g.pct)}% ${g.genre}`).join(', ');
+    }
     
     const SINGLE_EXPAND = true;
 
@@ -80,16 +105,18 @@
     }
 
     function resetSettings() {
-        settings.set({
-            variety: 2,
-            genreWeight: 2.0,
-            maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
-            tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
-            showBackground: true,
-            vibeMood: 0,
-            vibeSound: 0,
-            popularity: 0,
-        });
+        if (window.confirm('Reset customize settings to defaults?')) {
+            settings.set({
+                variety: 2,
+                genreWeight: 2.0,
+                maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
+                tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
+                showBackground: true,
+                vibeMood: 0,
+                vibeSound: 0,
+                popularity: 0,
+            });
+        }
     }
 
     function addToKnown(artist: string) {
@@ -166,18 +193,46 @@
                 >Max {LIMITS.MAX_INPUT_ARTISTS} artists</span
             >
         {/if}
-        <button
-            class="btn-update"
-            onclick={onsearch}
-            disabled={!selected.length || $isLoading}
-        >
-            {$isLoading ? "Updating..." : "Update"}
-        </button>
+        <div class="btn-row">
+            <button
+                class="btn-update"
+                onclick={onsearch}
+                disabled={!selected.length || $isLoading}
+            >
+                {$isLoading ? "Updating..." : "Update"}
+            </button>
+            <button
+                class="btn-regenerate"
+                onclick={onregenerate}
+                disabled={!canRegenerate || $isLoading || paramsChanged || hitArtistLimit}
+                title={hitArtistLimit || paramsChanged ? "Update search first" : canRegenerate ? "Regenerate with different artists" : "No more alternatives available"}
+            >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+                </svg>
+            </button>
+        </div>
 
         {#if selected.length > 0}
             <div class="side-section fine-tune-section">
                 <div class="fine-header">
                     <h4>Fine-tune</h4>
+                    {#if hasFineTuneSelections}
+                        <button 
+                            class="reset-btn" 
+                            onclick={() => {
+                                if (window.confirm('Clear all fine-tune selections?')) {
+                                    fineTune = {};
+                                }
+                            }}
+                            title="Clear all selections"
+                            aria-label="Clear all selections"
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+                            </svg>
+                        </button>
+                    {/if}
                     <div class="search-input-wrap">
                         <input
                             type="text"
@@ -271,11 +326,62 @@
 
             <VibeControls />
         </div>
+
+        <!-- Dev mode section: only visible in dev builds -->
+        {#if import.meta.env.DEV}
+            <div class="side-section dev-section">
+                <div class="dev-header">
+                    <h4>🛠 Dev Mode</h4>
+                </div>
+                <label class="dev-toggle">
+                    <input type="checkbox" bind:checked={$devSettings.debugMode} />
+                    <span>Debug mode</span>
+                </label>
+                {#if $devSettings.debugMode}
+                    <label class="dev-toggle">
+                        <input type="checkbox" bind:checked={$devSettings.showGenreProfiles} />
+                        <span>Show genre profiles</span>
+                    </label>
+                    <label class="dev-toggle">
+                        <input type="checkbox" bind:checked={$devSettings.showAudioFeatures} />
+                        <span>Show audio features</span>
+                    </label>
+                    <div class="dev-pool-status">
+                        <div class="pool-stat">Params changed: <strong>{paramsChanged ? "⚠" : "✓"}</strong></div>
+                        <div class="pool-stat">More candidates: <strong>{$recommendationsMeta?.has_more_candidates ? "✓" : "✗"}</strong></div>
+                    </div>
+                {/if}
+            </div>
+        {/if}
     </aside>
 
     <section class="main-results">
         <div class="results-header">
             <h2>{Object.keys($recommendations).length} artists for you</h2>
+            {#if $devSettings.debugMode && inputGenreProfile && inputGenreProfile.length > 0}
+                <div class="debug-input-profile">
+                    <span class="debug-label">Input profile:</span>
+                    {#each inputGenreProfile as { artist, genres }}
+                        <span class="debug-artist-profile">{artist}: {formatGenreProfile(genres)}</span>
+                    {/each}
+                </div>
+            {/if}
+            {#if $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorAudio}
+                <div class="debug-search-vector">
+                    <span class="debug-label">Search vector:</span>
+                    {#each Object.entries(searchVectorAudio) as [key, value]}
+                        <span class="debug-feature">{key}: {value.toFixed(2)}</span>
+                    {/each}
+                </div>
+            {/if}
+            {#if $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorGenre && searchVectorGenre.length > 0}
+                <div class="debug-search-vector">
+                    <span class="debug-label">Genre vector:</span>
+                    {#each searchVectorGenre as {genre, pct}}
+                        <span class="debug-feature">{genre}: {pct.toFixed(1)}%</span>
+                    {/each}
+                </div>
+            {/if}
             <div class="results-actions">
                 <button
                     class="btn-action"
@@ -332,6 +438,7 @@
                     onAddToKnown={() => addToKnown(artist)}
                     onAddToSearch={() => addToSearch(artist)}
                     onAddFavorite={createAddFavoriteHandler(artist)}
+                    debugInfo={debugInfo?.[artist]}
                 />
             {/each}
         </div>

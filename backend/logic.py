@@ -89,6 +89,8 @@ class MusicData:
         self.genre_cols: list[str] = []
         self.track_id_to_idx: dict[str, int] = {}
         self.track_id_to_artist: dict[str, str] = {}  # For multi-song balancing
+        # Debug info cache 
+        self.artist_genre_profile: dict[str, list[tuple[str, float]]] = {}
     
     def load(self) -> None:
         df = self.source.load()
@@ -123,6 +125,9 @@ class MusicData:
         self.track_id_to_idx = {tid: i for i, tid in enumerate(track_ids)}
         self.track_id_to_artist = {tid: artist for tid, artist in zip(track_ids, artist_names)}
         
+        # Cache per-artist genre profiles (top 3 genres with percentages)
+        self._build_genre_profiles(df)
+        
         # Keep metadata for display/lookup
         keep_cols = ['artist_name', 'track_name', 'track_id']
         for col in ['popularity', 'genre']:
@@ -130,6 +135,41 @@ class MusicData:
                 keep_cols.append(col)
         
         self.df = df.select(keep_cols)
+    
+    def _build_genre_profiles(self, df: pl.DataFrame) -> None:
+        """Build per-artist genre distribution from actual track genres (not encoded vectors)."""
+        if 'genre' not in df.columns:
+            return
+        
+        # Filter out null genres and group by artist
+        genre_df = df.filter(pl.col('genre').is_not_null())
+        
+        # Count genre occurrences per artist
+        for artist in genre_df['artist_name'].unique().to_list():
+            artist_genres = genre_df.filter(pl.col('artist_name') == artist)
+            
+            # Count each genre
+            genre_counts = {}
+            for genre in artist_genres['genre'].to_list():
+                if genre:
+                    genre_counts[genre] = genre_counts.get(genre, 0) + 1
+            
+            if not genre_counts:
+                continue
+            
+            # Calculate percentages
+            total = sum(genre_counts.values())
+            genre_pcts = []
+            for genre, count in genre_counts.items():
+                pct = (count / total) * 100
+                if pct > 1:  # Only include genres with >1%
+                    genre_pcts.append((genre, round(pct, 1)))
+            
+            # Sort by percentage and keep top 3
+            genre_pcts.sort(key=lambda x: x[1], reverse=True)
+            self.artist_genre_profile[artist] = genre_pcts[:3]
+    
+
 
 
 def euclidean_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -237,8 +277,10 @@ def generate_recommendations(
     genre_weight: float = DEFAULT_GENRE_WEIGHT,
     tracks_per_artist: int = TRACKS_PER_ARTIST,
     vibe_modifiers: dict[str, float] | None = None,  # e.g., {'mood': 0.5, 'sound': -0.3}
-    popularity: float = 0.0  # -1 (hidden gems) to +1 (mainstream)
-) -> dict[str, list[dict]]:
+    popularity: float = 0.0,  # -1 (hidden gems) to +1 (mainstream)
+    debug: bool = False,
+    debug_audio: bool = False,
+) -> tuple[dict[str, list[dict]], dict]:
     df = data.df
     matrix_audio = data.matrix_audio
     matrix_genre = data.matrix_genre
@@ -249,7 +291,7 @@ def generate_recommendations(
     vec_genre = get_representative_vector(df, matrix_genre, input_artists, lookup, track_ids, artist_lookup)
     
     if vec_audio is None or vec_genre is None:
-        return {}
+        return {}, {"has_more_candidates": False}
     
     # Apply vibe modifiers to audio vector
     if vibe_modifiers is not None:
@@ -303,8 +345,8 @@ def generate_recommendations(
         excluded.update(exclude_artists)
     pool = similar_df.filter(~pl.col('artist_name').is_in(list(excluded)))
     
-    # Group and aggregate
-    artist_stats = (
+    # Group and aggregate - fetch one extra to detect if more candidates exist
+    artist_stats_full = (
         pool.group_by('artist_name')
         .agg([
             # Get scores of top K tracks for this artist
@@ -313,7 +355,13 @@ def generate_recommendations(
         ])
         .filter(pl.col('track_count') >= 2)
         .sort('total_score', descending=True)
-        .head(max_artists)
+        .head(max_artists + 1)
+    )
+    
+    has_more_candidates = len(artist_stats_full) > max_artists
+    
+    artist_stats = (
+        artist_stats_full.head(max_artists)
         .with_columns(
             pl.col('track_count').clip(upper_bound=tracks_per_artist).alias('display_count')
         )
@@ -321,6 +369,8 @@ def generate_recommendations(
     )
     
     recommendations = {}
+    debug_info = {} if debug else None
+    
     for row in artist_stats.iter_rows(named=True):
         artist = row['artist_name']
         artist_tracks = (
@@ -329,14 +379,104 @@ def generate_recommendations(
             .head(tracks_per_artist)
         )
         
-        tracks = [
-            {
+        # Build tracks with optional per-song debug data
+        tracks = []
+        for r in artist_tracks.iter_rows(named=True):
+            track_info = {
                 "track_id": r['track_id'],
                 "track_name": r['track_name'],
                 "genre": r.get('genre')
             }
-            for r in artist_tracks.iter_rows(named=True)
-        ]
+            
+            # Add per-song debug data if requested
+            if debug and debug_audio:
+                track_idx = lookup.get(r['track_id'])
+                if track_idx is not None:
+                    # Extract audio features for this specific song
+                    key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
+                    features_to_use = [c for c in key_features if c in data.audio_cols]
+                    
+                    audio_feats = {}
+                    for feat in features_to_use:
+                        idx = data.audio_cols.index(feat)
+                        # Divide by weight to get original value
+                        raw_val = float(matrix_audio[track_idx, idx]) / FEATURE_WEIGHTS[feat]
+                        audio_feats[feat] = round(raw_val, 3)
+                    
+                    # Include track's actual genre
+                    if r.get('genre'):
+                        audio_feats['genre'] = r['genre']
+                    
+                    if audio_feats:  # Only add if we have features
+                        track_info['audio_features'] = audio_feats
+            
+            tracks.append(track_info)
+        
         recommendations[artist] = tracks
+        
+        # Build debug info for this artist (genre profile only)
+        if debug:
+            artist_debug = {}
+            genre_profile = data.artist_genre_profile.get(artist, [])
+            artist_debug['genre_profile'] = [
+                {"genre": g, "pct": p} for g, p in genre_profile
+            ]
+            debug_info[artist] = artist_debug
     
-    return recommendations
+    meta = {
+        "has_more_candidates": has_more_candidates,
+    }
+    if debug:
+        meta["debug"] = debug_info
+        # Include input artists genre profile for comparison
+        input_profile = []
+        for inp_artist in input_artists:
+            profile = data.artist_genre_profile.get(inp_artist, [])
+            if profile:
+                input_profile.append({
+                    "artist": inp_artist,
+                    "genres": [{"genre": g, "pct": p} for g, p in profile]
+                })
+        meta["input_genre_profile"] = input_profile
+        
+        # Include search vector audio features if requested
+        if debug_audio and vec_audio is not None:
+            key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
+            features_to_use = [c for c in key_features if c in data.audio_cols]
+            
+            search_audio = {}
+            for feat in features_to_use:
+                idx = data.audio_cols.index(feat)
+                # Divide by weight to get original value
+                raw_val = float(vec_audio[0, idx]) / FEATURE_WEIGHTS[feat]
+                # Clamp to 0-1 range for display (vibe modifiers can push values outside this)
+                clamped_val = max(0.0, min(1.0, raw_val))
+                search_audio[feat] = round(clamped_val, 3)
+            
+            meta["search_vector_audio"] = search_audio
+        
+        # Include search vector genre profile using actual text genres
+        if debug_audio:
+            # Build genre profile from input artists' tracks
+            input_artist_df = df.filter(pl.col('artist_name').is_in(input_artists))
+            if len(input_artist_df) > 0:
+                # Count actual text genres from input artists
+                genre_counts = {}
+                for genre in input_artist_df.filter(pl.col('genre').is_not_null())['genre'].to_list():
+                    if genre:
+                        genre_counts[genre] = genre_counts.get(genre, 0) + 1
+                
+                if genre_counts:
+                    total = sum(genre_counts.values())
+                    genre_pcts = []
+                    for genre, count in genre_counts.items():
+                        pct = (count / total) * 100
+                        if pct > 1:  # Only include genres with >1%
+                            genre_pcts.append((genre, round(pct, 1)))
+                    
+                    # Sort by percentage and keep top genres
+                    genre_pcts.sort(key=lambda x: x[1], reverse=True)
+                    genre_profile = [{"genre": g, "pct": p} for g, p in genre_pcts[:8]]
+                    meta["search_vector_genre"] = genre_profile
+    
+    return recommendations, meta

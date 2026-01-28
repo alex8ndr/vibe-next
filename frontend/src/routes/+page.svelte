@@ -10,12 +10,15 @@
     import {
         artistsList,
         recommendations,
+        recommendationsMeta,
         isLoading,
         hasResults,
         settings,
         knownArtists,
         nowPlaying,
         sidebarPlaying,
+        devSettings,
+        clientId,
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
@@ -26,6 +29,10 @@
     let artistTracks = $state<Record<string, Track[]>>({});
     let error = $state<string | null>(null);
     let loadingProgress = $state(0);
+    let regenerationHistory = $state<Set<string>>(new Set());
+    let lastSearchParams = $state<string>("");
+    const HIDDEN_ARTIST_LIMIT = 30; // Force new search after this many total artists
+    const hitArtistLimit = $derived(regenerationHistory.size >= HIDDEN_ARTIST_LIMIT);
 
     // Sidebar player
     let sidebarPlayerEl = $state<HTMLDivElement | null>(null);
@@ -88,6 +95,8 @@
         }
 
         try {
+            // Reset regeneration history on new search
+            regenerationHistory = new Set();
             const res = await fetchRecommendations({
                 artists: selected,
                 track_ids: trackIds.length ? trackIds : undefined,
@@ -101,9 +110,66 @@
                 vibe_mood: $settings.vibeMood,
                 vibe_sound: $settings.vibeSound,
                 popularity: $settings.popularity,
+                debug: $devSettings.debugMode,
+                debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
+                client_id: clientId,
             });
             loadingProgress = 100;
             recommendations.set(res.recommendations);
+            recommendationsMeta.set(res.meta ?? null);
+            // Add newly recommended artists to history so regenerate() excludes them
+            Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
+            // Store params to detect when they've changed
+            lastSearchParams = JSON.stringify({ selected, fineTune });
+            clearInterval(progressInterval);
+            isLoading.set(false);
+        } catch (e) {
+            error = e instanceof Error ? e.message : "Search failed";
+            clearInterval(progressInterval);
+            isLoading.set(false);
+        }
+    }
+
+    async function regenerate() {
+        if (!selected.length || $isLoading) return;
+        
+        error = null;
+        isLoading.set(true);
+        loadingProgress = 0;
+
+        const progressInterval = setInterval(() => {
+            loadingProgress = Math.min(loadingProgress + Math.random() * 15, 90);
+        }, 150);
+
+        const trackIds: string[] = [];
+        for (const a of selected) {
+            (fineTune[a] || []).forEach((name) => {
+                const t = (artistTracks[a] || []).find((x) => x.track_name === name);
+                if (t) trackIds.push(t.track_id);
+            });
+        }
+
+        try {
+            const res = await fetchRecommendations({
+                artists: selected,
+                track_ids: trackIds.length ? trackIds : undefined,
+                exclude_artists: [...$knownArtists, ...Array.from(regenerationHistory)],
+                diversity: $settings.variety,
+                max_artists: $settings.maxResults,
+                genre_weight: $settings.genreWeight,
+                tracks_per_artist: $settings.tracksPerArtist,
+                vibe_mood: $settings.vibeMood,
+                vibe_sound: $settings.vibeSound,
+                popularity: $settings.popularity,
+                debug: $devSettings.debugMode,
+                debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
+                client_id: clientId,
+            });
+            loadingProgress = 100;
+            recommendations.set(res.recommendations);
+            recommendationsMeta.set(res.meta ?? null);
+            // Add newly recommended artists to history
+            Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
             clearInterval(progressInterval);
             isLoading.set(false);
         } catch (e) {
@@ -207,7 +273,10 @@
         bind:selected
         bind:fineTune
         {artistTracks}
+        {lastSearchParams}
+        {hitArtistLimit}
         onsearch={search}
+        onregenerate={regenerate}
         onplay={playTrack}
     />
 {/if}

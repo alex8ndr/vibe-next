@@ -68,6 +68,11 @@ class RecommendRequest(BaseModel):
     vibe_mood: float = 0.0  # -1 (chill) to +1 (energetic)
     vibe_sound: float = 0.0  # -1 (acoustic) to +1 (electronic)
     popularity: float = 0.0  # -1 (hidden gems) to +1 (mainstream)
+    # Debug flags
+    debug: bool = False
+    debug_audio: bool = False
+    # Client ID for analytics deduplication
+    client_id: str | None = None
 
 
 class Track(BaseModel):
@@ -75,10 +80,12 @@ class Track(BaseModel):
     track_name: str
     year: int | None = None
     genre: str | None = None
+    audio_features: dict[str, float | str] | None = None
 
 
 class RecommendResponse(BaseModel):
     recommendations: dict[str, list[Track]]
+    meta: dict | None = None
 
 
 class SearchLog(BaseModel):
@@ -97,6 +104,51 @@ def log_search_async(log_data: dict):
             f.write(json.dumps(log_data) + "\n")
     except Exception as e:
         print(f"Failed to log search: {e}")
+
+
+# Analytics rate limiting / deduplication
+import hashlib
+from time import time
+
+RECENT_SEARCHES: dict[str, tuple[float, str]] = {}  # client_key -> (timestamp, signature)
+ANALYTICS_MIN_INTERVAL = 5.0  # seconds between logged searches from same client
+
+
+def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_artists: list[str], valid_exclude: list[str] | None) -> bool:
+    """Check if this search should be logged (rate limit + dedupe)."""
+    client_key = client_id or "anonymous"
+    
+    # Build signature of meaningful request parameters
+    sig_payload = {
+        "artists": sorted(valid_artists),
+        "track_ids": sorted(request.track_ids or []),
+        "exclude": sorted(valid_exclude or []),
+        "diversity": request.diversity,
+        "max_artists": request.max_artists,
+        "genre_weight": request.genre_weight,
+        "tracks_per_artist": request.tracks_per_artist,
+        "vibe_mood": request.vibe_mood,
+        "vibe_sound": request.vibe_sound,
+        "popularity": request.popularity,
+    }
+    sig = hashlib.sha1(json.dumps(sig_payload, sort_keys=True).encode()).hexdigest()
+    
+    now = time()
+    if client_key in RECENT_SEARCHES:
+        last_time, last_sig = RECENT_SEARCHES[client_key]
+        # Skip if same signature within interval
+        if sig == last_sig and (now - last_time) < ANALYTICS_MIN_INTERVAL:
+            return False
+    
+    RECENT_SEARCHES[client_key] = (now, sig)
+    
+    # Cleanup old entries periodically (keep only last 1000)
+    if len(RECENT_SEARCHES) > 1000:
+        sorted_items = sorted(RECENT_SEARCHES.items(), key=lambda x: x[1][0], reverse=True)
+        RECENT_SEARCHES.clear()
+        RECENT_SEARCHES.update(dict(sorted_items[:500]))
+    
+    return True
 
 
 @app.get("/health")
@@ -152,7 +204,7 @@ async def recommend(
     if request.vibe_sound != 0.0:
         vibe_modifiers['sound'] = request.vibe_sound
     
-    recs = generate_recommendations(
+    recs, meta = generate_recommendations(
         data=music_data,
         input_artists=valid_artists,
         track_ids=request.track_ids,
@@ -162,30 +214,34 @@ async def recommend(
         genre_weight=request.genre_weight,
         tracks_per_artist=request.tracks_per_artist,
         vibe_modifiers=vibe_modifiers if vibe_modifiers else None,
-        popularity=request.popularity
+        popularity=request.popularity,
+        debug=request.debug,
+        debug_audio=request.debug_audio,
     )
     
-    # Log search in background
-    log_data = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "input_artists": valid_artists,
-        "track_ids": request.track_ids,
-        "exclude_artists": valid_exclude,
-        "settings": {
-            "diversity": request.diversity,
-            "max_artists": request.max_artists,
-            "genre_weight": request.genre_weight,
-            "tracks_per_artist": request.tracks_per_artist
-        },
-        "results": {
-            artist: [t["track_id"] for t in tracks]
-            for artist, tracks in recs.items()
-        },
-        "result_count": len(recs)
-    }
-    background_tasks.add_task(log_search_async, log_data)
+    # Log search in background (with rate limiting)
+    if should_log_search(request.client_id, request, valid_artists, valid_exclude):
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "input_artists": valid_artists,
+            "track_ids": request.track_ids,
+            "exclude_artists": valid_exclude,
+            "settings": {
+                "diversity": request.diversity,
+                "max_artists": request.max_artists,
+                "genre_weight": request.genre_weight,
+                "tracks_per_artist": request.tracks_per_artist
+            },
+            "results": {
+                artist: [t["track_id"] for t in tracks]
+                for artist, tracks in recs.items()
+            },
+            "result_count": len(recs),
+            "client_id": request.client_id,
+        }
+        background_tasks.add_task(log_search_async, log_data)
     
-    return RecommendResponse(recommendations=recs)
+    return RecommendResponse(recommendations=recs, meta=meta)
 
 
 @app.get("/artists/{artist_name}/tracks")
@@ -195,17 +251,21 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         raise HTTPException(status_code=503, detail="Data not loaded")
     
     df = music_data.df
-    artist_tracks = df.filter(df['artist_name'] == artist_name).select(['track_id', 'track_name'])
+    artist_tracks = df.filter(df['artist_name'] == artist_name)
     
     if len(artist_tracks) == 0:
         raise HTTPException(status_code=404, detail="Artist not found")
     
-    # Remove duplicates and convert to Track objects
-    unique_tracks = artist_tracks.unique(subset=['track_name'])
+    if 'popularity' in artist_tracks.columns:
+        artist_tracks = artist_tracks.sort(['popularity', 'track_name'], descending=[True, False])
+    else:
+        artist_tracks = artist_tracks.sort('track_name')
+    
+    unique_tracks = artist_tracks.unique(subset=['track_name'], maintain_order=True)
     
     return [
         Track(track_id=row['track_id'], track_name=row['track_name'])
-        for row in unique_tracks.iter_rows(named=True)
+        for row in unique_tracks.select(['track_id', 'track_name']).iter_rows(named=True)
     ]
 
 
