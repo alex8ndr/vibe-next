@@ -1,6 +1,6 @@
 <script lang="ts">
-    import type { Track } from "$lib/stores";
-    import { nowPlaying, sidebarPlaying } from "$lib/stores";
+    import type { Track, ArtistDebugInfo } from "$lib/stores";
+    import { nowPlaying, sidebarPlaying, devSettings } from "$lib/stores";
     import { onMount } from "svelte";
 
     interface Props {
@@ -11,6 +11,7 @@
         onAddFavorite?: (track: Track) => void;
         isKnown?: boolean;
         isAdded?: boolean;
+        debugInfo?: ArtistDebugInfo;
     }
 
     let {
@@ -21,7 +22,21 @@
         onAddFavorite,
         isKnown = false,
         isAdded = false,
+        debugInfo,
     }: Props = $props();
+    
+    // Format genre profile for display
+    function formatGenreProfile(): string {
+        if (!debugInfo?.genre_profile?.length) return '';
+        return debugInfo.genre_profile
+            .map(g => `${Math.round(g.pct)}% ${g.genre}`)
+            .join(', ');
+    }
+    
+    const genreProfile = $derived(formatGenreProfile());
+    const showDebug = $derived($devSettings.debugMode && $devSettings.showGenreProfiles);
+    const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
+    const hasTrackFeatures = $derived(tracks.some(t => t.audio_features));
 
     let playerEl: HTMLDivElement;
     let controller: any = null;
@@ -30,6 +45,7 @@
     let currentTrackId = "";
     let showActions = $state(false);
     let isActuallyPlaying = $state(false);
+    let pendingPlay: { trackId: string; trackName: string } | null = null;
 
     function getHue(name: string): number {
         let hash = 0;
@@ -68,13 +84,31 @@
 
                     c.addListener("ready", () => {
                         isReady = true;
+                        // Play pending track if user clicked before ready
+                        if (pendingPlay) {
+                            const { trackId, trackName } = pendingPlay;
+                            pendingPlay = null;
+                            play(trackId, trackName);
+                        }
                     });
                     c.addListener("playback_update", (e: any) => {
                         isReady = true;
                         isActuallyPlaying = !e.data.isPaused;
+                        // Play pending track if user clicked before ready
+                        if (pendingPlay) {
+                            const { trackId, trackName } = pendingPlay;
+                            pendingPlay = null;
+                            play(trackId, trackName);
+                        }
                     });
                     setTimeout(() => {
                         isReady = true;
+                        // Play pending track if user clicked before ready
+                        if (pendingPlay) {
+                            const { trackId, trackName } = pendingPlay;
+                            pendingPlay = null;
+                            play(trackId, trackName);
+                        }
                     }, 3000);
                 },
             );
@@ -106,7 +140,13 @@
     });
 
     function play(trackId: string, trackName: string) {
-        if (!controller) return;
+        // If controller isn't ready yet, queue the play request
+        if (!controller || !isReady) {
+            pendingPlay = { trackId, trackName };
+            // Still update UI state so user sees selection
+            nowPlaying.set({ artist, trackId, trackName });
+            return;
+        }
 
         const prev = $nowPlaying;
 
@@ -148,7 +188,12 @@
     onmouseleave={() => (showActions = false)}
 >
     <div class="card-header">
-        <h3 class="title">{artist}</h3>
+        <div class="title-row">
+            <h3 class="title">{artist}</h3>
+            {#if showDebug && genreProfile}
+                <span class="genre-profile">{genreProfile}</span>
+            {/if}
+        </div>
         <div class="card-actions" class:visible={showActions}>
             {#if onAddToKnown}
                 <button
@@ -211,6 +256,32 @@
                     </button>
                 {/if}
             </div>
+            
+            {#if showAudioFeatures && t.audio_features}
+                <div class="audio-features">
+                    <div class="audio-features-label">Song features:</div>
+                    {#each Object.entries(t.audio_features) as [key, value]}
+                        {#if key === 'genre'}
+                            <div class="feature genre-feature">
+                                <span class="feature-name">genre</span>
+                                <span class="feature-value-text">{value}</span>
+                            </div>
+                        {:else}
+                            <div class="feature">
+                                <span class="feature-name">{key}</span>
+                                <div class="feature-bar">
+                                    <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
+                                </div>
+                                <span class="feature-value">{(value as number).toFixed(2)}</span>
+                            </div>
+                        {/if}
+                    {/each}
+                </div>
+            {:else if showAudioFeatures}
+                <div class="audio-features audio-features-missing">
+                    <span class="audio-features-label">No audio data - run new search with debug enabled</span>
+                </div>
+            {/if}
         {/each}
     </div>
 </article>
@@ -238,6 +309,14 @@
         min-height: 24px;
     }
 
+    .title-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        min-width: 0;
+        flex: 1;
+    }
+
     .title {
         font-size: 1rem;
         font-weight: 600;
@@ -245,7 +324,15 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        flex: 1;
+    }
+    
+    .genre-profile {
+        font-size: 0.65rem;
+        color: var(--text-3);
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .card-actions {
@@ -497,5 +584,79 @@
         .card-actions {
             opacity: 1;
         }
+    }
+    
+    /* Audio features debug display */
+    .audio-features {
+        margin-top: 0.25rem;
+        margin-bottom: 0.25rem;
+        padding: 0.4rem 0.5rem;
+        background: var(--bg-alt);
+        border-radius: 5px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+    
+    .audio-features-missing {
+        opacity: 0.5;
+        font-style: italic;
+    }
+    
+    .audio-features-label {
+        font-size: 0.6rem;
+        color: var(--text-3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.1rem;
+    }
+    
+    .feature {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.65rem;
+    }
+    
+    .feature-name {
+        width: 80px;
+        color: var(--text-3);
+        text-transform: capitalize;
+    }
+    
+    .feature-bar {
+        flex: 1;
+        height: 4px;
+        background: var(--bg-alt);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    
+    .feature-fill {
+        height: 100%;
+        background: var(--gold);
+        border-radius: 2px;
+    }
+    
+    .feature-value {
+        width: 35px;
+        text-align: right;
+        color: var(--text-2);
+        font-family: monospace;
+    }
+    
+    .genre-feature {
+        display: flex;
+        gap: 0.5rem;
+        font-size: 0.7rem;
+        padding: 0.25rem 0;
+        border-top: 1px solid var(--border);
+        margin-top: 0.25rem;
+    }
+    
+    .feature-value-text {
+        flex: 1;
+        color: var(--text-2);
+        font-style: italic;
     }
 </style>

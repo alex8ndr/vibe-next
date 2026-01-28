@@ -4,13 +4,33 @@ import { browser } from '$app/environment';
 export interface Track {
     track_id: string;
     track_name: string;
+    audio_features?: Record<string, number | string>;
 }
 
 export interface Recommendations {
     [artistName: string]: Track[];
 }
 
+export interface GenreInfo {
+    genre: string;
+    pct: number;
+}
+
+export interface ArtistDebugInfo {
+    genre_profile: GenreInfo[];
+    audio_features?: Record<string, number>;
+}
+
+export interface RecommendMeta {
+    has_more_candidates: boolean;
+    debug?: Record<string, ArtistDebugInfo>;
+    input_genre_profile?: Array<{ artist: string; genres: GenreInfo[] }>;
+    search_vector_audio?: Record<string, number>;
+    search_vector_genre?: GenreInfo[];
+}
+
 export const recommendations = writable<Recommendations>({});
+export const recommendationsMeta = writable<RecommendMeta | null>(null);
 export const artistsList = writable<string[]>([]);
 export const isLoading = writable(false);
 export const hasResults = derived(recommendations, ($r) => Object.keys($r).length > 0);
@@ -74,3 +94,24 @@ export const favoriteTracks = createPersistedStore<FavoriteTrack[]>('vibe-favori
 
 // UI state for right panel
 export const rightPanelOpen = createPersistedStore<boolean>('vibe-right-panel', true);
+
+// Dev settings (only visible in dev mode)
+export const devSettings = createPersistedStore('vibe-dev-settings', {
+    debugMode: false,
+    showGenreProfiles: true,
+    showAudioFeatures: false,
+});
+
+// Client ID for analytics (persisted per-browser)
+function getOrCreateClientId(): string {
+    if (!browser) return 'ssr';
+    const key = 'vibe-client-id';
+    let id = localStorage.getItem(key);
+    if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem(key, id);
+    }
+    return id;
+}
+
+export const clientId = browser ? getOrCreateClientId() : 'ssr';

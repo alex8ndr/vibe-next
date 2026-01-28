@@ -3,6 +3,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 export interface Track {
     track_id: string;
     track_name: string;
+    audio_features?: Record<string, number | string>;
 }
 
 export interface RecommendRequest {
@@ -16,10 +17,32 @@ export interface RecommendRequest {
     vibe_mood?: number;  // -1 (chill) to +1 (energetic)
     vibe_sound?: number; // -1 (acoustic) to +1 (electronic)
     popularity?: number; // -1 (hidden gems) to +1 (mainstream)
+    debug?: boolean;
+    debug_audio?: boolean;
+    client_id?: string;
+}
+
+export interface GenreInfo {
+    genre: string;
+    pct: number;
+}
+
+export interface ArtistDebugInfo {
+    genre_profile: GenreInfo[];
+    audio_features?: Record<string, number>;
+}
+
+export interface RecommendMeta {
+    has_more_candidates: boolean;
+    debug?: Record<string, ArtistDebugInfo>;
+    input_genre_profile?: Array<{ artist: string; genres: GenreInfo[] }>;
+    search_vector_audio?: Record<string, number>;
+    search_vector_genre?: GenreInfo[];
 }
 
 export interface RecommendResponse {
     recommendations: Record<string, Track[]>;
+    meta?: RecommendMeta;
 }
 
 export async function fetchArtists(query = '', limit = 100): Promise<string[]> {
