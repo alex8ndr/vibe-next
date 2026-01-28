@@ -289,7 +289,11 @@ def generate_recommendations(
     
     # Get similar songs and add score (higher = better, based on position in sorted list)
     similar_df = df[similar_indices.tolist()]
-    scores = np.arange(n, 0, -1)
+    #scores = np.arange(n, 0, -1)
+
+    # Zipfian scoring: rewards top matches significantly more than lower ones
+    # Score = 1000 / (Rank + K)
+    scores = 1000.0 / (np.arange(1, n + 1) + 25.0)
     similar_df = similar_df.with_columns(pl.Series("score", scores))
     
     # Exclude input artists and any explicitly excluded artists
@@ -309,6 +313,10 @@ def generate_recommendations(
         .filter(pl.col('track_count') >= 2)
         .sort('total_score', descending=True)
         .head(max_artists)
+        .with_columns(
+            pl.col('track_count').clip(upper_bound=tracks_per_artist).alias('display_count')
+        )
+        .sort(['display_count', 'total_score'], descending=[True, True])
     )
     
     recommendations = {}
