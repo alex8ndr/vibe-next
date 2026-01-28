@@ -43,10 +43,15 @@ import time
 import zipfile
 import io
 import re
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 import pandas as pd
 import requests
+
+# Add parent directory to path to import shared module
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from track_dedup import deduplicate_tracks
 
 BASE_URL = "https://api.reccobeats.com/v1"
 DEEZER_URL = "https://api.deezer.com"
@@ -275,22 +280,12 @@ def extract_spotify_id(url_or_id: str) -> str:
     return url_or_id
 
 
-def normalize_track_name(name: str) -> str:
-    """Normalize track name for deduplication."""
-    if not name or pd.isna(name):
-        return ""
-    # Lowercase, remove parentheses content, normalize spaces
-    normalized = str(name).lower().strip()
-    normalized = re.sub(r'\([^)]*\)', '', normalized)  # Remove (remix), (feat. x), etc.
-    normalized = re.sub(r'\[[^\]]*\]', '', normalized)  # Remove [explicit], etc.
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    return normalized
-
 
 def build_rows(artist_name: str, tracks: List[Dict], features: Dict[str, Dict], 
                genre: Optional[str], verbose: bool) -> pd.DataFrame:
     """Build DataFrame from API responses with RAW (unscaled) values."""
     rows = []
+    
     for track in tracks:
         href = track.get("href", "")
         spotify_id = href.split("/")[-1] if href else None
@@ -299,9 +294,9 @@ def build_rows(artist_name: str, tracks: List[Dict], features: Dict[str, Dict],
 
         feat = features.get(spotify_id, {})
         
-        row = {
+        rows.append({
             "artist_name": artist_name,
-            "track_name": track.get("trackTitle"),
+            "track_name": track.get("trackTitle", ""),
             "track_id": spotify_id,
             "popularity": track.get("popularity"),
             "year": None,
@@ -319,20 +314,14 @@ def build_rows(artist_name: str, tracks: List[Dict], features: Dict[str, Dict],
             "tempo": feat.get("tempo"),
             "duration_ms": track.get("durationMs"),
             "time_signature": feat.get("time_signature"),
-        }
-        rows.append(row)
+        })
 
     df = pd.DataFrame(rows)
     for col in RAW_COLS:
         if col not in df.columns:
             df[col] = None
-    df = df[RAW_COLS]
     
-    if verbose and not df.empty:
-        print(f"\n  Preview ({len(df)} rows):")
-        print(df[["track_name", "popularity", "genre", "danceability", "energy"]].head(5).to_string(index=False))
-    
-    return df
+    return df[RAW_COLS]
 
 
 def load_existing() -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -392,7 +381,9 @@ def process_single_track(client: ReccoBeatsClient, spotify_id: str, limit: int,
             detected_genre = "unknown"
             print(f"  Genre: unknown (not found in TheAudioDB)")
     
-    artist_tracks = client.get_artist_tracks(artist_uuid, limit)
+    # Over-fetch to account for variants that will be deduplicated
+    fetch_limit = limit * 2
+    artist_tracks = client.get_artist_tracks(artist_uuid, fetch_limit)
     if not artist_tracks:
         print(f"  No tracks found")
         return None
@@ -401,6 +392,11 @@ def process_single_track(client: ReccoBeatsClient, spotify_id: str, limit: int,
     features = client.get_audio_features(spotify_ids)
     
     df_new = build_rows(artist_name, artist_tracks, features, detected_genre, verbose)
+    
+    # Deduplicate and take top N by popularity (originals preferred over variants)
+    df_new = deduplicate_tracks(df_new, track_col="track_name")
+    df_new = df_new.sort_values("popularity", ascending=False).head(limit)
+    
     print(f"  Fetched {len(df_new)} tracks")
     
     return df_new, artist_name
@@ -410,28 +406,19 @@ def deduplicate_with_report(df_combined: pd.DataFrame, df_main: pd.DataFrame) ->
     """Deduplicate and return removed track names for reporting."""
     removed_tracks = []
     
-    # Track IDs already in main dataset
+    # Remove tracks that exist in main dataset by track_id
     main_track_ids = set(df_main["track_id"].dropna().unique()) if not df_main.empty else set()
+    mask_in_main = df_combined["track_id"].isin(main_track_ids)
+    for artist, track in df_combined[mask_in_main][["artist_name", "track_name"]].values:
+        removed_tracks.append(f"  - {artist} - {track} (already in dataset)")
+    df_combined = df_combined[~mask_in_main]
     
-    # Deduplicate by track_id
+    # Deduplicate by normalized name within artist (uses shared logic)
     before = len(df_combined)
-    mask_id = df_combined["track_id"].isin(main_track_ids) | df_combined.duplicated(subset=["track_id"], keep="first")
-    removed_by_id = df_combined[mask_id][["artist_name", "track_name"]].values.tolist()
-    df_combined = df_combined[~mask_id]
-    
-    for artist, track in removed_by_id:
-        removed_tracks.append(f"  - {artist} - {track} (duplicate track_id)")
-    
-    # Deduplicate by normalized name within same artist
-    df_combined["_normalized"] = df_combined["track_name"].apply(normalize_track_name)
-    before = len(df_combined)
-    mask_name = df_combined.duplicated(subset=["_normalized", "artist_name"], keep="first")
-    removed_by_name = df_combined[mask_name][["artist_name", "track_name"]].values.tolist()
-    df_combined = df_combined[~mask_name]
-    df_combined = df_combined.drop(columns=["_normalized"])
-    
-    for artist, track in removed_by_name:
-        removed_tracks.append(f"  - {artist} - {track} (similar name)")
+    df_combined = deduplicate_tracks(df_combined, track_col="track_name", artist_col="artist_name")
+    n_removed = before - len(df_combined)
+    if n_removed > 0:
+        removed_tracks.append(f"  + {n_removed} similar track names removed")
     
     return df_combined, removed_tracks
 
