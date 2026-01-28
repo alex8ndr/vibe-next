@@ -169,7 +169,9 @@
             recommendations.set(res.recommendations);
             recommendationsMeta.set(res.meta ?? null);
             // Add newly recommended artists to history
-            Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
+            const newHistory = new Set(regenerationHistory);
+            Object.keys(res.recommendations).forEach(artist => newHistory.add(artist));
+            regenerationHistory = newHistory;
             clearInterval(progressInterval);
             isLoading.set(false);
         } catch (e) {
@@ -275,6 +277,7 @@
         {artistTracks}
         {lastSearchParams}
         {hitArtistLimit}
+        {regenerationHistory}
         onsearch={search}
         onregenerate={regenerate}
         onplay={playTrack}

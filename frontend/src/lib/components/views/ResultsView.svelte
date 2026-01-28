@@ -26,6 +26,7 @@
         artistTracks,
         lastSearchParams = "",
         hitArtistLimit = false,
+        regenerationHistory = new Set(),
         onsearch,
         onregenerate,
         onplay,
@@ -35,6 +36,7 @@
         artistTracks: Record<string, Track[]>;
         lastSearchParams?: string;
         hitArtistLimit?: boolean;
+        regenerationHistory?: Set<string>;
         onsearch: () => void;
         onregenerate: () => void;
         onplay: (track: FavoriteTrack) => void;
@@ -327,28 +329,49 @@
             <VibeControls />
         </div>
 
+        <!-- Search vector chart in dev mode -->
+        {#if import.meta.env.DEV && $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorAudio}
+            <div class="side-section search-vector-chart">
+                <div class="chart-header">
+                    <h5>Search Vector</h5>
+                </div>
+                <div class="audio-features-chart">
+                    {#each Object.entries(searchVectorAudio) as [key, value]}
+                        <div class="feature">
+                            <span class="feature-name">{key}</span>
+                            <div class="feature-bar">
+                                <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
+                            </div>
+                            <span class="feature-value">{(value as number).toFixed(2)}</span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
+
         <!-- Dev mode section: only visible in dev builds -->
         {#if import.meta.env.DEV}
             <div class="side-section dev-section">
                 <div class="dev-header">
-                    <h4>🛠 Dev Mode</h4>
+                    <h4>🛠 Dev</h4>
                 </div>
                 <label class="dev-toggle">
                     <input type="checkbox" bind:checked={$devSettings.debugMode} />
-                    <span>Debug mode</span>
+                    <span>Debug</span>
                 </label>
                 {#if $devSettings.debugMode}
                     <label class="dev-toggle">
                         <input type="checkbox" bind:checked={$devSettings.showGenreProfiles} />
-                        <span>Show genre profiles</span>
+                        <span>Genres</span>
                     </label>
                     <label class="dev-toggle">
                         <input type="checkbox" bind:checked={$devSettings.showAudioFeatures} />
-                        <span>Show audio features</span>
+                        <span>Features</span>
                     </label>
                     <div class="dev-pool-status">
-                        <div class="pool-stat">Params changed: <strong>{paramsChanged ? "⚠" : "✓"}</strong></div>
-                        <div class="pool-stat">More candidates: <strong>{$recommendationsMeta?.has_more_candidates ? "✓" : "✗"}</strong></div>
+                        <div class="pool-stat"><span>Regen:</span> <strong>{regenerationHistory?.size ?? 0}</strong></div>
+                        <div class="pool-stat"><span>Params:</span> <strong>{paramsChanged ? "⚠" : "✓"}</strong></div>
+                        <div class="pool-stat"><span>More:</span> <strong>{$recommendationsMeta?.has_more_candidates ? "✓" : "✗"}</strong></div>
                     </div>
                 {/if}
             </div>
@@ -363,14 +386,6 @@
                     <span class="debug-label">Input profile:</span>
                     {#each inputGenreProfile as { artist, genres }}
                         <span class="debug-artist-profile">{artist}: {formatGenreProfile(genres)}</span>
-                    {/each}
-                </div>
-            {/if}
-            {#if $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorAudio}
-                <div class="debug-search-vector">
-                    <span class="debug-label">Search vector:</span>
-                    {#each Object.entries(searchVectorAudio) as [key, value]}
-                        <span class="debug-feature">{key}: {value.toFixed(2)}</span>
                     {/each}
                 </div>
             {/if}

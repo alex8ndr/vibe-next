@@ -159,7 +159,7 @@ async def health():
 
 
 @app.get("/artists")
-async def get_artists(q: str = "", limit: int = 100) -> list[str]:
+async def get_artists(q: str = "", limit: int = 1000) -> list[str]:
     """
     Get artist list, optionally filtered by search query.
     Returns artists sorted by popularity.
