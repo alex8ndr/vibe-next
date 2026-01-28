@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from logic import MusicData, ParquetDataSource, generate_recommendations
+from track_dedup import deduplicate_tracks
 
 # Data path - configurable via environment in production
 DATA_PATH = Path(__file__).parent / "data" / "data_encoded.parquet"
@@ -261,7 +262,7 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
     else:
         artist_tracks = artist_tracks.sort('track_name')
     
-    unique_tracks = artist_tracks.unique(subset=['track_name'], maintain_order=True)
+    unique_tracks = deduplicate_tracks(artist_tracks, track_col='track_name')
     
     return [
         Track(track_id=row['track_id'], track_name=row['track_name'])
