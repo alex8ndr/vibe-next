@@ -28,7 +28,7 @@ DEFAULT_GENRE_WEIGHT = 2.0
 # Each maps a -1 to +1 slider to feature offsets
 # Format: { 'feature_name': weight } - positive weight = feature increases with slider
 VIBE_DIMENSIONS = {
-    # Chill (-1) to Energetic (+1): affects energy, danceability, tempo, loudness
+    # Chill (-1) to Intense (+1): affects energy, danceability, tempo, loudness
     'mood': {
         'energy': 1.0,
         'loudness': 0.2,
@@ -37,9 +37,10 @@ VIBE_DIMENSIONS = {
     },
     # Acoustic (-1) to Electronic (+1): affects acousticness (inverted), instrumentalness
     'sound': {
-        'acousticness': -1.0,  # Negative = acoustic decreases as slider goes up
-        'liveness': 0,
-        'instrumentalness': 0.5,
+        'acousticness': -0.8,  # Negative = acoustic decreases as slider goes up
+        'speechiness': -0.2,
+        'danceability': 0.4,
+        'instrumentalness': 0.1,
     },
 }
 

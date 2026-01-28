@@ -21,7 +21,7 @@
 <div class="vibe-slider">
     <div class="vibe-labels">
         <span>Chill</span>
-        <span>Energetic</span>
+        <span>Intense</span>
     </div>
     <input
         type="range"

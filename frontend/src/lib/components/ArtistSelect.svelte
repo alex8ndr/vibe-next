@@ -52,6 +52,10 @@
             }
             isSearching = false;
         }, 150);
+
+        return () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+        };
     });
 
     function toggle(artist: string) {
