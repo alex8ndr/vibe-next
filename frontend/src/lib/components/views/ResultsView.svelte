@@ -190,11 +190,6 @@
                 placeholder="Add artists..."
             />
         </div>
-        {#if atMaxArtists}
-            <span class="side-limit"
-                >Max {LIMITS.MAX_INPUT_ARTISTS} artists</span
-            >
-        {/if}
         <div class="btn-row">
             <button
                 class="btn-update"
