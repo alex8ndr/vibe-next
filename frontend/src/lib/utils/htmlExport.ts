@@ -39,7 +39,7 @@ export function generateHTML({ recommendations, selectedArtists }: ExportOptions
             // Escape track name
             const safeName = escapeHtml(track.track_name);
             const safeId = escapeHtml(track.track_id);
-            trackButtons += `<button class="track-btn" onclick="playTrack(this, '${safeId}')">${safeName}</button>`;
+            trackButtons += `<button class="track-btn" data-id="${safeId}" onclick="playTrack(this)">${safeName}</button>`;
         }
 
         cards += `<div class="card" data-artist="${artistId}">
@@ -257,10 +257,12 @@ window.onSpotifyIframeApiReady = (IFrameAPI) => {
 let currentArtistId = null;
 let currentTrackId = null;
 
-function playTrack(btn, trackId) {
+function playTrack(btn) {
     const card = btn.closest('.card');
     const artistId = card.dataset.artist;
     const controller = controllers[artistId];
+    // Get track ID from data attribute - robust against special characters
+    const trackId = btn.dataset.id;
     
     if (!controller) return;
 
@@ -292,6 +294,7 @@ function playTrack(btn, trackId) {
         if (b !== btn) b.classList.remove('active');
     });
 }
+
 ${"<"}/script>
 </body></html>`;
 }

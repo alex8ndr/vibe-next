@@ -294,7 +294,7 @@ def generate_recommendations(
         return {}, {"has_more_candidates": False}
     
     # Apply vibe modifiers to audio vector
-    if vibe_modifiers is not None:
+    if vibe_modifiers:
         vec_audio = vec_audio.copy().astype(np.float32)
         for vibe_name, slider_value in vibe_modifiers.items():
             if vibe_name in VIBE_DIMENSIONS and slider_value != 0:

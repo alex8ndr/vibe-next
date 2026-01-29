@@ -10,14 +10,15 @@ from time import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from collections import Counter
-import collections
+from collections import Counter, deque
+
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 
 from logic import MusicData, ParquetDataSource, generate_recommendations
 from track_dedup import deduplicate_tracks
@@ -83,6 +84,7 @@ def get_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials.username
 
 
+
 class RecommendRequest(BaseModel):
     artists: list[str]
     track_ids: list[str] | None = None
@@ -98,7 +100,7 @@ class RecommendRequest(BaseModel):
     debug: bool = False
     debug_audio: bool = False
     # Client ID for analytics deduplication
-    client_id: str | None = None
+    client_id: str | None = Field(default=None, max_length=64)
 
 
 class Track(BaseModel):
@@ -296,7 +298,7 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
 
 
 @app.get("/analytics/stats")
-async def get_analytics_stats():
+async def get_analytics_stats(username: str = Depends(get_admin)):
     """Get basic analytics stats (for dev/admin use)."""
     if not ANALYTICS_PATH.exists():
         return {"total_searches": 0, "unique_artists_searched": 0}
@@ -363,7 +365,7 @@ async def analytics_data(username: str = Depends(get_admin)):
 
     # Keep only the last 500 entries for the detailed feed
     # deque with maxlen efficiently discards old items
-    recent_entries = collections.deque(maxlen=500)
+    recent_entries = deque(maxlen=500)
 
     try:
         with open(ANALYTICS_PATH, "r", encoding="utf-8") as f:

@@ -125,11 +125,21 @@
         }
 
         const resetHandler = (e: CustomEvent) => {
-            if (e.detail === artist && controller) {
-                controller.pause();
-                if (currentTrackId)
-                    controller.loadUri(`spotify:track:${currentTrackId}`);
+            if (e.detail === artist) {
+                // If we have a pending play request, cancel it to prevent race condition
+                if (pendingPlay) {
+                    pendingPlay = null;
+                    if ($nowPlaying?.artist === artist) {
+                        nowPlaying.set(null);
+                    }
+                }
+                if (controller) {
+                    controller.pause();
+                    if (currentTrackId)
+                        controller.loadUri(`spotify:track:${currentTrackId}`);
+                }
             }
+
         };
         window.addEventListener("vibeReset", resetHandler as EventListener);
         return () =>
@@ -145,7 +155,19 @@
             pendingPlay = { trackId, trackName };
             // Still update UI state so user sees selection
             nowPlaying.set({ artist, trackId, trackName });
+            
+            // Auto-clear pending play if it takes too long (e.g. iframe error)
+            setTimeout(() => {
+                if (pendingPlay && pendingPlay.trackId === trackId) {
+                    pendingPlay = null;
+                    // Reset UI if we're still showing this track as playing
+                    if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === trackId) {
+                        nowPlaying.set(null);
+                    }
+                }
+            }, 8000);
             return;
+
         }
 
         const prev = $nowPlaying;

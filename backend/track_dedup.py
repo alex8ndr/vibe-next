@@ -86,8 +86,12 @@ def _dedupe_pandas(df, track_col, artist_col, prioritize_originals):
 
 def _dedupe_polars(df, track_col, artist_col, prioritize_originals):
     """Polars implementation."""
-    if track_col not in df.columns or df.is_empty():
+    if df.is_empty():
         return df
+
+    if track_col not in df.columns:
+        raise ValueError(f"Column '{track_col}' not found in DataFrame")
+
     
     # Ensure track_col is string type (might be categorical from merged data)
     df = df.with_columns(pl.col(track_col).cast(pl.Utf8))
