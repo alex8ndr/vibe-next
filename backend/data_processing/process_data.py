@@ -132,6 +132,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print detailed processing info",
     )
+    parser.add_argument(
+        "--smear-strength",
+        type=float,
+        default=0.5,
+        help="Strength of inter-artist genre smearing (0.0 to 1.0)",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +153,7 @@ def process_data(
     min_songs: int,
     max_songs: int,
     keep_remixes: bool,
+    smear_strength: float,
     verbose: bool,
 ) -> None:
     """Main processing pipeline."""
@@ -264,6 +271,51 @@ def process_data(
         
         genre_cols = new_cols
 
+        # Inter-artist smearing: blend track genre with artist's overall genre profile
+        # Runs AFTER cross-genre smearing so artist identity uses smeared vectors
+        
+        # Config
+        ARTIST_SMEAR_STRENGTH = smear_strength  # 0 = disabled
+        MIN_TRACKS_FOR_GENRE = 1  # min tracks in genre to count toward identity
+        TOP_GENRES = 0            # 0 = all, N = only top N genres per artist
+        
+        if ARTIST_SMEAR_STRENGTH > 0:
+            log(f"Applying inter-artist smearing (strength={ARTIST_SMEAR_STRENGTH}, min_tracks={MIN_TRACKS_FOR_GENRE}, top_genres={TOP_GENRES or 'all'})...", verbose)
+            
+            # Count (artist, genre) pairs
+            ag_counts = df.groupby(["artist_name", "genre"], observed=True).size()
+            valid_ag = ag_counts[ag_counts >= MIN_TRACKS_FOR_GENRE].reset_index(name="count")[["artist_name", "genre", "count"]]
+            
+            # Optionally limit to top N genres per artist
+            if TOP_GENRES > 0:
+                valid_ag = valid_ag.sort_values("count", ascending=False)
+                valid_ag = valid_ag.groupby("artist_name", observed=True).head(TOP_GENRES)
+            
+            # Get genre vectors and compute artist identity (mean of their genres)
+            valid_ag_vectors = valid_ag.merge(embedding_df, left_on="genre", right_index=True)
+            artist_identities = valid_ag_vectors.groupby("artist_name")[genre_cols].mean()
+            
+            # Merge and blend
+            profile_cols = [f"_profile_{c}" for c in genre_cols]
+            artist_identities.columns = profile_cols
+            df = df.merge(artist_identities, on="artist_name", how="left")
+            
+            # Fallback: artists with no valid genres use their track's genre
+            for p_col, g_col in zip(profile_cols, genre_cols):
+                df[p_col] = df[p_col].fillna(df[g_col])
+            
+            # Blend: track = (1-strength)*track + strength*artist_profile
+            for g_col, p_col in zip(genre_cols, profile_cols):
+                df[g_col] = (1.0 - ARTIST_SMEAR_STRENGTH) * df[g_col] + ARTIST_SMEAR_STRENGTH * df[p_col]
+            
+            df = df.drop(columns=profile_cols)
+            
+            # Re-normalize for cosine similarity
+            norms = np.linalg.norm(df[genre_cols].values, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            df[genre_cols] = df[genre_cols] / norms
+
+
     final_cols = meta_cols + [c for c in feature_cols if c in df.columns] + genre_cols
     
     # Only keep columns that actually exist
@@ -323,6 +375,7 @@ def main() -> None:
         min_songs=args.min_songs,
         max_songs=args.max_songs,
         keep_remixes=args.keep_remixes,
+        smear_strength=args.smear_strength,
         verbose=args.verbose,
     )
 
