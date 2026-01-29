@@ -19,7 +19,7 @@
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
-    import { trackAddFavorite, trackAddKnown, trackRemoveKnown } from "$lib/analytics";
+    import { trackAddKnown, trackRemoveKnown } from "$lib/analytics";
 
     let {
         selected = $bindable(),
@@ -141,16 +141,7 @@
         }
     }
 
-    // Helper to add favorite with artist context within the loop
-    function createAddFavoriteHandler(artist: string) {
-        return (track: Track) => {
-             favoriteTracks.update((list) => {
-                if (list.some((t) => t.track_id === track.track_id)) return list;
-                trackAddFavorite(track.track_id, track.track_name, artist);
-                return [...list, { ...track, artist_name: artist }];
-            });
-        };
-    }
+    
 
     function downloadHTML() {
         const html = generateHTML({
@@ -451,7 +442,7 @@
                     isAdded={selected.includes(artist)}
                     onAddToKnown={() => addToKnown(artist)}
                     onAddToSearch={() => addToSearch(artist)}
-                    onAddFavorite={createAddFavoriteHandler(artist)}
+                    showFavoriteButton={true}
                     debugInfo={debugInfo?.[artist]}
                 />
             {/each}

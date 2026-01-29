@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Track, ArtistDebugInfo } from "$lib/stores";
-    import { nowPlaying, sidebarPlaying, devSettings } from "$lib/stores";
-    import { trackPlayTrack } from "$lib/analytics";
+    import { nowPlaying, sidebarPlaying, devSettings, favoriteTracks } from "$lib/stores";
+    import { trackPlayTrack, trackAddFavorite, trackRemoveFavorite } from "$lib/analytics";
     import { onMount } from "svelte";
 
     interface Props {
@@ -9,7 +9,7 @@
         tracks: Track[];
         onAddToKnown?: () => void;
         onAddToSearch?: () => void;
-        onAddFavorite?: (track: Track) => void;
+        showFavoriteButton?: boolean;
         isKnown?: boolean;
         isAdded?: boolean;
         debugInfo?: ArtistDebugInfo;
@@ -20,11 +20,30 @@
         tracks,
         onAddToKnown,
         onAddToSearch,
-        onAddFavorite,
+        showFavoriteButton = false,
         isKnown = false,
         isAdded = false,
         debugInfo,
     }: Props = $props();
+    
+    function isFavorite(trackId: string): boolean {
+        return $favoriteTracks.some(f => f.track_id === trackId);
+    }
+    
+    function toggleFavorite(track: Track) {
+        const existing = $favoriteTracks.find(f => f.track_id === track.track_id);
+        if (existing) {
+            favoriteTracks.update(list => list.filter(f => f.track_id !== track.track_id));
+            trackRemoveFavorite(track.track_id, track.track_name, artist);
+        } else {
+            favoriteTracks.update(list => [...list, {
+                track_id: track.track_id,
+                track_name: track.track_name,
+                artist_name: artist
+            }]);
+            trackAddFavorite(track.track_id, track.track_name, artist);
+        }
+    }
     
     // Format genre profile for display
     function formatGenreProfile(): string {
@@ -270,11 +289,12 @@
                     </span>
                     <span class="txt">{t.track_name}</span>
                 </button>
-                {#if onAddFavorite}
+                {#if showFavoriteButton}
                     <button
                         class="fav-btn"
-                        onclick={() => onAddFavorite(t)}
-                        title="Add to favourites"
+                        class:is-favorite={isFavorite(t.track_id)}
+                        onclick={() => toggleFavorite(t)}
+                        title={isFavorite(t.track_id) ? "Remove from favourites" : "Add to favourites"}
                     >
                         ♥
                     </button>
@@ -566,6 +586,11 @@
     }
 
     .fav-btn:hover {
+        opacity: 1;
+        color: #ff6b8a;
+    }
+    
+    .fav-btn.is-favorite {
         opacity: 1;
         color: #ff6b8a;
     }
