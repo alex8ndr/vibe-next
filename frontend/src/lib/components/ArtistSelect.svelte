@@ -113,6 +113,9 @@
                 />
             </div>
         {/if}
+        {#if selected.length === max}
+            <span class="limit-badge">{max}/{max}</span>
+        {/if}
     </div>
 
     {#if isOpen}
@@ -155,9 +158,23 @@
         align-items: center;
     }
 
+    .input-box {
+        position: relative;
+    }
+
     .input-box:focus-within {
         border-color: var(--gold);
         box-shadow: 0 0 0 2px var(--gold-glow);
+    }
+
+    .limit-badge {
+        position: absolute;
+        bottom: 4px;
+        right: 8px;
+        font-size: 0.6rem;
+        color: var(--text-3);
+        font-weight: 600;
+        pointer-events: none;
     }
 
     .chip {
