@@ -1,36 +1,49 @@
 #!/usr/bin/env python3
 """
-Add artist tracks to dataset using ReccoBeats API.
+Add artist/album tracks to dataset using ReccoBeats API.
 
 Usage:
-    # Interactive mode (recommended)
+    # Interactive mode (recommended) - supports track and album URLs
     python add_artist.py
     
-    # Single artist by Spotify track ID or URL
-    python add_artist.py --track "SPOTIFY_TRACK_ID"
+    # Single artist by Spotify track (fetches top tracks)
     python add_artist.py --track "https://open.spotify.com/track/xxx"
     
-    # Search by artist name (auto-fetches Spotify track via Deezer+ISRC)
+    # Album: fetch all tracks from an album (efficient for existing artists)
+    python add_artist.py --album "https://open.spotify.com/album/xxx"
+    
+    # Auto-detect from URL (track or album)
+    python add_artist.py --url "https://open.spotify.com/album/xxx"
+    
+    # Batch from file (mix of track/album URLs, auto-detected)
+    python add_artist.py --file urls.txt
+    
+    # Search by artist name
     python add_artist.py --names "Radiohead, Coldplay"
     
-    # Batch from file (one Spotify track ID per line)
-    python add_artist.py --file tracks.txt
-    
     # Dry-run: preview changes without saving
-    python add_artist.py --track "TRACK_ID" --dry-run
+    python add_artist.py --album "ALBUM_ID" --dry-run
     
-    # Update mode: add popular tracks to existing artists
-    python add_artist.py --track "TRACK_ID" --update
+    # List artists in added_artists.csv.zip
+    python add_artist.py --list
     
-    # Override mode: replace artist's tracks in added_artists.csv.zip
-    python add_artist.py --track "TRACK_ID" --override --limit 20
+    # Remove specific artists
+    python add_artist.py --remove "Radiohead,Coldplay"
+    
+    # Clear all added data
+    python add_artist.py --remove all
+
+Album mode:
+    - Efficient for adding new albums to existing artists
+    - Skips tracks already in dataset (by track_id)
+    - Batches audio features (50 per request)
+    - Caches genre lookups per artist
     
 Features:
     - Auto-genre detection via TheAudioDB (maps to dataset genres)
     - Artist name search via Deezer → ISRC → ReccoBeats
     - Automatic deduplication by track_id and normalized track name
     - Dry-run mode with optional confirmation to save
-    - Interactive mode when run without arguments
     
 Output:
     Creates/appends to added_artists.csv.zip (raw format matching data.csv.zip)
@@ -165,7 +178,7 @@ class ReccoBeatsClient:
         return tracks[:limit]
 
     def get_audio_features(self, spotify_ids: List[str]) -> Dict[str, Dict]:
-        """Get audio features by Spotify track IDs."""
+        """Get audio features by Spotify track IDs (batched, 50 per request)."""
         if not spotify_ids:
             return {}
         features = {}
@@ -179,6 +192,32 @@ class ReccoBeatsClient:
                     sid = feat["href"].split("/")[-1]
                     features[sid] = feat
         return features
+
+    def get_album(self, spotify_id: str) -> Optional[Dict]:
+        """Get album by Spotify ID. Returns album with artist info."""
+        url = f"{BASE_URL}/album"
+        r = requests.get(url, params={"ids": spotify_id}, timeout=self.TIMEOUT)
+        r.raise_for_status()
+        albums = r.json().get("content", [])
+        return albums[0] if albums else None
+
+    def get_album_tracks(self, recco_uuid: str) -> List[Dict]:
+        """Get all tracks from an album by ReccoBeats UUID (handles pagination)."""
+        tracks = []
+        page = 0
+        while True:
+            url = f"{BASE_URL}/album/{recco_uuid}/track"
+            r = requests.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            batch = data.get("content", [])
+            if not batch:
+                break
+            tracks.extend(batch)
+            if page >= data.get("totalPages", 1) - 1:
+                break
+            page += 1
+        return tracks
 
 
 def get_genre_from_audiodb(artist_name: str) -> Optional[str]:
@@ -273,11 +312,20 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False) -> Optiona
         return None
 
 
-def extract_spotify_id(url_or_id: str) -> str:
-    """Extract Spotify ID from URL or return as-is if already an ID."""
+def extract_spotify_id(url_or_id: str) -> Tuple[str, str]:
+    """Extract Spotify ID and type from URL or return as-is (assumed track).
+    
+    Returns: (spotify_id, type) where type is 'track' or 'album'
+    """
     if "spotify.com" in url_or_id:
-        return url_or_id.split("/")[-1].split("?")[0]
-    return url_or_id
+        parts = url_or_id.split("/")
+        spotify_id = parts[-1].split("?")[0]
+        # Detect type from URL (e.g., /album/xxx or /track/xxx)
+        for i, part in enumerate(parts):
+            if part in ("album", "track") and i + 1 < len(parts):
+                return spotify_id, part
+        return spotify_id, "track"
+    return url_or_id, "track"
 
 
 
@@ -402,6 +450,99 @@ def process_single_track(client: ReccoBeatsClient, spotify_id: str, limit: int,
     return df_new, artist_name
 
 
+# Genre cache to avoid repeated TheAudioDB calls for same artist
+_genre_cache: Dict[str, Optional[str]] = {}
+
+def get_cached_genre(artist_name: str) -> Optional[str]:
+    """Get genre with caching to minimize TheAudioDB calls."""
+    if artist_name not in _genre_cache:
+        _genre_cache[artist_name] = get_genre_from_audiodb(artist_name)
+    return _genre_cache[artist_name]
+
+
+def process_album(client: ReccoBeatsClient, spotify_id: str, 
+                  genre: Optional[str], existing_track_ids: set,
+                  verbose: bool) -> Optional[Tuple[pd.DataFrame, str, str]]:
+    """Process an album and return (DataFrame, artist_name, album_name).
+    
+    Efficient flow:
+    - 1 API call: get album metadata (includes artist)
+    - 1 API call: get album tracks
+    - 1 API call per 50 tracks: batch audio features
+    - 1 API call: genre lookup (cached per artist)
+    
+    Filters out tracks already in dataset by track_id.
+    """
+    # Get album metadata
+    album = client.get_album(spotify_id)
+    if not album:
+        print(f"  Album not found")
+        return None
+    
+    album_uuid = album.get("id")
+    album_name = album.get("name", "Unknown Album")
+    
+    # Get artist from album
+    artists = album.get("artists", [])
+    if not artists:
+        print(f"  No artist found on album")
+        return None
+    
+    artist_name = artists[0].get("name", "Unknown Artist")
+    print(f"  Album: {album_name}")
+    print(f"  Artist: {artist_name}")
+    
+    # Get all tracks from album
+    tracks = client.get_album_tracks(album_uuid)
+    if not tracks:
+        print(f"  No tracks found")
+        return None
+    
+    # Extract Spotify IDs
+    all_spotify_ids = []
+    for t in tracks:
+        href = t.get("href", "")
+        if href:
+            sid = href.split("/")[-1]
+            all_spotify_ids.append(sid)
+    
+    # Filter out existing tracks early
+    new_spotify_ids = [sid for sid in all_spotify_ids if sid not in existing_track_ids]
+    skipped = len(all_spotify_ids) - len(new_spotify_ids)
+    if skipped:
+        print(f"  Skipping {skipped} existing tracks")
+    
+    if not new_spotify_ids:
+        print(f"  All tracks already in dataset")
+        return None
+    
+    # Get audio features (batched)
+    features = client.get_audio_features(new_spotify_ids)
+    
+    # Filter tracks to only new ones
+    new_tracks = [t for t in tracks if t.get("href", "").split("/")[-1] in new_spotify_ids]
+    
+    # Get genre (cached per artist)
+    detected_genre = genre
+    if not detected_genre:
+        detected_genre = get_cached_genre(artist_name)
+        if detected_genre:
+            print(f"  Genre (auto): {detected_genre}")
+        else:
+            detected_genre = "unknown"
+            print(f"  Genre: unknown")
+    
+    # Build DataFrame
+    df_new = build_rows(artist_name, new_tracks, features, detected_genre, verbose)
+    
+    # Deduplicate by normalized name (keep originals over variants)
+    df_new = deduplicate_tracks(df_new, track_col="track_name")
+    
+    print(f"  Fetched {len(df_new)} tracks")
+    
+    return df_new, artist_name, album_name
+
+
 def deduplicate_with_report(df_combined: pd.DataFrame, df_main: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     """Deduplicate and return removed track names for reporting."""
     removed_tracks = []
@@ -425,19 +566,23 @@ def deduplicate_with_report(df_combined: pd.DataFrame, df_main: pd.DataFrame) ->
 
 def interactive_mode():
     """Run in interactive mode, prompting user for input."""
-    print("\n=== Add Artist - Interactive Mode ===\n")
+    print("\n=== Add Artist/Album - Interactive Mode ===\n")
     
-    # Get valid genres from AUDIODB_GENRE_MAP values
     valid_genres = sorted(set(AUDIODB_GENRE_MAP.values()))
     
     df_main, df_added = load_existing()
     df_all = pd.concat([df_main, df_added], ignore_index=True)
-    print(f"Dataset: {len(df_main)} tracks, {df_main['artist_name'].nunique() if not df_main.empty else 0} artists")
-    print(f"Added: {len(df_added)} tracks, {df_added['artist_name'].nunique() if not df_added.empty else 0} artists\n")
+    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    existing_artists = set(df_all["artist_name"].dropna().unique())
+    
+    print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].nunique() if not df_main.empty else 0} artists)")
+    print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].nunique() if not df_added.empty else 0} artists)\n")
+    
+    client = ReccoBeatsClient()
     
     while True:
         print("-" * 50)
-        user_input = input("\nEnter artist name or Spotify URL (or 'q' to quit): ").strip()
+        user_input = input("\nEnter artist name or Spotify URL (track/album) [q=quit]: ").strip()
         
         if user_input.lower() in ('q', 'quit', 'exit'):
             print("Goodbye!")
@@ -446,35 +591,38 @@ def interactive_mode():
         if not user_input:
             continue
         
-        # Determine if it's a URL or artist name
+        # Determine type and ID
         if "spotify.com" in user_input:
-            spotify_id = extract_spotify_id(user_input)
-            print(f"\nProcessing Spotify track: {spotify_id}")
+            spotify_id, item_type = extract_spotify_id(user_input)
+            print(f"\nProcessing {item_type}: {spotify_id}")
         else:
             print(f"\nSearching for: {user_input}")
             spotify_id = search_artist_via_deezer(user_input, verbose=True)
             if not spotify_id:
                 print("Could not find artist. Try a Spotify URL instead.")
                 continue
+            item_type = "track"
         
-        # Get limit
-        limit_input = input("Number of tracks to fetch [20]: ").strip()
-        limit = int(limit_input) if limit_input.isdigit() else 20
-        
-        # Process - fetch tracks without genre first
-        client = ReccoBeatsClient()
-        existing_artists = set(df_all["artist_name"].dropna().unique())
-        
-        result = process_single_track(client, spotify_id, limit, None, existing_artists, verbose=False)
-        
-        if result is None:
-            continue
-        
-        df_new, artist_name = result
-        current_genre = df_new["genre"].iloc[0] if not df_new.empty else "unknown"
+        # Process based on type
+        if item_type == "album":
+            result = process_album(client, spotify_id, None, existing_track_ids, verbose=False)
+            if result is None:
+                continue
+            df_new, artist_name, album_name = result
+            current_genre = df_new["genre"].iloc[0] if not df_new.empty else "unknown"
+            print(f"\n--- {artist_name} - {album_name} ({len(df_new)} tracks, {current_genre}) ---")
+        else:
+            limit_input = input("Number of tracks to fetch [20]: ").strip()
+            limit = int(limit_input) if limit_input.isdigit() else 20
+            
+            result = process_single_track(client, spotify_id, limit, None, existing_artists, verbose=False)
+            if result is None:
+                continue
+            df_new, artist_name = result
+            current_genre = df_new["genre"].iloc[0] if not df_new.empty else "unknown"
+            print(f"\n--- {artist_name} ({len(df_new)} tracks, {current_genre}) ---")
         
         # Show tracks with numbers for selection
-        print(f"\n--- {artist_name} - {len(df_new)} tracks (genre: {current_genre}) ---")
         for i, row in df_new.iterrows():
             print(f"  {i+1:2}. {row['track_name'][:50]:<50} pop:{row['popularity']:>3}")
         
@@ -546,10 +694,86 @@ def interactive_mode():
             
             save_csv_zip(df_combined)
             df_added = df_combined
-            df_all = pd.concat([df_main, df_added], ignore_index=True)
-            print(f"\n✓ Saved! Total: {len(df_added)} tracks, {df_added['artist_name'].nunique()} artists")
+            # Update caches for next iteration
+            existing_track_ids.update(df_new["track_id"].tolist())
+            existing_artists.add(artist_name)
+            print(f"\n✓ Saved! Total: {len(df_added)} tracks ({df_added['artist_name'].nunique()} artists)")
         else:
             print("Discarded.")
+
+
+def list_artists() -> None:
+    """List all artists in added_artists.csv.zip."""
+    if not os.path.exists(OUTPUT_CSV):
+        print(f"No {OUTPUT_CSV} file found")
+        return
+    
+    df = pd.read_csv(OUTPUT_CSV)
+    if df.empty:
+        print("No artists in added_artists.csv.zip")
+        return
+    
+    grouped = df.groupby('artist_name').agg(
+        tracks=('track_id', 'count'),
+        genre=('genre', 'first')
+    ).sort_values('tracks', ascending=False)
+    
+    print(f"\nArtists in {OUTPUT_CSV} ({len(grouped)} artists, {len(df)} tracks):\n")
+    for artist, row in grouped.iterrows():
+        print(f"  {artist}: {row['tracks']} tracks ({row['genre']})")
+
+
+def remove_artists(artists_arg: str) -> None:
+    """Remove artist(s) from added_artists.csv.zip.
+    
+    Args:
+        artists_arg: Comma-separated artist names, or 'all' to clear
+    """
+    if not os.path.exists(OUTPUT_CSV):
+        print(f"No {OUTPUT_CSV} file found")
+        return
+    
+    df = pd.read_csv(OUTPUT_CSV)
+    if df.empty:
+        print("File is already empty")
+        return
+    
+    if artists_arg.strip().lower() == 'all':
+        confirm = input(f"Remove ALL {len(df)} tracks from {OUTPUT_CSV}? [y/N]: ").strip().lower()
+        if confirm in ('y', 'yes'):
+            os.remove(OUTPUT_CSV)
+            print(f"✓ Deleted {OUTPUT_CSV}")
+        else:
+            print("Cancelled")
+        return
+    
+    artists_to_remove = [a.strip() for a in artists_arg.split(',') if a.strip()]
+    if not artists_to_remove:
+        print("No artists specified")
+        return
+    
+    print(f"\nRemoving from {OUTPUT_CSV}:")
+    total_removed = 0
+    
+    for artist in artists_to_remove:
+        mask = df['artist_name'] == artist
+        count = mask.sum()
+        if count == 0:
+            print(f"  {artist}: Not found")
+        else:
+            df = df[~mask]
+            print(f"  {artist}: Removed {count} tracks")
+            total_removed += count
+    
+    if total_removed > 0:
+        if df.empty:
+            os.remove(OUTPUT_CSV)
+            print(f"\n✓ Removed {total_removed} tracks (file deleted, was empty)")
+        else:
+            save_csv_zip(df)
+            print(f"\n✓ Removed {total_removed} tracks, {len(df)} remaining")
+    else:
+        print("\nNo changes made")
 
 
 def update_genres(genre_updates: str) -> None:
@@ -622,17 +846,19 @@ def update_genres(genre_updates: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Add artists to dataset via ReccoBeats API")
+    parser = argparse.ArgumentParser(description="Add artists/albums to dataset via ReccoBeats API")
     group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument("--track", help="Spotify track ID or URL (any song by the artist)")
-    group.add_argument("--file", help="File with Spotify track IDs (one per line)")
+    group.add_argument("--track", help="Spotify track ID or URL (fetches artist's top tracks)")
+    group.add_argument("--album", help="Spotify album ID or URL (fetches all album tracks)")
+    group.add_argument("--url", help="Spotify URL (auto-detects track or album)")
+    group.add_argument("--file", help="File with Spotify URLs/IDs (one per line)")
     group.add_argument("--names", help="Comma-separated artist names (searches via Deezer)")
     group.add_argument("--update-genre", help="Update genres: 'Artist=genre,Artist2=genre2'")
+    group.add_argument("--remove", help="Remove artist(s): 'Artist1,Artist2' or 'all'")
+    group.add_argument("--list", action="store_true", help="List artists in added_artists.csv.zip")
     
-    parser.add_argument("--limit", type=int, default=15, help="Max tracks per artist (default: 15)")
+    parser.add_argument("--limit", type=int, default=15, help="Max tracks per artist (default: 15, ignored for albums)")
     parser.add_argument("--genre", default=None, help="Genre name (auto-detected if not provided)")
-    parser.add_argument("--update", action="store_true", help="Update mode: add tracks to existing artists")
-    parser.add_argument("--override", action="store_true", help="Override mode: replace artist's tracks")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without saving")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print detailed info")
     args = parser.parse_args()
@@ -642,21 +868,34 @@ def main():
         update_genres(args.update_genre)
         return
     
-    # Interactive mode if no input specified
-    if not args.track and not args.file and not args.names:
-        interactive_mode()
+    # Remove mode
+    if args.remove:
+        remove_artists(args.remove)
         return
     
-    # Validate flags
-    if args.update and args.override:
-        print("Error: Cannot use --update and --override together")
-        sys.exit(1)
+    # List mode
+    if args.list:
+        list_artists()
+        return
+    
+    # Interactive mode if no input specified
+    if not args.track and not args.album and not args.url and not args.file and not args.names:
+        interactive_mode()
+        return
 
-    # Collect track IDs to process
-    track_ids = []
+    # Collect items to process: list of (spotify_id, type)
+    items: List[Tuple[str, str]] = []
     
     if args.track:
-        track_ids.append(extract_spotify_id(args.track))
+        sid, _ = extract_spotify_id(args.track)
+        items.append((sid, "track"))
+    
+    elif args.album:
+        sid, _ = extract_spotify_id(args.album)
+        items.append((sid, "album"))
+    
+    elif args.url:
+        items.append(extract_spotify_id(args.url))
     
     elif args.file:
         if not os.path.exists(args.file):
@@ -666,8 +905,8 @@ def main():
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    track_ids.append(extract_spotify_id(line))
-        print(f"Loaded {len(track_ids)} track IDs from {args.file}")
+                    items.append(extract_spotify_id(line))
+        print(f"Loaded {len(items)} items from {args.file}")
     
     elif args.names:
         names = [n.strip() for n in args.names.split(",") if n.strip()]
@@ -677,88 +916,83 @@ def main():
             print(f"  {name}:")
             spotify_id = search_artist_via_deezer(name)
             if spotify_id:
-                track_ids.append(spotify_id)
+                items.append((spotify_id, "track"))
             time.sleep(0.3)
         
-        if not track_ids:
+        if not items:
             print("\nNo artists found. Try using Spotify URLs instead.")
             sys.exit(1)
         
-        print(f"\nFound {len(track_ids)}/{len(names)} artists\n")
+        print(f"\nFound {len(items)}/{len(names)} artists\n")
     
-    if not track_ids:
-        print("No track IDs to process")
+    if not items:
+        print("No items to process")
         sys.exit(1)
     
-    # Process each track
+    # Load existing data
     client = ReccoBeatsClient()
     df_main, df_added = load_existing()
+    df_all = pd.concat([df_main, df_added], ignore_index=True)
     
-    df_all_existing = pd.concat([df_main, df_added], ignore_index=True)
-    existing_artists = set(df_all_existing["artist_name"].dropna().unique()) if not (args.update or args.override) else set()
+    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    existing_artists = set(df_all["artist_name"].dropna().unique())
     
-    print(f"Main dataset: {len(df_main)} tracks, {df_main['artist_name'].nunique() if not df_main.empty else 0} artists")
-    print(f"Added artists: {len(df_added)} tracks, {df_added['artist_name'].nunique() if not df_added.empty else 0} artists")
-    print(f"Total existing: {len(df_all_existing)} tracks, {df_all_existing['artist_name'].nunique()} artists\n")
+    print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].nunique() if not df_main.empty else 0} artists)")
+    print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].nunique() if not df_added.empty else 0} artists)\n")
     
     if args.dry_run:
         print("DRY-RUN MODE: No changes will be saved\n")
-    elif args.update:
-        print("Update mode: Will add tracks to existing artists\n")
-    elif args.override:
-        print("Override mode: Will replace existing tracks in added_artists.csv.zip\n")
     
-    artists_to_override = set()
     all_new_rows = []
     
-    for i, spotify_id in enumerate(track_ids):
-        print(f"[{i+1}/{len(track_ids)}] Processing track: {spotify_id}")
+    for i, (spotify_id, item_type) in enumerate(items):
+        print(f"[{i+1}/{len(items)}] Processing {item_type}: {spotify_id}")
         
         try:
-            result = process_single_track(client, spotify_id, args.limit, args.genre, existing_artists, args.verbose)
-            if result is not None:
-                all_new_rows.append(result[0])
-                if args.override and result[1]:
-                    artists_to_override.add(result[1])
+            if item_type == "album":
+                result = process_album(client, spotify_id, args.genre, existing_track_ids, args.verbose)
+                if result:
+                    df_rows, artist_name, album_name = result
+                    all_new_rows.append(df_rows)
+                    # Update existing_track_ids for subsequent albums
+                    existing_track_ids.update(df_rows["track_id"].tolist())
+            else:
+                result = process_single_track(client, spotify_id, args.limit, args.genre, existing_artists, args.verbose)
+                if result:
+                    df_rows, artist_name = result
+                    all_new_rows.append(df_rows)
+                    existing_artists.add(artist_name)
         except Exception as e:
             print(f"  Error: {e}")
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
         
-        if i < len(track_ids) - 1:
-            time.sleep(0.5)
+        if i < len(items) - 1:
+            time.sleep(0.3)
     
     if not all_new_rows:
         print("\nNo new tracks to add")
         return
     
-    # Combine all new rows
+    # Combine and deduplicate
     df_new = pd.concat(all_new_rows, ignore_index=True)
-    print(f"\nTotal new rows: {len(df_new)}")
-    
-    # Override mode: remove existing tracks for these artists from added_artists
-    if args.override and artists_to_override:
-        before_override = len(df_added)
-        df_added = df_added[~df_added["artist_name"].isin(artists_to_override)]
-        removed = before_override - len(df_added)
-        if removed:
-            print(f"Removed {removed} existing tracks for {len(artists_to_override)} artist(s)")
-    
-    # Merge with existing added_artists
     df_combined = pd.concat([df_added, df_new], ignore_index=True)
-    
-    # Deduplicate with detailed reporting
     df_combined, removed_tracks = deduplicate_with_report(df_combined, df_main)
     
-    if removed_tracks:
-        print(f"\nRemoved {len(removed_tracks)} duplicates:")
-        for r in removed_tracks[:10]:
-            print(r)
-        if len(removed_tracks) > 10:
-            print(f"  ... and {len(removed_tracks) - 10} more")
+    print(f"\nTotal new: {len(df_new)} tracks")
     
-    # Dry-run: show preview and optionally save
+    if removed_tracks:
+        print(f"Removed {len(removed_tracks)} duplicates:")
+        for r in removed_tracks[:5]:
+            print(r)
+        if len(removed_tracks) > 5:
+            print(f"  ... and {len(removed_tracks) - 5} more")
+    
+    # Dry-run preview
     if args.dry_run:
         print(f"\n--- DRY-RUN PREVIEW ---")
-        print(f"Would save: {len(df_combined)} tracks, {df_combined['artist_name'].nunique()} artists")
+        print(f"Would save: {len(df_combined)} tracks ({df_combined['artist_name'].nunique()} artists)")
         print(f"\nNew tracks by artist:")
         for artist in df_new["artist_name"].unique():
             count = len(df_new[df_new["artist_name"] == artist])
@@ -767,13 +1001,12 @@ def main():
         
         confirm = input("\nSave these changes? [y/N]: ").strip().lower()
         if confirm not in ('y', 'yes'):
-            print("Changes discarded.")
+            print("Discarded.")
             return
     
     save_csv_zip(df_combined)
-    print(f"\n✓ Saved: {len(df_combined)} tracks, {df_combined['artist_name'].nunique()} artists")
-    print(f"Output: {OUTPUT_CSV}")
-    print(f"\nNext step: Run process_data.py to merge with main dataset")
+    print(f"\n✓ Saved: {len(df_combined)} tracks ({df_combined['artist_name'].nunique()} artists)")
+    print(f"\nRun process_data.py to merge with main dataset")
 
 
 if __name__ == "__main__":
