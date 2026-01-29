@@ -3,12 +3,20 @@ FastAPI backend for Vibe music recommendation app.
 """
 
 import json
+import secrets
+import os
+import hashlib
+from time import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from collections import Counter
+import collections
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from logic import MusicData, ParquetDataSource, generate_recommendations
@@ -56,6 +64,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security
+security = HTTPBasic()
+
+def get_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    """Check basic auth credentials."""
+    correct_username = secrets.compare_digest(credentials.username, "admin")
+    password = os.getenv("ANALYTICS_PASSWORD", "admin")
+    correct_password = secrets.compare_digest(credentials.password, password)
+    
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 
 class RecommendRequest(BaseModel):
@@ -108,9 +133,6 @@ def log_search_async(log_data: dict):
 
 
 # Analytics rate limiting / deduplication
-import hashlib
-from time import time
-
 RECENT_SEARCHES: dict[str, tuple[float, str]] = {}  # client_key -> (timestamp, signature)
 ANALYTICS_MIN_INTERVAL = 5.0  # seconds between logged searches from same client
 
@@ -225,16 +247,19 @@ async def recommend(
         log_data = {
             "timestamp": datetime.utcnow().isoformat(),
             "input_artists": valid_artists,
-            "track_ids": request.track_ids,
+            "track_ids": request.track_ids, # Explicitly save input track IDs
             "exclude_artists": valid_exclude,
             "settings": {
                 "diversity": request.diversity,
                 "max_artists": request.max_artists,
                 "genre_weight": request.genre_weight,
-                "tracks_per_artist": request.tracks_per_artist
+                "tracks_per_artist": request.tracks_per_artist,
+                "vibe_mood": request.vibe_mood,
+                "vibe_sound": request.vibe_sound,
+                "popularity": request.popularity,
             },
             "results": {
-                artist: [t["track_id"] for t in tracks]
+                artist: [{"id": t["track_id"], "name": t["track_name"]} for t in tracks]
                 for artist, tracks in recs.items()
             },
             "result_count": len(recs),
@@ -294,6 +319,136 @@ async def get_analytics_stats():
         return {"error": f"Invalid analytics data: {e}"}
     except OSError as e:
         return {"error": f"Unable to read analytics data: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/analytics/dashboard", response_class=HTMLResponse)
+async def analytics_dashboard(username: str = Depends(get_admin)):
+    """Serve the simple analytics dashboard (Protected)."""
+    dashboard_path = Path(__file__).parent / "dashboard.html"
+    if not dashboard_path.exists():
+        return "Dashboard template not found"
+    with open(dashboard_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.get("/analytics/data")
+async def analytics_data(username: str = Depends(get_admin)):
+    """Aggregate data for the dashboard (Protected)."""
+    if not ANALYTICS_PATH.exists():
+        return {
+            "total_searches": 0, 
+            "daily_activity": {}, 
+            "top_artists": [], 
+            "vibe_stats": {}, 
+            "top_tracks": [],
+            "recent_searches": [],
+            "vibe_scatter": [],
+            "session_stats": {"avg_per_user": 0}
+        }
+    
+    # Global aggregates (O(1) memory accumulation)
+    total_searches = 0
+    unique_users = set()
+    daily_activity = Counter()
+    artist_counts = Counter()
+    track_counts = Counter()
+    
+    # Vibe lists for histograms (these store simple floats, efficient enough up to ~1M records)
+    # If this gets too big, we would switch to pre-binned counters.
+    vibe_moods = []
+    vibe_sounds = []
+    popularities = []
+    vibe_scatter = []
+
+    # Keep only the last 500 entries for the detailed feed
+    # deque with maxlen efficiently discards old items
+    recent_entries = collections.deque(maxlen=500)
+
+    try:
+        with open(ANALYTICS_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip(): continue
+                try:
+                    entry = json.loads(line)
+                    
+                    # 1. Update Global Stats
+                    total_searches += 1
+                    
+                    if cid := entry.get("client_id"):
+                        unique_users.add(cid)
+                        
+                    ts = entry.get("timestamp", "")[:10]
+                    if ts:
+                        daily_activity[ts] += 1
+                        
+                    for artist in entry.get("input_artists", []):
+                        artist_counts[artist] += 1
+                    
+                    settings = entry.get("settings", {})
+                    mood = settings.get("vibe_mood", 0)
+                    sound = settings.get("vibe_sound", 0)
+                    pop = settings.get("popularity", 0)
+                    
+                    vibe_moods.append(mood)
+                    vibe_sounds.append(sound)
+                    popularities.append(pop)
+                    
+                    if mood != 0 or sound != 0:
+                        vibe_scatter.append({"x": mood, "y": sound})
+
+                    # Track counts (requires iterating results, but we don't store the results)
+                    results = entry.get("results")
+                    if isinstance(results, dict):
+                        for artist, tracks in results.items():
+                            for t in tracks:
+                                if isinstance(t, dict) and "name" in t:
+                                    track_counts[f"{t['name']} - {artist}"] += 1
+
+                    # 2. Keep raw entry only if it's new (deque handles eviction)
+                    recent_entries.append(entry)
+                        
+                except json.JSONDecodeError:
+                    continue
+        
+        # Format the recent searches list for the frontend
+        recent_searches = []
+        # recent_entries is chronological (oldest -> newest), we want reversed (newest first)
+        for entry in reversed(recent_entries):
+            raw_results = entry.get("results", {})
+            
+            recent_searches.append({
+                "timestamp": entry.get("timestamp"),
+                "client_id": entry.get("client_id"),
+                "inputs": entry.get("input_artists"),
+                "input_tracks": entry.get("track_ids"),
+                "vibes": {
+                    "mood": entry.get("settings", {}).get("vibe_mood", 0),
+                    "sound": entry.get("settings", {}).get("vibe_sound", 0),
+                    "pop": entry.get("settings", {}).get("popularity", 0),
+                },
+                "results": raw_results
+            })
+            
+        avg_searches = 0
+        if unique_users:
+            avg_searches = round(total_searches / len(unique_users), 1)
+
+        return {
+            "total_searches": total_searches,
+            "unique_users": len(unique_users),
+            "session_stats": {"avg_per_user": avg_searches},
+            "daily_activity": dict(sorted(daily_activity.items())),
+            "top_artists": artist_counts.most_common(20),
+            "top_tracks": track_counts.most_common(20),
+            "vibe_stats": {
+                "mood": vibe_moods,
+                "sound": vibe_sounds,
+                "popularity": popularities
+            },
+            "vibe_scatter": vibe_scatter, 
+            "recent_searches": recent_searches
+        }
     except Exception as e:
         return {"error": str(e)}
 
