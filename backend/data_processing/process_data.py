@@ -17,6 +17,10 @@ from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 from genre_families import GENRE_DEFINITIONS
 
+# Add parent directory to path to import shared module
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from track_dedup import deduplicate_tracks
+
 
 def compute_genre_embeddings(unique_genres):
     """Compute dense embeddings for genres based on family relationships.
@@ -75,11 +79,9 @@ def compute_genre_embeddings(unique_genres):
 
     # L2 normalize embeddings to keep direction but remove magnitude bias
     df_emb = pd.DataFrame.from_dict(embeddings, orient='index')
-    for genre in df_emb.index:
-        vec = df_emb.loc[genre].values
-        norm = np.linalg.norm(vec)
-        if norm > 0:
-            df_emb.loc[genre] = vec / norm
+    norms = np.linalg.norm(df_emb.values, axis=1, keepdims=True)
+    norms[norms == 0] = 1  # Avoid division by zero
+    df_emb[:] = df_emb.values / norms
     
     return df_emb
 
@@ -220,11 +222,15 @@ def process_data(
     keep_artists = artist_counts[artist_counts >= min_songs].index
     df = df[df["artist_name"].isin(keep_artists)].copy()
 
-    # Cap songs per artist (keep most popular)
-    df = df.groupby("artist_name", group_keys=True, observed=True).apply(
-        lambda x: x.nlargest(max_songs, "popularity"),
-        include_groups=False
-    ).reset_index(level=0)
+    # Deduplicate tracks per artist (normalize case, prefer originals over variants)
+    n_before_dedup = len(df)
+    df = deduplicate_tracks(df, track_col="track_name", artist_col="artist_name")
+    log(f"Deduplicated tracks: {n_before_dedup - len(df):,} removed, {len(df):,} remaining", verbose)
+    
+    # Cap songs per artist (keep most popular) - vectorized rank approach
+    df = df.sort_values("popularity", ascending=False)
+    df["_rank"] = df.groupby("artist_name", observed=True).cumcount()
+    df = df[df["_rank"] < max_songs].drop(columns=["_rank"])
     
     removed = n_initial - len(df)
     log(f"Capped to {max_songs} songs per artist", verbose)

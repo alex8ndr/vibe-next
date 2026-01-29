@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>VIBE // SYSTEM</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-deep: #050505;
+            --bg-panel: #0a0a0a;
+            --border: #1f1f1f;
+            --border-highlight: #333;
+            --text-main: #e0e0e0;
+            --text-dim: #666;
+            --accent: #d4a017;
+            --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+            --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+        }
+
+        /* Base Reset */
+        * { box-sizing: border-box; }
+        body {
+            background: var(--bg-deep);
+            color: var(--text-main);
+            font-family: var(--font-ui);
+            font-size: 12px;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- Header --- */
+        header {
+            height: 48px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            justify-content: space-between;
+            background: var(--bg-panel);
+        }
+        .brand { font-weight: 800; color: var(--text-main); letter-spacing: 1px; }
+        .tabs { display: flex; height: 100%; gap: 1px; }
+        .tab {
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            padding: 0 20px;
+            height: 100%;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 12px;
+            border-bottom: 2px solid transparent;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .tab:hover { color: var(--text-main); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        /* --- Layout --- */
+        .workspace { flex: 1; display: flex; overflow: hidden; }
+        
+        .view-pane {
+            flex: 1; display: none; height: 100%;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .view-pane.active { display: flex; }
+
+        /* --- Global Grid --- */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 280px 1fr 1fr;
+            grid-template-rows: 140px 1fr;
+            height: 100%;
+            gap: 1px;
+            background: var(--border); /* Creates Borders */
+        }
+        .tile {
+            background: var(--bg-deep);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .tile-header {
+            padding: 10px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            background: rgba(255,255,255,0.02);
+        }
+        .tile-body { flex: 1; padding: 12px; position: relative; overflow: auto; }
+
+        /* KPIs */
+        .kpi-row {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 1px;
+            background: var(--border);
+            height: 140px;
+        }
+        .kpi-box {
+            flex: 1;
+            background: var(--bg-deep);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .kpi-num { font-family: var(--font-mono); font-size: 32px; color: var(--text-main); font-weight: 300; }
+        .kpi-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; margin-top: 8px; letter-spacing: 0.5px; }
+
+        /* Tables & Lists */
+        .dense-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--font-mono); }
+        .dense-table th { text-align: left; padding: 6px 8px; color: var(--text-dim); font-weight: normal; border-bottom: 1px solid var(--border); font-size: 10px; }
+        .dense-table td { padding: 6px 8px; border-bottom: 1px solid #111; color: #ccc; }
+        .dense-table tr:hover td { background: #111; color: #fff; }
+
+        /* --- User History View (3-Pane Split) --- */
+        .split-view { display: flex; height: 100%; width: 100%; }
+        
+        .pane-sidebar { width: 240px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg-panel); }
+        .pane-mid { flex: 1; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg-deep); }
+        .pane-detail { width: 350px; background: #080808; display: flex; flex-direction: column; border-left: 1px solid var(--border); }
+
+        /* User List */
+        .user-row {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .user-row:hover { background: #111; }
+        .user-row.selected { background: #161616; border-left: 2px solid var(--accent); }
+        .uid-label { font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
+        .uid-meta { font-size: 10px; color: var(--text-dim); margin-top: 3px; display: flex; justify-content: space-between; }
+
+        /* Event Timeline */
+        .timeline-wrapper { flex: 1; overflow-y: auto; padding: 0; }
+        .event-row {
+            display: flex;
+            padding: 12px 16px;
+            border-bottom: 1px solid #1a1a1a;
+            cursor: pointer;
+            gap: 12px;
+        }
+        .event-row:hover { background: #0f0f0f; }
+        .event-row.selected { background: #131313; } /* highlight selected event */
+        
+        .ev-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); min-width: 60px; }
+        .ev-content { flex: 1; }
+        .ev-title { font-size: 13px; color: #eee; margin-bottom: 4px; font-weight: 500; }
+        .ev-badges { display: flex; gap: 6px; }
+        .badge { 
+            padding: 2px 6px; border-radius: 2px; font-size: 10px; font-family: var(--font-mono); color: #000; font-weight: 600;
+        }
+        .badge.mood { background: #4caf50; }
+        .badge.sound { background: #2196f3; }
+        .badge.pop { background: #9c27b0; }
+
+        /* Detail Pane */
+        .detail-header { padding: 16px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; text-transform: uppercase; color: #fff; }
+        .detail-scroll { padding: 16px; overflow-y: auto; flex: 1; }
+        
+        .kv-block { margin-bottom: 24px; }
+        .kv-label { font-size: 10px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px; }
+        
+        /* Track List Item (Detail) */
+        .track-item { 
+            display: flex; justify-content: space-between; 
+            padding: 8px 0; border-bottom: 1px solid #1a1a1a; 
+            font-family: var(--font-mono); font-size: 11px; 
+        }
+        .track-name { color: #d4d4d4; }
+        .track-artist { color: #666; }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">VIBE // ANALYTICS</div>
+        <div class="tabs">
+            <button class="tab active" onclick="setView('global', this)">SYSTEM OVERVIEW</button>
+            <button class="tab" onclick="setView('users', this)">USER SESSIONS</button>
+        </div>
+        <div style="font-family: var(--font-mono); color: #444; font-size: 10px;">ID: PROD-1</div>
+    </header>
+
+    <div class="workspace">
+        
+        <!-- GLOBAL VIEW -->
+        <div id="view-global" class="view-pane active">
+            <div class="kpi-row">
+                 <div class="kpi-box">
+                     <div class="kpi-num" id="g_searches">0</div>
+                     <div class="kpi-label">Total Operations</div>
+                 </div>
+                 <div class="kpi-box">
+                     <div class="kpi-num" id="g_users">0</div>
+                     <div class="kpi-label">Unique Clients</div>
+                 </div>
+                 <div class="kpi-box">
+                     <div class="kpi-num" id="g_depth">0.0</div>
+                     <div class="kpi-label">Ops / Session</div>
+                 </div>
+            </div>
+            
+            <div class="dashboard-grid" style="grid-template-rows: 1fr; grid-template-columns: 2fr 1fr 1fr; height: 100%;">
+                
+                <div class="tile">
+                    <div class="tile-header">Request Volume</div>
+                    <div class="tile-body">
+                         <canvas id="chartVolume"></canvas>
+                    </div>
+                </div>
+
+                <div class="tile">
+                    <div class="tile-header">Vibe Distribution</div>
+                    <div class="tile-body">
+                        <canvas id="chartScatter"></canvas>
+                    </div>
+                </div>
+
+                <div class="tile">
+                    <div class="tile-header">Top Artists</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableTopArtists">
+                            <thead><tr><th>ARTIST</th><th>HITS</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- USER SESSION VIEW -->
+        <div id="view-users" class="view-pane">
+            <div class="split-view">
+                <!-- 1. User List -->
+                <div class="pane-sidebar" id="userList"></div>
+                
+                <!-- 2. Timeline -->
+                <div class="pane-mid">
+                    <div class="tile-header">Session Events <span id="selUserLabel" style="margin-left:auto; opacity:0.5">-</span></div>
+                    <div class="timeline-wrapper" id="eventTimeline">
+                        <div style="padding:40px; color:#333; text-align:center">Select a client to inspect</div>
+                    </div>
+                </div>
+
+                <!-- 3. Detail Inspector -->
+                <div class="pane-detail">
+                    <div class="detail-header">Event Details</div>
+                    <div class="detail-scroll" id="eventDetail">
+                        <div style="color:#333">Select an event to view full payload data.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // State
+        let rawData = {};
+        let usersData = {};
+
+        function setView(id, btn) {
+            document.querySelectorAll('.view-pane').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById('view-'+id).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        async function init() {
+            try {
+                const req = await fetch('/analytics/data');
+                if (req.status === 401) return location.reload();
+                rawData = await req.json();
+                
+                renderGlobal();
+                processUsers();
+                renderUserList();
+            } catch(e) { console.error(e); }
+        }
+
+        /* --- Global Renderer --- */
+        function renderGlobal() {
+            document.getElementById('g_searches').innerText = rawData.total_searches;
+            document.getElementById('g_users').innerText = rawData.unique_users;
+            document.getElementById('g_depth').innerText = rawData.session_stats?.avg_per_user || 0;
+
+            // Table
+            const tbody = document.querySelector('#tableTopArtists tbody');
+            tbody.innerHTML = rawData.top_artists.slice(0, 20).map(([n, c]) => `
+                <tr><td>${n}</td><td>${c}</td></tr>
+            `).join('');
+
+            // Charts
+            const ctxVol = document.getElementById('chartVolume').getContext('2d');
+            new Chart(ctxVol, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(rawData.daily_activity),
+                    datasets: [{ label:'Ops', data: Object.values(rawData.daily_activity), backgroundColor: '#d4a017' }]
+                },
+                options: { maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#1f1f1f'}}} }
+            });
+
+            const ctxScat = document.getElementById('chartScatter').getContext('2d');
+            new Chart(ctxScat, {
+                type: 'scatter',
+                data: { datasets: [{ data: rawData.vibe_scatter.map(p=>({x:p.x,y:p.y})), backgroundColor:'rgba(212, 160, 23, 0.5)', pointRadius:2 }] },
+                options: { maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{min:-1,max:1,grid:{color:'#1f1f1f'}}, y:{min:-1,max:1,grid:{color:'#1f1f1f'}}} }
+            });
+        }
+
+        /* --- User Logic --- */
+        function processUsers() {
+            usersData = {};
+            rawData.recent_searches.forEach(e => {
+                const uid = e.client_id || 'anonymous';
+                if (!usersData[uid]) usersData[uid] = { id: uid, events: [], lastTs: e.timestamp };
+                usersData[uid].events.push(e);
+                if (e.timestamp > usersData[uid].lastTs) usersData[uid].lastTs = e.timestamp;
+            });
+        }
+
+        function renderUserList() {
+            const sorted = Object.values(usersData).sort((a,b) => new Date(b.lastTs) - new Date(a.lastTs));
+            document.getElementById('userList').innerHTML = sorted.map(u => `
+                <div class="user-row" onclick="selectUser('${u.id}', this)">
+                    <div class="uid-label">${u.id.substring(0,8)}...</div>
+                    <div class="uid-meta">
+                        <span>${u.events.length} Events</span>
+                        <span>${new Date(u.lastTs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        window.selectUser = (uid, el) => {
+            document.querySelectorAll('.user-row').forEach(e => e.classList.remove('selected'));
+            el.classList.add('selected');
+            document.getElementById('selUserLabel').innerText = uid;
+
+            const u = usersData[uid];
+            const events = u.events.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            document.getElementById('eventTimeline').innerHTML = events.map((e, idx) => {
+                const chips = [];
+                if (e.vibes.mood) chips.push(`<span class="badge mood">M ${e.vibes.mood}</span>`);
+                if (e.vibes.sound) chips.push(`<span class="badge sound">S ${e.vibes.sound}</span>`);
+                
+                // Store index to retrieve data later
+                return `
+                <div class="event-row" onclick="selectEvent('${uid}', ${idx}, this)">
+                    <div class="ev-time">${new Date(e.timestamp).toLocaleTimeString([], {hour12:false})}</div>
+                    <div class="ev-content">
+                        <div class="ev-title">Input: ${e.inputs.join(', ')}</div>
+                        <div class="ev-badges">${chips.join('')}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        window.selectEvent = (uid, idx, el) => {
+            document.querySelectorAll('.event-row').forEach(e => e.classList.remove('selected'));
+            el.classList.add('selected');
+            
+            // Re-sort to match display order (DESC)
+            const u = usersData[uid];
+            const events = u.events.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+            const evt = events[idx];
+            
+            // Build Detail View
+            let resultsHtml = '';
+            
+            // Handle different result structures (legacy list vs new dict vs list of dicts)
+            if (Array.isArray(evt.results)) {
+                 if (typeof evt.results[0] === 'string') {
+                     // String list
+                     resultsHtml = evt.results.map(r => `<div class="track-item"><span class="track-name">${r}</span></div>`).join('');
+                 } else {
+                     // List of objects?
+                     resultsHtml = `<div style="padding:8px; color:#666">Complex Result Data</div>`;
+                 }
+            } else if (typeof evt.results === 'object') {
+                // Dict: Artist -> List of Tracks
+                Object.entries(evt.results).forEach(([artist, tracks]) => {
+                    tracks.forEach(t => {
+                        const tName = t.name || t; // Handle if it's just a string or obj
+                        resultsHtml += `
+                            <div class="track-item">
+                                <span class="track-name">${tName}</span>
+                                <span class="track-artist">${artist}</span>
+                            </div>
+                        `;
+                    });
+                });
+            }
+
+            document.getElementById('eventDetail').innerHTML = `
+                <div class="kv-block">
+                    <div class="kv-label">Query Time</div>
+                    <div style="font-family:var(--font-mono); color:#fff">${evt.timestamp}</div>
+                </div>
+                
+                <div class="kv-block">
+                    <div class="kv-label">Vibe Parameters</div>
+                    <div style="font-family:var(--font-mono); color:#d4a017">
+                        MOOD: ${evt.vibes.mood}<br/>
+                        SOUND: ${evt.vibes.sound}<br/>
+                        POP: ${evt.vibes.pop}
+                    </div>
+                </div>
+
+                <div class="kv-block">
+                    <div class="kv-label">Input Artists</div>
+                    <div style="color:#fff">${evt.inputs.join(', ')}</div>
+                </div>
+
+                ${evt.input_tracks && evt.input_tracks.length > 0 ? `
+                <div class="kv-block">
+                    <div class="kv-label">Input Track IDs</div>
+                    <div style="font-family:var(--font-mono); color:#888; font-size:11px;">${evt.input_tracks.join('<br>')}</div>
+                </div>` : ''}
+
+                <div class="kv-block">
+                    <div class="kv-label">Response Data (${resultsHtml.match(/class="track-item"/g)?.length || 0} Tracks)</div>
+                    <div style="border:1px solid #222; border-radius:4px;">
+                        ${resultsHtml || '<div style="padding:10px; color:#555">No result data available</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        init();
+    </script>
+</body>
+</html>

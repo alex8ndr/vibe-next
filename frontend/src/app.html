@@ -2,7 +2,40 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<link rel="icon" href="%sveltekit.assets%/vibe_icon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Vibe - Discover Your Next Favourite Artist</title>
+		<meta name="description" content="Personalized music recommendations based on your unique taste." />
+		
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://vibe.alext.dev/" />
+		<meta property="og:title" content="Vibe - Discover Your Next Favourite Artist" />
+		<meta property="og:description" content="Personalized music recommendations based on your unique taste." />
+		<meta property="og:image" content="https://vibe.alext.dev/vibe_icon.png" />
+
+		<!-- Twitter -->
+		<meta property="twitter:card" content="summary" />
+		<meta property="twitter:url" content="https://vibe.alext.dev/" />
+		<meta property="twitter:title" content="Vibe - Discover Your Next Favourite Artist" />
+		<meta property="twitter:description" content="Personalized music recommendations based on your unique taste." />
+		<meta property="twitter:image" content="https://vibe.alext.dev/vibe_icon.png" />
+
+		<script>
+			// Apply theme and settings before paint to prevent flash
+			(function() {
+				try {
+					var theme = JSON.parse(localStorage.getItem('vibe-theme') || '"system"');
+					if (theme === 'light' || theme === 'dark') {
+						document.documentElement.setAttribute('data-theme', theme);
+					}
+					var settings = JSON.parse(localStorage.getItem('vibe-settings') || '{}');
+					if (settings.showBackground === false) {
+						document.documentElement.setAttribute('data-no-bg', '');
+					}
+				} catch(e) {}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

@@ -1,15 +1,24 @@
 <script lang="ts">
 	import "../app.css";
-	import { hasResults, settings, themePreference } from "$lib/stores";
+	import {
+		hasResults,
+		settings,
+		themePreference,
+		recommendations,
+	} from "$lib/stores";
 	import { onMount } from "svelte";
+
+	const DEV_MODE = import.meta.env.DEV;
 
 	let { children } = $props();
 	let settingsOpen = $state(false);
+	let settingsDropdown = $state<HTMLDivElement | null>(null);
 	let mounted = $state(false);
 
 	onMount(() => {
 		mounted = true;
 		applyTheme($themePreference);
+		syncBackgroundAttr($settings.showBackground);
 	});
 
 	function applyTheme(pref: "light" | "dark" | "system") {
@@ -22,18 +31,53 @@
 		}
 	}
 
+	function syncBackgroundAttr(show: boolean) {
+		if (typeof document === "undefined") return;
+		if (show) {
+			document.documentElement.removeAttribute("data-no-bg");
+		} else {
+			document.documentElement.setAttribute("data-no-bg", "");
+		}
+	}
+
 	$effect(() => {
 		if (mounted) applyTheme($themePreference);
 	});
 
+	$effect(() => {
+		if (mounted) syncBackgroundAttr($settings.showBackground);
+	});
+
+	function getActualTheme(): "light" | "dark" {
+		if (typeof window === "undefined") return "dark";
+		return window.matchMedia("(prefers-color-scheme: dark)").matches
+			? "dark"
+			: "light";
+	}
+
 	function cycleTheme() {
-		const order: ("light" | "dark" | "system")[] = [
-			"system",
-			"light",
-			"dark",
-		];
-		const idx = order.indexOf($themePreference);
-		themePreference.set(order[(idx + 1) % 3]);
+		if ($themePreference === "system") {
+			// Switch to opposite of current actual appearance
+			const actual = getActualTheme();
+			themePreference.set(actual === "dark" ? "light" : "dark");
+		} else if ($themePreference === "light") {
+			themePreference.set("dark");
+		} else {
+			themePreference.set("system");
+		}
+	}
+
+	function handleOutsideClick(e: MouseEvent) {
+		if (
+			settingsOpen &&
+			settingsDropdown &&
+			!settingsDropdown.contains(e.target as Node)
+		) {
+			const btn = (e.target as HTMLElement).closest(
+				'.icon-btn[aria-label="Settings"]',
+			);
+			if (!btn) settingsOpen = false;
+		}
 	}
 
 	const themeIcon = $derived(
@@ -44,6 +88,8 @@
 				: "⚙️",
 	);
 </script>
+
+<svelte:window on:click={handleOutsideClick} />
 
 <svelte:head>
 	<title>Vibe</title>
@@ -64,7 +110,14 @@
 			rel="noopener">alext.dev</a
 		>
 
-		<div class="brand">
+		<a
+			href="/"
+			class="brand"
+			onclick={(e) => {
+				e.preventDefault();
+				recommendations.set({});
+			}}
+		>
 			<svg class="logo" viewBox="0 0 40 40" fill="none">
 				<circle
 					cx="20"
@@ -81,7 +134,7 @@
 				/>
 			</svg>
 			<span class="name">Vibe</span>
-		</div>
+		</a>
 
 		<div class="header-actions">
 			<button
@@ -92,6 +145,7 @@
 				{themeIcon}
 			</button>
 
+			<!-- Settings button hidden for now
 			<button
 				class="icon-btn"
 				onclick={() => (settingsOpen = !settingsOpen)}
@@ -111,49 +165,28 @@
 			</button>
 
 			{#if settingsOpen}
-				<div class="dropdown">
+				<div class="dropdown" bind:this={settingsDropdown}>
 					<h4>Settings</h4>
 
-					<label class="setting">
-						<span>Variety</span>
-						<select bind:value={$settings.variety}>
-							<option value={1}>Low</option>
-							<option value={2}>Medium</option>
-							<option value={3}>High</option>
-						</select>
-					</label>
-
-					<label class="setting">
-						<span>Genre Weight</span>
-						<input
-							type="range"
-							min="0"
-							max="5"
-							step="0.5"
-							bind:value={$settings.genreWeight}
-						/>
-						<span class="val">{$settings.genreWeight}</span>
-					</label>
-
-					<label class="setting">
-						<span>Max Results</span>
-						<input
-							type="number"
-							min="3"
-							max="12"
-							bind:value={$settings.maxResults}
-						/>
-					</label>
-
-					<label class="setting">
-						<span>Show Background</span>
-						<input
-							type="checkbox"
-							bind:checked={$settings.showBackground}
-						/>
-					</label>
+					{#if DEV_MODE}
+						<label class="setting dev">
+							<span>Show Background</span>
+							<input
+								type="checkbox"
+								checked={$settings.showBackground}
+								onchange={() =>
+									settings.update((s) => ({
+										...s,
+										showBackground: !s.showBackground,
+									}))}
+							/>
+						</label>
+					{:else}
+						<p class="empty-msg">No global settings</p>
+					{/if}
 				</div>
 			{/if}
+			-->
 		</div>
 	</header>
 
@@ -199,6 +232,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.brand:hover {
+		text-decoration: none;
 	}
 
 	.logo {
@@ -240,6 +279,7 @@
 		background: var(--bg-alt);
 	}
 
+	/* 
 	.icon-btn svg {
 		width: 18px;
 		height: 18px;
@@ -279,36 +319,22 @@
 		color: var(--text-2);
 	}
 
-	.setting span:first-child {
-		flex: 1;
-	}
-
-	.setting select,
-	.setting input[type="number"] {
-		padding: 0.25rem 0.4rem;
-		background: var(--bg-alt);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text);
-		font-size: 0.75rem;
-		width: 70px;
-	}
-
-	.setting input[type="range"] {
-		width: 60px;
-		accent-color: var(--gold);
+	.setting.dev {
+		color: #e55;
 	}
 
 	.setting input[type="checkbox"] {
 		accent-color: var(--gold);
 	}
 
-	.setting .val {
-		font-size: 0.7rem;
+	.empty-msg {
+		font-size: 0.75rem;
 		color: var(--text-3);
-		width: 24px;
-		text-align: right;
+		font-style: italic;
+		text-align: center;
+		padding: 0.5rem 0;
 	}
+	*/
 
 	.main {
 		flex: 1;
@@ -325,11 +351,13 @@
 			display: none;
 		}
 
+		/* 
 		.dropdown {
 			position: fixed;
 			left: 1rem;
 			right: 1rem;
 			width: auto;
 		}
+		*/
 	}
 </style>
