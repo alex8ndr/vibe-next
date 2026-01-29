@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Track, ArtistDebugInfo } from "$lib/stores";
     import { nowPlaying, sidebarPlaying, devSettings } from "$lib/stores";
+    import { trackPlayTrack } from "$lib/analytics";
     import { onMount } from "svelte";
 
     interface Props {
@@ -199,6 +200,7 @@
         controller.play();
         isActuallyPlaying = true;
         nowPlaying.set({ artist, trackId, trackName });
+        trackPlayTrack(trackId, trackName, artist);
     }
 </script>
 

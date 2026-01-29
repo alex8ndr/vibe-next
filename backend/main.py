@@ -125,6 +125,22 @@ class SearchLog(BaseModel):
     result_count: int
 
 
+class AnalyticsEvent(BaseModel):
+    """Generic event for tracking user interactions."""
+    event_type: str  # e.g., "add_favorite", "remove_favorite", "add_known", "remove_known", "play_track"
+    client_id: str | None = None
+    payload: dict = {}  # Event-specific data (track info, artist name, etc.)
+
+
+def log_event_async(event_data: dict):
+    """Append event to analytics JSONL file (background task)."""
+    try:
+        with open(ANALYTICS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event_data) + "\n")
+    except Exception as e:
+        print(f"Failed to log event: {e}")
+
+
 def log_search_async(log_data: dict):
     """Append search log to JSONL file (background task)."""
     try:
@@ -297,6 +313,19 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
     ]
 
 
+@app.post("/log/action")
+async def track_event(event: AnalyticsEvent, background_tasks: BackgroundTasks):
+    """Track a user interaction event (favorites, known artists, plays)."""
+    event_data = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "event_type": event.event_type,
+        "client_id": event.client_id,
+        **event.payload,
+    }
+    background_tasks.add_task(log_event_async, event_data)
+    return {"status": "ok"}
+
+
 @app.get("/analytics/stats")
 async def get_analytics_stats(username: str = Depends(get_admin)):
     """Get basic analytics stats (for dev/admin use)."""
@@ -328,26 +357,32 @@ async def get_analytics_stats(username: str = Depends(get_admin)):
 @app.get("/analytics/dashboard", response_class=HTMLResponse)
 async def analytics_dashboard(username: str = Depends(get_admin)):
     """Serve the simple analytics dashboard (Protected)."""
-    dashboard_path = Path(__file__).parent / "dashboard.html"
-    if not dashboard_path.exists():
-        return "Dashboard template not found"
-    with open(dashboard_path, "r", encoding="utf-8") as f:
-        return f.read()
+    try:
+        dashboard_path = Path(__file__).parent / "dashboard.html"
+        if not dashboard_path.exists():
+            return "Dashboard template not found"
+        with open(dashboard_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"<html><body><h1>Dashboard temporarily unavailable</h1><p>{e}</p></body></html>"
 
 @app.get("/analytics/data")
 async def analytics_data(username: str = Depends(get_admin)):
     """Aggregate data for the dashboard (Protected)."""
+    empty_response = {
+        "total_searches": 0, 
+        "daily_activity": {}, 
+        "top_artists": [], 
+        "vibe_stats": {}, 
+        "top_tracks": [],
+        "recent_searches": [],
+        "vibe_scatter": [],
+        "session_stats": {"avg_per_user": 0},
+        "events": {"total": 0, "by_type": {}, "recent": [], "top_favorited_tracks": [], "top_known_artists": []},
+    }
+    
     if not ANALYTICS_PATH.exists():
-        return {
-            "total_searches": 0, 
-            "daily_activity": {}, 
-            "top_artists": [], 
-            "vibe_stats": {}, 
-            "top_tracks": [],
-            "recent_searches": [],
-            "vibe_scatter": [],
-            "session_stats": {"avg_per_user": 0}
-        }
+        return empty_response
     
     # Global aggregates (O(1) memory accumulation)
     total_searches = 0
@@ -356,15 +391,19 @@ async def analytics_data(username: str = Depends(get_admin)):
     artist_counts = Counter()
     track_counts = Counter()
     
-    # Vibe lists for histograms (these store simple floats, efficient enough up to ~1M records)
-    # If this gets too big, we would switch to pre-binned counters.
+    # Event tracking
+    event_counts = Counter()
+    favorited_tracks = Counter()
+    known_artists = Counter()
+    recent_events = deque(maxlen=200)
+    
+    # Vibe lists for histograms
     vibe_moods = []
     vibe_sounds = []
     popularities = []
     vibe_scatter = []
 
-    # Keep only the last 500 entries for the detailed feed
-    # deque with maxlen efficiently discards old items
+    # Keep only the last 500 search entries
     recent_entries = deque(maxlen=500)
 
     try:
@@ -374,7 +413,29 @@ async def analytics_data(username: str = Depends(get_admin)):
                 try:
                     entry = json.loads(line)
                     
-                    # 1. Update Global Stats
+                    event_type = entry.get("event_type")
+                    
+                    # Handle user interaction events
+                    if event_type:
+                        event_counts[event_type] += 1
+                        recent_events.append(entry)
+                        
+                        if cid := entry.get("client_id"):
+                            unique_users.add(cid)
+                        
+                        # Track favorited tracks/artists
+                        if event_type == "add_favorite":
+                            track_key = f"{entry.get('track_name', '?')} - {entry.get('artist_name', '?')}"
+                            favorited_tracks[track_key] += 1
+                        elif event_type == "add_known":
+                            known_artists[entry.get("artist_name", "?")] += 1
+                        
+                        ts = entry.get("timestamp", "")[:10]
+                        if ts:
+                            daily_activity[ts] += 1
+                        continue
+                    
+                    # Handle search entries (no event_type = legacy search format)
                     total_searches += 1
                     
                     if cid := entry.get("client_id"):
@@ -399,7 +460,6 @@ async def analytics_data(username: str = Depends(get_admin)):
                     if mood != 0 or sound != 0:
                         vibe_scatter.append({"x": mood, "y": sound})
 
-                    # Track counts (requires iterating results, but we don't store the results)
                     results = entry.get("results")
                     if isinstance(results, dict):
                         for artist, tracks in results.items():
@@ -407,18 +467,15 @@ async def analytics_data(username: str = Depends(get_admin)):
                                 if isinstance(t, dict) and "name" in t:
                                     track_counts[f"{t['name']} - {artist}"] += 1
 
-                    # 2. Keep raw entry only if it's new (deque handles eviction)
                     recent_entries.append(entry)
                         
                 except json.JSONDecodeError:
                     continue
         
-        # Format the recent searches list for the frontend
+        # Format recent searches
         recent_searches = []
-        # recent_entries is chronological (oldest -> newest), we want reversed (newest first)
         for entry in reversed(recent_entries):
             raw_results = entry.get("results", {})
-            
             recent_searches.append({
                 "timestamp": entry.get("timestamp"),
                 "client_id": entry.get("client_id"),
@@ -430,6 +487,18 @@ async def analytics_data(username: str = Depends(get_admin)):
                     "pop": entry.get("settings", {}).get("popularity", 0),
                 },
                 "results": raw_results
+            })
+        
+        # Format recent events
+        formatted_events = []
+        for evt in reversed(recent_events):
+            formatted_events.append({
+                "timestamp": evt.get("timestamp"),
+                "client_id": evt.get("client_id"),
+                "event_type": evt.get("event_type"),
+                "track_id": evt.get("track_id"),
+                "track_name": evt.get("track_name"),
+                "artist_name": evt.get("artist_name"),
             })
             
         avg_searches = 0
@@ -449,7 +518,14 @@ async def analytics_data(username: str = Depends(get_admin)):
                 "popularity": popularities
             },
             "vibe_scatter": vibe_scatter, 
-            "recent_searches": recent_searches
+            "recent_searches": recent_searches,
+            "events": {
+                "total": sum(event_counts.values()),
+                "by_type": dict(event_counts),
+                "recent": formatted_events,
+                "top_favorited_tracks": favorited_tracks.most_common(20),
+                "top_known_artists": known_artists.most_common(20),
+            },
         }
     except Exception as e:
         return {"error": str(e)}

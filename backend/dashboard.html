@@ -187,7 +187,8 @@
         <div class="brand">VIBE // ANALYTICS</div>
         <div class="tabs">
             <button class="tab active" onclick="setView('global', this)">SYSTEM OVERVIEW</button>
-            <button class="tab" onclick="setView('users', this)">USER SESSIONS</button>
+            <button class="tab" onclick="setView('events', this)">USER EVENTS</button>
+            <button class="tab" onclick="setView('users', this)">SEARCH HISTORY</button>
         </div>
         <div style="font-family: var(--font-mono); color: #444; font-size: 10px;">ID: PROD-1</div>
     </header>
@@ -240,6 +241,60 @@
             </div>
         </div>
 
+        <!-- USER EVENTS VIEW -->
+        <div id="view-events" class="view-pane">
+            <div class="kpi-row">
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_total">0</div>
+                    <div class="kpi-label">Total Events</div>
+                </div>
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_favorites">0</div>
+                    <div class="kpi-label">Favorites Added</div>
+                </div>
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_known">0</div>
+                    <div class="kpi-label">Known Artists</div>
+                </div>
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_plays">0</div>
+                    <div class="kpi-label">Track Plays</div>
+                </div>
+            </div>
+            
+            <div class="dashboard-grid" style="grid-template-rows: 1fr; grid-template-columns: 1fr 1fr 1fr; height: 100%;">
+                <div class="tile">
+                    <div class="tile-header">Top Favorited Tracks</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableFavTracks">
+                            <thead><tr><th>TRACK</th><th>COUNT</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="tile">
+                    <div class="tile-header">Top Known Artists</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableKnownArtists">
+                            <thead><tr><th>ARTIST</th><th>COUNT</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="tile">
+                    <div class="tile-header">Recent Events</div>
+                    <div class="tile-body" style="padding:0; overflow-y:auto">
+                        <table class="dense-table" id="tableRecentEvents">
+                            <thead><tr><th>TIME</th><th>EVENT</th><th>DETAIL</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- USER SESSION VIEW -->
         <div id="view-users" class="view-pane">
             <div class="split-view">
@@ -286,6 +341,7 @@
                 rawData = await req.json();
                 
                 renderGlobal();
+                renderEvents();
                 processUsers();
                 renderUserList();
             } catch(e) { console.error(e); }
@@ -320,6 +376,45 @@
                 data: { datasets: [{ data: rawData.vibe_scatter.map(p=>({x:p.x,y:p.y})), backgroundColor:'rgba(212, 160, 23, 0.5)', pointRadius:2 }] },
                 options: { maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{min:-1,max:1,grid:{color:'#1f1f1f'}}, y:{min:-1,max:1,grid:{color:'#1f1f1f'}}} }
             });
+        }
+
+        /* --- Events Renderer --- */
+        function renderEvents() {
+            const events = rawData.events || {};
+            const byType = events.by_type || {};
+            
+            document.getElementById('e_total').innerText = events.total || 0;
+            document.getElementById('e_favorites').innerText = byType.add_favorite || 0;
+            document.getElementById('e_known').innerText = byType.add_known || 0;
+            document.getElementById('e_plays').innerText = byType.play_track || 0;
+            
+            // Top favorited tracks
+            const favTbody = document.querySelector('#tableFavTracks tbody');
+            favTbody.innerHTML = (events.top_favorited_tracks || []).map(([n, c]) => `
+                <tr><td>${n}</td><td>${c}</td></tr>
+            `).join('') || '<tr><td colspan="2" style="color:#555">No favorites yet</td></tr>';
+            
+            // Top known artists
+            const knownTbody = document.querySelector('#tableKnownArtists tbody');
+            knownTbody.innerHTML = (events.top_known_artists || []).map(([n, c]) => `
+                <tr><td>${n}</td><td>${c}</td></tr>
+            `).join('') || '<tr><td colspan="2" style="color:#555">No known artists yet</td></tr>';
+            
+            // Recent events
+            const recentTbody = document.querySelector('#tableRecentEvents tbody');
+            const eventLabels = {
+                'add_favorite': '♥ FAV',
+                'remove_favorite': '✕ UNFAV',
+                'add_known': '👁 KNOWN',
+                'remove_known': '✕ UNKN',
+                'play_track': '▶ PLAY'
+            };
+            recentTbody.innerHTML = (events.recent || []).slice(0, 50).map(e => {
+                const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '-';
+                const label = eventLabels[e.event_type] || e.event_type;
+                const detail = e.track_name ? `${e.track_name} - ${e.artist_name}` : (e.artist_name || '-');
+                return `<tr><td>${time}</td><td>${label}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${detail}</td></tr>`;
+            }).join('') || '<tr><td colspan="3" style="color:#555">No events yet</td></tr>';
         }
 
         /* --- User Logic --- */

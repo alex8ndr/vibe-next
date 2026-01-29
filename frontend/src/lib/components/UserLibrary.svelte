@@ -5,6 +5,7 @@
         sidebarPlaying,
         type FavoriteTrack,
     } from "$lib/stores";
+    import { trackRemoveKnown, trackRemoveFavorite } from "$lib/analytics";
 
     interface Props {
         onplay: (track: FavoriteTrack) => void;
@@ -25,11 +26,13 @@
     });
 
     function removeFromKnown(artist: string) {
+        trackRemoveKnown(artist);
         knownArtists.update((list) => list.filter((a) => a !== artist));
     }
 
-    function removeFavorite(trackId: string) {
-        favoriteTracks.update((list) => list.filter((t) => t.track_id !== trackId));
+    function removeFavorite(track: FavoriteTrack) {
+        trackRemoveFavorite(track.track_id, track.track_name, track.artist_name);
+        favoriteTracks.update((list) => list.filter((t) => t.track_id !== track.track_id));
     }
 
     function clearKnownArtists() {
@@ -128,7 +131,7 @@
                         onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onplay(track); } }}
                     >
                         <span class="track-name">{track.track_name}</span>
-                        <button class="remove-btn" onclick={(e) => { e.stopPropagation(); removeFavorite(track.track_id); }}>×</button>
+                        <button class="remove-btn" onclick={(e) => { e.stopPropagation(); removeFavorite(track); }}>×</button>
                     </div>
                 {/each}
             </div>

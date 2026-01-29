@@ -19,6 +19,7 @@
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
+    import { trackAddFavorite, trackAddKnown, trackRemoveKnown } from "$lib/analytics";
 
     let {
         selected = $bindable(),
@@ -124,8 +125,10 @@
     function addToKnown(artist: string) {
         knownArtists.update((list) => {
             if (list.includes(artist)) {
+                trackRemoveKnown(artist);
                 return list.filter(a => a !== artist);
             }
+            trackAddKnown(artist);
             return [...list, artist];
         });
     }
@@ -143,6 +146,7 @@
         return (track: Track) => {
              favoriteTracks.update((list) => {
                 if (list.some((t) => t.track_id === track.track_id)) return list;
+                trackAddFavorite(track.track_id, track.track_name, artist);
                 return [...list, { ...track, artist_name: artist }];
             });
         };
