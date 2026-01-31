@@ -84,6 +84,7 @@ class MusicData:
         self.df: pl.DataFrame | None = None
         self.matrix_audio: np.ndarray | None = None
         self.matrix_genre: np.ndarray | None = None
+        self.audio_norms_sq: np.ndarray | None = None  # Precomputed ||x||² for fast distance
         self.artists_list: list[str] = []
         self.audio_cols: list[str] = []
         self.genre_cols: list[str] = []
@@ -107,6 +108,9 @@ class MusicData:
         audio_data = df.select(self.audio_cols).to_numpy().astype(np.float16)
         weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float16)
         self.matrix_audio = audio_data * weights
+        
+        # Precompute squared norms for fast Euclidean distance: ||x-q||² = ||x||² + ||q||² - 2x·q
+        self.audio_norms_sq = np.sum(self.matrix_audio.astype(np.float32) ** 2, axis=1)
         
         # Genre Matrix (Unweighted for Cosine)
         self.matrix_genre = df.select(self.genre_cols).to_numpy().astype(np.float16)
@@ -172,9 +176,24 @@ class MusicData:
 
 
 
-def euclidean_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    diff = matrix - query
-    return np.sqrt(np.sum(diff**2, axis=1))
+def squared_euclidean_distance(
+    query: np.ndarray, 
+    matrix: np.ndarray, 
+    matrix_norms_sq: np.ndarray | None = None
+) -> np.ndarray:
+    """Compute squared Euclidean distance using dot-product form (avoids large temp allocation).
+    
+    ||x - q||² = ||x||² + ||q||² - 2x·q
+    """
+    query = query.astype(np.float32).flatten()
+    query_norm_sq = np.dot(query, query)
+    
+    if matrix_norms_sq is None:
+        matrix_norms_sq = np.sum(matrix.astype(np.float32) ** 2, axis=1)
+    
+    dot_products = np.dot(matrix.astype(np.float32), query)
+    
+    return matrix_norms_sq + query_norm_sq - 2.0 * dot_products
 
 
 def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
@@ -192,45 +211,97 @@ def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return 1.0 - cosine_sim
 
 
-def get_representative_vector(
+# Weights for seed types
+WEIGHT_USER_SELECTED = 3.0  # User-picked tracks get higher influence
+WEIGHT_AUTO_SAMPLED = 1.0   # Auto-sampled tracks get base weight
+MAX_DIVERSE_SEEDS_PER_ARTIST_BASE = 15  # Max diverse tracks when single artist
+MAX_USER_WEIGHT_PER_ARTIST = 6.0  # Cap total user-selected weight per artist (~2 tracks)
+
+# Hierarchical soft-min tau values
+TAU_WITHIN_ARTIST = 0.3  # Low = close to ANY track from artist counts
+TAU_BETWEEN_ARTISTS = 1.5  # High = must be close to ALL artists (intersection)
+
+
+def get_max_seeds_per_artist(num_artists: int) -> int:
+    """Scale max seeds inversely with artist count to balance representation."""
+    return max(6, MAX_DIVERSE_SEEDS_PER_ARTIST_BASE // num_artists)
+
+
+def select_diverse_tracks(vectors: np.ndarray, k: int) -> list[int]:
+    """Select k diverse tracks using greedy max-min distance selection.
+    
+    Picks tracks that are maximally spread in embedding space.
+    If len(vectors) <= k, returns all indices.
+    """
+    n = len(vectors)
+    if n <= k:
+        return list(range(n))
+    
+    vectors = vectors.astype(np.float32)
+    selected = [0]  # Start with first track
+    
+    # Precompute distances from first track to all others
+    min_dists = np.linalg.norm(vectors - vectors[0], axis=1)
+    min_dists[0] = -np.inf  # Already selected
+    
+    for _ in range(k - 1):
+        # Pick track with maximum minimum distance to any selected track
+        next_idx = int(np.argmax(min_dists))
+        selected.append(next_idx)
+        
+        # Update min distances
+        new_dists = np.linalg.norm(vectors - vectors[next_idx], axis=1)
+        min_dists = np.minimum(min_dists, new_dists)
+        min_dists[next_idx] = -np.inf  # Mark as selected
+    
+    return selected
+
+
+def get_seed_indices_grouped(
     df: pl.DataFrame,
-    matrix: np.ndarray,
+    matrix_audio: np.ndarray,
     artists: list[str],
     track_id_to_idx: dict[str, int],
     track_ids: list[str] | None = None,
     track_id_to_artist: dict[str, str] | None = None
-) -> np.ndarray | None:
-    # All vectors stored as (vector, weight) tuples for consistent handling
-    entity_vectors: list[tuple[np.ndarray, float]] = []
+) -> dict[str, list[tuple[int, float]]]:
+    """Get seed track indices grouped by artist for hierarchical aggregation.
     
-    # Track which artists have fine-tuned track selections
-    artists_with_tracks = set()
+    Returns dict mapping artist -> list of (track_idx, weight) tuples.
+    User-selected tracks get higher weight (capped per artist).
+    """
+    artist_seeds: dict[str, list[tuple[int, float]]] = {}
+    artist_user_weight: dict[str, float] = {}
     
-    # Process fine-tuned track selections 
+    num_artists = len(artists) if artists else 1
+    max_seeds = get_max_seeds_per_artist(num_artists)
+    
     if track_ids and track_id_to_artist:
-        per_artist_vecs: dict[str, list[np.ndarray]] = {}
         for tid in track_ids:
             if tid in track_id_to_idx:
-                artist = track_id_to_artist.get(tid, "unknown")
-                if artist not in per_artist_vecs:
-                    per_artist_vecs[artist] = []
-                per_artist_vecs[artist].append(matrix[track_id_to_idx[tid]])
-                artists_with_tracks.add(artist)
-        
-        # Average within each artist, weight by sqrt(n) for sublinear influence
-        for artist, vecs in per_artist_vecs.items():
-            artist_avg = np.mean(np.stack(vecs, axis=0), axis=0)
-            weight = np.sqrt(len(vecs))
-            entity_vectors.append((artist_avg, weight))
+                artist = track_id_to_artist.get(tid, "_unknown")
+                idx = track_id_to_idx[tid]
+                
+                current_weight = artist_user_weight.get(artist, 0.0)
+                remaining = max(0.0, MAX_USER_WEIGHT_PER_ARTIST - current_weight)
+                weight = max(WEIGHT_AUTO_SAMPLED, min(WEIGHT_USER_SELECTED, remaining))
+                
+                if artist not in artist_seeds:
+                    artist_seeds[artist] = []
+                artist_seeds[artist].append((idx, weight))
+                artist_user_weight[artist] = current_weight + min(WEIGHT_USER_SELECTED, remaining)
     elif track_ids:
-        # Fallback if no artist lookup available
         for tid in track_ids:
             if tid in track_id_to_idx:
-                entity_vectors.append((matrix[track_id_to_idx[tid]], 1.0))
+                if "_unknown" not in artist_seeds:
+                    artist_seeds["_unknown"] = []
+                artist_seeds["_unknown"].append((track_id_to_idx[tid], WEIGHT_USER_SELECTED))
     
-    # Process artists
     if artists:
         for artist in artists:
+            if artist in artist_seeds:
+                continue
+                
             artist_df = df.filter(pl.col("artist_name") == artist)
             
             if len(artist_df) > 0:
@@ -240,10 +311,8 @@ def get_representative_vector(
                 n_target = np.interp(total_songs, curve_x, curve_y)
                 n_songs = min(total_songs, int(n_target))
                 
-                # Get top tracks by popularity
                 top_df = artist_df.sort('popularity', descending=True).head(n_songs)
                 
-                # O(1) index lookup via pre-built dict
                 indices = [
                     track_id_to_idx[tid]
                     for tid in top_df['track_id'].to_list()
@@ -251,20 +320,72 @@ def get_representative_vector(
                 ]
                 
                 if indices:
-                    artist_vec = np.mean(matrix[indices], axis=0)
-                    # Weight artist vectors by 0.5 to be less dominant when fine-tuned tracks exist
-                    weight = 0.5 if artist in artists_with_tracks else 1.0
-                    entity_vectors.append((artist_vec, weight))
+                    artist_vectors = matrix_audio[indices]
+                    diverse_local = select_diverse_tracks(artist_vectors, k=max_seeds)
+                    artist_seeds[artist] = [
+                        (indices[local_idx], WEIGHT_AUTO_SAMPLED) 
+                        for local_idx in diverse_local
+                    ]
     
-    if not entity_vectors:
-        return None
+    return artist_seeds
+
+
+def soft_min_distance(
+    d_stack: np.ndarray,
+    weights: np.ndarray,
+    tau: float
+) -> np.ndarray:
+    """Aggregate distances using weighted soft-min.
     
-    # Weighted averaging
-    vectors = np.stack([v[0] for v in entity_vectors], axis=0)
-    weights = np.array([v[1] for v in entity_vectors])
-    avg_vector = np.average(vectors, axis=0, weights=weights)
+    Formula: soft_min(d) = -τ * log(Σ wᵢ * exp(-dᵢ / τ) / Σ wᵢ)
     
-    return avg_vector.reshape(1, -1)
+    Args:
+        d_stack: (K, N) array of distances
+        weights: (K,) array of weights
+        tau: Temperature
+    """
+    if len(d_stack) == 1:
+        return d_stack[0]
+    
+    w = weights.reshape(-1, 1).astype(np.float32)
+    scaled = -d_stack / tau
+    max_scaled = np.max(scaled, axis=0, keepdims=True)
+    
+    weighted_exp = w * np.exp(scaled - max_scaled)
+    log_weighted_sum = max_scaled.squeeze() + np.log(np.sum(weighted_exp, axis=0) + 1e-12)
+    log_weighted_sum -= np.log(np.sum(w) + 1e-12)
+    
+    return -tau * log_weighted_sum
+
+
+def hierarchical_soft_min_distance(
+    d_total_stack: np.ndarray,
+    artist_ranges: list[tuple[str, int, int]],
+    weights: np.ndarray,
+    tau_within: float = TAU_WITHIN_ARTIST,
+    tau_between: float = TAU_BETWEEN_ARTISTS
+) -> np.ndarray:
+    """Two-stage soft-min: low tau within artist, high tau between artists.
+    
+    Stage 1: For each artist, soft-min with low tau (close to ANY track counts)
+    Stage 2: Across artists, soft-min with high tau (must be close to ALL)
+    """
+    if len(artist_ranges) == 1:
+        name, start, end = artist_ranges[0]
+        return soft_min_distance(d_total_stack[start:end], weights[start:end], tau_within)
+    
+    per_artist_distances = []
+    per_artist_weights = []
+    
+    for name, start, end in artist_ranges:
+        artist_d = soft_min_distance(d_total_stack[start:end], weights[start:end], tau_within)
+        per_artist_distances.append(artist_d)
+        per_artist_weights.append(np.sum(weights[start:end]))
+    
+    d_artists = np.stack(per_artist_distances, axis=0).astype(np.float32)
+    w_artists = np.array(per_artist_weights, dtype=np.float32)
+    
+    return soft_min_distance(d_artists, w_artists, tau_between)
 
 
 def generate_recommendations(
@@ -287,28 +408,69 @@ def generate_recommendations(
     lookup = data.track_id_to_idx
     artist_lookup = data.track_id_to_artist
     
-    vec_audio = get_representative_vector(df, matrix_audio, input_artists, lookup, track_ids, artist_lookup)
-    vec_genre = get_representative_vector(df, matrix_genre, input_artists, lookup, track_ids, artist_lookup)
+    grouped_seeds = get_seed_indices_grouped(df, matrix_audio, input_artists, lookup, track_ids, artist_lookup)
     
-    if vec_audio is None or vec_genre is None:
+    if not grouped_seeds:
         return {}, {"has_more_candidates": False}
     
-    # Apply vibe modifiers to audio vector
+    # Flatten grouped seeds while tracking artist ranges for hierarchical aggregation
+    seed_indices: list[int] = []
+    weights: list[float] = []
+    artist_ranges: list[tuple[str, int, int]] = []
+    
+    for artist, seeds in grouped_seeds.items():
+        start = len(seed_indices)
+        for idx, w in seeds:
+            seed_indices.append(idx)
+            weights.append(w)
+        end = len(seed_indices)
+        artist_ranges.append((artist, start, end))
+    
+    seeds_audio = [matrix_audio[idx] for idx in seed_indices]
+    seeds_genre_raw = [matrix_genre[idx] for idx in seed_indices]
+    seeds_genre = [
+        s / np.linalg.norm(s) if np.linalg.norm(s) > 0 else s
+        for s in seeds_genre_raw
+    ]
+    
     if vibe_modifiers:
-        vec_audio = vec_audio.copy().astype(np.float32)
-        for vibe_name, slider_value in vibe_modifiers.items():
-            if vibe_name in VIBE_DIMENSIONS and slider_value != 0:
-                for feature, weight in VIBE_DIMENSIONS[vibe_name].items():
-                    if feature in data.audio_cols:
-                        idx = data.audio_cols.index(feature)
-                        # Apply offset: slider_value * weight * strength
-                        offset = slider_value * weight * VIBE_SLIDER_STRENGTH
-                        vec_audio[0, idx] += offset
+        modified_seeds = []
+        for seed in seeds_audio:
+            seed = seed.copy().astype(np.float32)
+            for vibe_name, slider_value in vibe_modifiers.items():
+                if vibe_name in VIBE_DIMENSIONS and slider_value != 0:
+                    for feature, weight in VIBE_DIMENSIONS[vibe_name].items():
+                        if feature in data.audio_cols:
+                            idx = data.audio_cols.index(feature)
+                            offset = slider_value * weight * VIBE_SLIDER_STRENGTH * FEATURE_WEIGHTS[feature]
+                            seed[idx] += offset
+            modified_seeds.append(seed)
+        seeds_audio = modified_seeds
     
-    d_audio = euclidean_distance(vec_audio, matrix_audio)
-    d_genre = cosine_distance(vec_genre, matrix_genre)
+    seeds_audio_stack = np.stack(seeds_audio, axis=0).astype(np.float32)
+    seeds_genre_stack = np.stack(seeds_genre, axis=0).astype(np.float32)
     
-    d_total = np.sqrt(d_audio**2 + (d_genre * genre_weight)**2)
+    # Batch audio distance
+    seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
+    dot_products = seeds_audio_stack @ matrix_audio.astype(np.float32).T
+    d_audio_sq = data.audio_norms_sq + seeds_norm_sq - 2.0 * dot_products
+    d_audio = np.sqrt(np.maximum(d_audio_sq, 0))
+    
+    # Batch genre distance (cosine)
+    seeds_genre_norms = np.linalg.norm(seeds_genre_stack, axis=1, keepdims=True)
+    matrix_genre_norms = np.linalg.norm(matrix_genre.astype(np.float32), axis=1)
+    genre_dots = seeds_genre_stack @ matrix_genre.astype(np.float32).T
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cosine_sim = genre_dots / (seeds_genre_norms * matrix_genre_norms)
+        cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
+    d_genre = 1.0 - cosine_sim
+    
+    # Combined distance per seed
+    d_total_stack = np.sqrt(d_audio**2 + (d_genre * genre_weight)**2)
+    
+    # Hierarchical aggregation: low tau within artists, high tau between
+    weights_arr = np.array(weights, dtype=np.float32)
+    d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
     
     # Apply popularity bias
     if popularity != 0:
@@ -326,9 +488,12 @@ def generate_recommendations(
         noise_scale = VARIETY_NOISE_SCALE * (diversity - 1)
         noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_total.shape).astype(np.float32)
         d_noisy = d_total.astype(np.float32) + noise
-        similar_indices = d_noisy.argsort()[:n]
+        # Use argpartition for O(n) instead of O(n log n) argsort
+        top_n_unsorted = np.argpartition(d_noisy, n)[:n]
+        similar_indices = top_n_unsorted[np.argsort(d_noisy[top_n_unsorted])]
     else:
-        similar_indices = d_total.argsort()[:n]
+        top_n_unsorted = np.argpartition(d_total, n)[:n]
+        similar_indices = top_n_unsorted[np.argsort(d_total[top_n_unsorted])]
     
     # Get similar songs and add score (higher = better, based on position in sorted list)
     similar_df = df[similar_indices.tolist()]
@@ -439,21 +604,23 @@ def generate_recommendations(
                 })
         meta["input_genre_profile"] = input_profile
         
-        # Include search vector audio features if requested
-        if debug_audio and vec_audio is not None:
+        # Include search vector audio features if requested (average of seeds for display)
+        if debug_audio and seeds_audio:
             key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
             features_to_use = [c for c in key_features if c in data.audio_cols]
+            
+            # Average seeds for debug display (actual search uses soft-min)
+            avg_seed = np.mean(np.stack(seeds_audio, axis=0), axis=0)
             
             search_audio = {}
             for feat in features_to_use:
                 idx = data.audio_cols.index(feat)
-                # Divide by weight to get original value
-                raw_val = float(vec_audio[0, idx]) / FEATURE_WEIGHTS[feat]
-                # Clamp to 0-1 range for display (vibe modifiers can push values outside this)
+                raw_val = float(avg_seed[idx]) / FEATURE_WEIGHTS[feat]
                 clamped_val = max(0.0, min(1.0, raw_val))
                 search_audio[feat] = round(clamped_val, 3)
             
             meta["search_vector_audio"] = search_audio
+            meta["num_seeds"] = len(seeds_audio)  # Show how many seeds are being used
         
         # Include search vector genre profile using actual text genres
         if debug_audio:
