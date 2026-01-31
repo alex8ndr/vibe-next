@@ -90,6 +90,9 @@ class MusicData:
         self.genre_cols: list[str] = []
         self.track_id_to_idx: dict[str, int] = {}
         self.track_id_to_artist: dict[str, str] = {}  # For multi-song balancing
+        self.artist_popularity: np.ndarray | None = None  # Per-track artist popularity (0-1)
+        self.artist_track_count: np.ndarray | None = None  # Per-track log-normalized track count (0-1)
+        self.popularity_median: float = 0.5  # Median artist popularity for centering
         # Debug info cache 
         self.artist_genre_profile: dict[str, list[tuple[str, float]]] = {}
     
@@ -129,6 +132,9 @@ class MusicData:
         self.track_id_to_idx = {tid: i for i, tid in enumerate(track_ids)}
         self.track_id_to_artist = {tid: artist for tid, artist in zip(track_ids, artist_names)}
         
+        # Precompute artist-level popularity (avg track popularity per artist)
+        self._build_artist_popularity(df)
+        
         # Cache per-artist genre profiles (top 3 genres with percentages)
         self._build_genre_profiles(df)
         
@@ -139,6 +145,42 @@ class MusicData:
                 keep_cols.append(col)
         
         self.df = df.select(keep_cols)
+    
+    def _build_artist_popularity(self, df: pl.DataFrame) -> None:
+        """Build per-track artist popularity and track count arrays for popularity slider."""
+        # Compute mean popularity and track count per artist
+        artist_stats = (
+            df.group_by('artist_name')
+            .agg([
+                pl.col('popularity').cast(pl.Float32).mean().alias('avg_pop'),
+                pl.len().alias('track_count')
+            ])
+        )
+        artist_names = artist_stats['artist_name'].to_list()
+        avg_pops = artist_stats['avg_pop'].to_list()
+        track_counts = np.array(artist_stats['track_count'].to_list(), dtype=np.float32)
+        
+        # Log-normalize track counts to 0-1 range
+        log_counts = np.log1p(track_counts)
+        max_log = log_counts.max()
+        norm_counts = log_counts / max_log if max_log > 0 else log_counts
+        
+        artist_pop_dict = dict(zip(artist_names, avg_pops))
+        artist_count_dict = dict(zip(artist_names, norm_counts))
+        
+        # Store median for centering
+        self.popularity_median = float(np.median(avg_pops))
+        
+        # Create per-track arrays
+        track_artist_names = df['artist_name'].to_list()
+        self.artist_popularity = np.array(
+            [artist_pop_dict.get(a, self.popularity_median) for a in track_artist_names],
+            dtype=np.float32
+        )
+        self.artist_track_count = np.array(
+            [artist_count_dict.get(a, 0.5) for a in track_artist_names],
+            dtype=np.float32
+        )
     
     def _build_genre_profiles(self, df: pl.DataFrame) -> None:
         """Build per-artist genre distribution from actual track genres (not encoded vectors)."""
@@ -465,21 +507,26 @@ def generate_recommendations(
         cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
     d_genre = 1.0 - cosine_sim
     
+    # Dynamic genre weight: increase at slider extremes to prevent genre drift
+    # At |popularity|=1, double genre weight to keep results genre-relevant
+    effective_genre_weight = genre_weight * (1.0 + abs(popularity))
+    
     # Combined distance per seed
-    d_total_stack = np.sqrt(d_audio**2 + (d_genre * genre_weight)**2)
+    d_total_stack = np.sqrt(d_audio**2 + (d_genre * effective_genre_weight)**2)
     
     # Hierarchical aggregation: low tau within artists, high tau between
     weights_arr = np.array(weights, dtype=np.float32)
     d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
     
-    # Apply popularity bias
-    if popularity != 0:
-        pop_idx = data.audio_cols.index('popularity')
-        pop_values = data.matrix_audio[:, pop_idx] / FEATURE_WEIGHTS['popularity']
-        # positive popularity = prefer mainstream (higher pop values)
-        # negative popularity = prefer hidden gems (lower pop values)
-        pop_bias = popularity * 0.3 * (pop_values - 0.5)
-        d_total = d_total - pop_bias
+    # Apply popularity and track count as distance adjustments
+    # Negative slider = favor obscure/low-track artists, positive = favor mainstream/high-track
+    if popularity != 0 and data.artist_popularity is not None:
+        pop_weight = 0.6
+        track_weight = 0.2
+        # Center around actual median
+        pop_adjustment = (data.artist_popularity - data.popularity_median) * popularity * pop_weight
+        track_adjustment = (data.artist_track_count - 0.5) * popularity * track_weight
+        d_total = d_total - pop_adjustment - track_adjustment
     
     # Use Gumbel noise for variety - gives controlled randomness while respecting relevance
     n = SAMPLE_SIZE
