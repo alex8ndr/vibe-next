@@ -157,7 +157,7 @@ GENRE_DEFINITIONS = {
     'classical':        {'classical_cinematic': 1.0},
     'opera':            {'classical_cinematic': 1.0, 'world_regional': 0.2},
     'piano':            {'classical_cinematic': 0.8, 'acoustic_folk': 0.4, 'chill_ambient': 0.3},
-    'show-tunes':       {'classical_cinematic': 0.6, 'pop': 0.6},
+    'show-tunes':       {'classical_cinematic': 0.2, 'pop': 0.1},
     
     # =========================================================================
     # WORLD / REGIONAL (lower weights for less smearing)

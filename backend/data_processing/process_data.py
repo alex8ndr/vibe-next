@@ -135,7 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smear-strength",
         type=float,
-        default=0.5,
+        default=0.6,
         help="Strength of inter-artist genre smearing (0.0 to 1.0)",
     )
     return parser.parse_args()
