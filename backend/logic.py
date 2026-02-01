@@ -47,13 +47,8 @@ VIBE_DIMENSIONS = {
 # How strongly vibe sliders affect the search (in feature units, 0-1 scale)
 VIBE_SLIDER_STRENGTH = 0.8
 
-# Tracks to keep when computing representative vector for an artist 
-ARTIST_SAMPLING_CURVE = [
-    (5, 5),
-    (20, 12),
-    (50, 25),
-    (80, 30),
-]
+# How many top tracks to consider for diversity sampling (2x max seeds is plenty)
+DIVERSITY_CANDIDATE_MULTIPLIER = 3
 
 # Number of tracks to recommend per artist
 TRACKS_PER_ARTIST = 4
@@ -254,10 +249,10 @@ def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 
 
 # Weights for seed types
-WEIGHT_USER_SELECTED = 3.0  # User-picked tracks get higher influence
-WEIGHT_AUTO_SAMPLED = 1.0   # Auto-sampled tracks get base weight
+WEIGHT_USER_SELECTED_TOTAL = 8.0  # Total weight budget for user-selected tracks per artist
+WEIGHT_USER_SELECTED_MIN = 2.0    # Minimum weight per user track (prevents dilution)
+WEIGHT_AUTO_SAMPLED_TOTAL = 6.0   # Total weight budget for auto-sampled tracks per artist
 MAX_DIVERSE_SEEDS_PER_ARTIST_BASE = 15  # Max diverse tracks when single artist
-MAX_USER_WEIGHT_PER_ARTIST = 6.0  # Cap total user-selected weight per artist (~2 tracks)
 
 # Hierarchical soft-min tau values
 TAU_WITHIN_ARTIST = 0.3  # Low = close to ANY track from artist counts
@@ -270,9 +265,13 @@ def get_max_seeds_per_artist(num_artists: int) -> int:
 
 
 def select_diverse_tracks(vectors: np.ndarray, k: int) -> list[int]:
-    """Select k diverse tracks using greedy max-min distance selection.
+    """Select k diverse tracks using density-aware greedy selection.
     
-    Picks tracks that are maximally spread in embedding space.
+    Uses inverse average distance as density proxy:
+    - Tracks in crowded regions (low avg distance) get boosted
+    - Isolated outliers (high avg distance) get dampened
+    - Result: diverse selection proportional to catalog density
+    
     If len(vectors) <= k, returns all indices.
     """
     n = len(vectors)
@@ -280,21 +279,26 @@ def select_diverse_tracks(vectors: np.ndarray, k: int) -> list[int]:
         return list(range(n))
     
     vectors = vectors.astype(np.float32)
-    selected = [0]  # Start with first track
     
-    # Precompute distances from first track to all others
-    min_dists = np.linalg.norm(vectors - vectors[0], axis=1)
-    min_dists[0] = -np.inf  # Already selected
+    # Precompute pairwise distances and density (avg dist to others)
+    dists_matrix = np.linalg.norm(vectors[:, None] - vectors[None, :], axis=2)
+    np.fill_diagonal(dists_matrix, 0)
+    avg_dists = np.mean(dists_matrix, axis=1)
+    avg_dists = np.maximum(avg_dists, 1e-6)  # Avoid division by zero
+    
+    selected = [0]
+    min_dists = dists_matrix[0].copy()
+    min_dists[0] = -np.inf
     
     for _ in range(k - 1):
-        # Pick track with maximum minimum distance to any selected track
-        next_idx = int(np.argmax(min_dists))
+        # Score = min_distance / avg_distance (density-adjusted)
+        scores = min_dists / avg_dists
+        next_idx = int(np.argmax(scores))
         selected.append(next_idx)
         
-        # Update min distances
-        new_dists = np.linalg.norm(vectors - vectors[next_idx], axis=1)
-        min_dists = np.minimum(min_dists, new_dists)
-        min_dists[next_idx] = -np.inf  # Mark as selected
+        # Update min distances using precomputed matrix
+        min_dists = np.minimum(min_dists, dists_matrix[next_idx])
+        min_dists[next_idx] = -np.inf
     
     return selected
 
@@ -310,64 +314,87 @@ def get_seed_indices_grouped(
     """Get seed track indices grouped by artist for hierarchical aggregation.
     
     Returns dict mapping artist -> list of (track_idx, weight) tuples.
-    User-selected tracks get higher weight (capped per artist).
+    User-selected tracks get distributed weight, then auto-sampled tracks fill remaining slots.
     """
     artist_seeds: dict[str, list[tuple[int, float]]] = {}
-    artist_user_weight: dict[str, float] = {}
+    artist_user_indices: dict[str, list[int]] = {}
     
     num_artists = len(artists) if artists else 1
     max_seeds = get_max_seeds_per_artist(num_artists)
     
+    # Phase 1: Collect user-selected tracks per artist
     if track_ids and track_id_to_artist:
         for tid in track_ids:
             if tid in track_id_to_idx:
                 artist = track_id_to_artist.get(tid, "_unknown")
                 idx = track_id_to_idx[tid]
-                
-                current_weight = artist_user_weight.get(artist, 0.0)
-                remaining = max(0.0, MAX_USER_WEIGHT_PER_ARTIST - current_weight)
-                weight = max(WEIGHT_AUTO_SAMPLED, min(WEIGHT_USER_SELECTED, remaining))
-                
-                if artist not in artist_seeds:
-                    artist_seeds[artist] = []
-                artist_seeds[artist].append((idx, weight))
-                artist_user_weight[artist] = current_weight + min(WEIGHT_USER_SELECTED, remaining)
+                if artist not in artist_user_indices:
+                    artist_user_indices[artist] = []
+                artist_user_indices[artist].append(idx)
     elif track_ids:
         for tid in track_ids:
             if tid in track_id_to_idx:
-                if "_unknown" not in artist_seeds:
-                    artist_seeds["_unknown"] = []
-                artist_seeds["_unknown"].append((track_id_to_idx[tid], WEIGHT_USER_SELECTED))
+                if "_unknown" not in artist_user_indices:
+                    artist_user_indices["_unknown"] = []
+                artist_user_indices["_unknown"].append(track_id_to_idx[tid])
     
-    if artists:
-        for artist in artists:
-            if artist in artist_seeds:
-                continue
-                
-            artist_df = df.filter(pl.col("artist_name") == artist)
+    # Phase 2: Distribute weight across user tracks and add to seeds
+    for artist, user_indices in artist_user_indices.items():
+        n_user = len(user_indices)
+        weight_per_track = max(WEIGHT_USER_SELECTED_MIN, WEIGHT_USER_SELECTED_TOTAL / n_user)
+        artist_seeds[artist] = [(idx, weight_per_track) for idx in user_indices]
+    
+    # Phase 3: For each artist, auto-sample diverse tracks to fill remaining slots
+    all_artists = set(artists) if artists else set()
+    all_artists.update(artist_user_indices.keys())
+    
+    for artist in all_artists:
+        if artist == "_unknown":
+            continue
             
-            if len(artist_df) > 0:
-                total_songs = len(artist_df)
-                
-                curve_x, curve_y = zip(*ARTIST_SAMPLING_CURVE)
-                n_target = np.interp(total_songs, curve_x, curve_y)
-                n_songs = min(total_songs, int(n_target))
-                
-                top_df = artist_df.sort('popularity', descending=True).head(n_songs)
-                
-                indices = [
-                    track_id_to_idx[tid]
-                    for tid in top_df['track_id'].to_list()
-                    if tid in track_id_to_idx
-                ]
-                
-                if indices:
-                    artist_vectors = matrix_audio[indices]
-                    diverse_local = select_diverse_tracks(artist_vectors, k=max_seeds)
-                    artist_seeds[artist] = [
-                        (indices[local_idx], WEIGHT_AUTO_SAMPLED) 
-                        for local_idx in diverse_local
-                    ]
+        existing_indices = {idx for idx, _ in artist_seeds.get(artist, [])}
+        slots_remaining = max_seeds - len(existing_indices)
+        
+        if slots_remaining <= 0:
+            continue
+        
+        artist_df = df.filter(pl.col("artist_name") == artist)
+        if len(artist_df) == 0:
+            continue
+        
+        # Take top tracks by popularity as candidates, then select diverse subset
+        n_candidates = max_seeds * DIVERSITY_CANDIDATE_MULTIPLIER
+        top_df = artist_df.sort('popularity', descending=True).head(n_candidates)
+        
+        candidate_indices = [
+            track_id_to_idx[tid]
+            for tid in top_df['track_id'].to_list()
+            if tid in track_id_to_idx and track_id_to_idx[tid] not in existing_indices
+        ]
+        
+        if candidate_indices:
+            candidate_vectors = matrix_audio[candidate_indices]
+            diverse_local = select_diverse_tracks(candidate_vectors, k=slots_remaining)
+            
+            if artist not in artist_seeds:
+                artist_seeds[artist] = []
+            
+            # Distribute auto-sampled weight budget across selected tracks
+            n_auto = len(diverse_local)
+            weight_per_auto = WEIGHT_AUTO_SAMPLED_TOTAL / n_auto if n_auto > 0 else 1.0
+            artist_seeds[artist].extend([
+                (candidate_indices[local_idx], weight_per_auto)
+                for local_idx in diverse_local
+            ])
+    
+    # Boost all seeds for artists with small catalogs so they're not underrepresented
+    for artist, seeds in artist_seeds.items():
+        if artist == "_unknown":
+            continue
+        n_seeds = len(seeds)
+        if n_seeds < max_seeds:
+            weight_boost = max_seeds / n_seeds
+            artist_seeds[artist] = [(idx, w * weight_boost) for idx, w in seeds]
     
     return artist_seeds
 
