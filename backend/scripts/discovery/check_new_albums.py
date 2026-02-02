@@ -1,0 +1,577 @@
+#!/usr/bin/env python3
+"""
+Check an artist for new albums not in the dataset and optionally update.
+
+Usage:
+    # Check what albums are missing (dry-run by default)
+    python check_new_albums.py "Radiohead"
+    python check_new_albums.py --url "https://open.spotify.com/artist/4Z8W4fKeB5YxbusRsdQVPb"
+    
+    # Actually add missing albums
+    python check_new_albums.py "Radiohead" --update
+    
+    # Check multiple artists from file
+    python check_new_albums.py --file artists.txt
+    
+    # Batch update multiple artists
+    python check_new_albums.py --file artists.txt --update
+    
+    # Show all albums (not just missing)
+    python check_new_albums.py "Radiohead" --all
+    
+    # Limit albums to check (newest first)
+    python check_new_albums.py "Radiohead" --limit 5
+
+Features:
+    - Searches artist via Deezer → Songlink → ReccoBeats
+    - Fetches artist's full discography from ReccoBeats
+    - Compares album track_ids with dataset to find missing albums
+    - Shows release date, track count, and which tracks are missing
+    - Can add missing albums to added_artists.csv.zip
+"""
+import os
+import sys
+import argparse
+import time
+import re
+from pathlib import Path
+from typing import List, Dict, Optional, Set, Tuple
+from datetime import datetime
+
+import pandas as pd
+import requests
+
+# Patterns for album variants we want to skip (for singles)
+SKIP_SINGLE_PATTERNS = [
+    r'\bremix(es)?\b',
+    r'\bacoustic\s*(version|collection)?\b',
+    r'\blive\s*(at|from|in|version)?\b',
+    r'\bremaster(ed)?\b',
+    r'\bkaraoke\b',
+    r'\binstrumental\s*version\b',
+]
+SKIP_SINGLE_RE = re.compile('|'.join(SKIP_SINGLE_PATTERNS), re.IGNORECASE)
+
+# Patterns to skip for any album type
+SKIP_ALBUM_PATTERNS = [
+    r'\btrack\s*by\s*track\b',
+]
+SKIP_ALBUM_RE = re.compile('|'.join(SKIP_ALBUM_PATTERNS), re.IGNORECASE)
+
+# Add parent directory to path for shared modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from track_dedup import deduplicate_tracks
+from utils import (
+    ReccoBeatsClient,
+    get_genre_from_audiodb,
+    search_artist_via_deezer,
+    extract_spotify_id,
+    build_rows,
+    load_existing,
+    save_csv_zip,
+    deduplicate_with_report,
+    DEEZER_URL,
+    SONGLINK_URL,
+    RAW_COLS,
+)
+
+BASE_URL = "https://api.reccobeats.com/v1"
+
+
+def get_artist_albums(client: ReccoBeatsClient, recco_uuid: str) -> List[Dict]:
+    """Get all albums for an artist from ReccoBeats (paginated)."""
+    albums = []
+    page = 0
+    while True:
+        url = f"{BASE_URL}/artist/{recco_uuid}/album"
+        r = requests.get(url, params={"page": page, "size": 50}, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        batch = data.get("content", [])
+        if not batch:
+            break
+        albums.extend(batch)
+        if page >= data.get("totalPages", 1) - 1:
+            break
+        page += 1
+        time.sleep(0.2)
+    return albums
+
+
+def get_recco_artist_from_spotify_track_id(client: ReccoBeatsClient, spotify_track_id: str) -> Optional[Tuple[str, str]]:
+    """Get ReccoBeats artist UUID and name from a Spotify track ID.
+    Returns (recco_uuid, artist_name) or None.
+    """
+    tracks = client.get_tracks([spotify_track_id])
+    if not tracks:
+        return None
+    track = tracks[0]
+    artists = track.get("artists", [])
+    if not artists:
+        return None
+    # The href is the Spotify artist URL, extract the Spotify artist ID
+    artist_href = artists[0].get("href", "")
+    spotify_artist_id = artist_href.split("/")[-1] if artist_href else None
+    if not spotify_artist_id:
+        return None
+    
+    # Look up the artist by Spotify ID to get ReccoBeats UUID
+    url = f"{BASE_URL}/artist"
+    r = requests.get(url, params={"ids": spotify_artist_id}, timeout=20)
+    r.raise_for_status()
+    artist_data = r.json().get("content", [])
+    if not artist_data:
+        return None
+    
+    recco_uuid = artist_data[0].get("id")
+    artist_name = artist_data[0].get("name", "Unknown")
+    return (recco_uuid, artist_name)
+
+
+def search_artist_by_name(name: str, verbose: bool = False) -> Optional[Tuple[str, str]]:
+    """Search for artist by name via Deezer → Songlink → ReccoBeats.
+    Returns (recco_uuid, artist_name) or None.
+    """
+    try:
+        r = requests.get(f"{DEEZER_URL}/search/artist", params={"q": name, "limit": 1}, timeout=10)
+        r.raise_for_status()
+        artists = r.json().get("data", [])
+        if not artists:
+            return None
+        
+        deezer_artist = artists[0]
+        found_name = deezer_artist["name"]
+        
+        r = requests.get(f"{DEEZER_URL}/artist/{deezer_artist['id']}/top", params={"limit": 3}, timeout=10)
+        r.raise_for_status()
+        tracks = r.json().get("data", [])
+        if not tracks:
+            return None
+        
+        for track in tracks:
+            track_id = track.get("id")
+            try:
+                deezer_url = f"https://deezer.com/track/{track_id}"
+                r = requests.get(SONGLINK_URL, params={"url": deezer_url}, timeout=15)
+                if r.status_code == 200:
+                    data = r.json()
+                    spotify_url = data.get("linksByPlatform", {}).get("spotify", {}).get("url")
+                    if spotify_url:
+                        spotify_id = spotify_url.split("/")[-1].split("?")[0]
+                        client = ReccoBeatsClient()
+                        result = get_recco_artist_from_spotify_track_id(client, spotify_id)
+                        if result:
+                            return result
+            except Exception:
+                pass
+            time.sleep(0.3)
+        
+        return None
+    except Exception as e:
+        if verbose:
+            print(f"  Search error: {e}")
+        return None
+
+
+def search_artist_by_url(url_input: str, verbose: bool = False) -> Optional[Tuple[str, str]]:
+    """Get artist from Spotify artist/track/album URL.
+    Returns (recco_uuid, artist_name) or None.
+    """
+    spotify_id, item_type = extract_spotify_id(url_input)
+    client = ReccoBeatsClient()
+    
+    if "artist" in url_input:
+        # Direct artist lookup by Spotify ID
+        api_url = f"{BASE_URL}/artist"
+        r = requests.get(api_url, params={"ids": spotify_id}, timeout=20)
+        r.raise_for_status()
+        artists = r.json().get("content", [])
+        if artists:
+            artist = artists[0]
+            recco_uuid = artist.get("id")  # ReccoBeats UUID
+            return (recco_uuid, artist.get("name", "Unknown"))
+    
+    if item_type == "album":
+        album = client.get_album(spotify_id)
+        if album:
+            artists = album.get("artists", [])
+            if artists:
+                # Get the Spotify artist ID from href, then look up ReccoBeats UUID
+                artist_href = artists[0].get("href", "")
+                spotify_artist_id = artist_href.split("/")[-1] if artist_href else None
+                if spotify_artist_id:
+                    api_url = f"{BASE_URL}/artist"
+                    r = requests.get(api_url, params={"ids": spotify_artist_id}, timeout=20)
+                    r.raise_for_status()
+                    artist_data = r.json().get("content", [])
+                    if artist_data:
+                        return (artist_data[0].get("id"), artist_data[0].get("name", "Unknown"))
+    
+    # For track URLs, use the track lookup function
+    return get_recco_artist_from_spotify_track_id(client, spotify_id)
+
+
+def _date_key(date_str: str) -> int:
+    """Convert date string to sortable int (YYYYMMDD)."""
+    try:
+        return int(date_str.replace("-", "")[:8])
+    except (ValueError, TypeError):
+        return 19000101
+
+
+def _normalize_album_name(name: str) -> str:
+    """Normalize album name for deduplication.
+    
+    Uses same approach as track_dedup: variants ADD to the original name,
+    so strip everything after the first delimiter.
+    """
+    from track_dedup import VARIANT_DELIMITERS, _normalize_quotes
+    
+    if not name:
+        return ""
+    
+    name = _normalize_quotes(name)
+    name = ' '.join(name.lower().split())
+    
+    # Also treat " + " as a delimiter (common for "Album + Bonus Tracks")
+    album_delimiters = VARIANT_DELIMITERS + (' + ',)
+    
+    for delim in album_delimiters:
+        if delim in name:
+            name = name.split(delim)[0]
+    
+    return name.strip()
+
+
+def _should_skip_album(album_name: str, album_type: str, skip_variants: bool) -> Tuple[bool, str]:
+    """Check if album should be skipped. Returns (should_skip, reason)."""
+    if not skip_variants:
+        return False, ""
+    
+    # Skip remix/acoustic/etc singles
+    if album_type == "single" and SKIP_SINGLE_RE.search(album_name):
+        return True, "variant single"
+    
+    # Skip patterns that apply to any album type
+    if SKIP_ALBUM_RE.search(album_name):
+        return True, "variant album"
+    
+    return False, ""
+
+
+def check_artist_albums(
+    recco_uuid: str,
+    artist_name: str,
+    existing_track_ids: Set[str],
+    limit: Optional[int] = None,
+    show_all: bool = False,
+    verbose: bool = False,
+    skip_variants: bool = True,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Check which albums are missing from the dataset.
+    
+    Args:
+        skip_variants: If True, skip remix singles, acoustic versions, track-by-track, etc.
+    
+    Returns: (missing_albums, all_albums)
+    """
+    client = ReccoBeatsClient()
+    albums = get_artist_albums(client, recco_uuid)
+    
+    # First, deduplicate by normalized name - prefer shortest (base) album
+    # Group albums by their normalized name
+    by_norm_name = {}
+    for album in albums:
+        norm = _normalize_album_name(album.get("name", ""))
+        if norm not in by_norm_name:
+            by_norm_name[norm] = []
+        by_norm_name[norm].append(album)
+    
+    # For each group, pick the one with shortest name (base album)
+    deduped_albums = []
+    for norm, group in by_norm_name.items():
+        # Sort by name length (shortest first), then by date (newest first)
+        group_sorted = sorted(group, key=lambda a: (len(a.get("name", "")), -_date_key(a.get("releaseDate", "1900-01-01"))))
+        deduped_albums.append(group_sorted[0])
+    
+    # Sort final list by date (newest first)
+    albums_sorted = sorted(
+        deduped_albums,
+        key=lambda a: a.get("releaseDate", "1900-01-01"),
+        reverse=True
+    )
+    
+    if limit:
+        albums_sorted = albums_sorted[:limit]
+    
+    missing_albums = []
+    all_album_info = []
+    
+    skipped_count = 0
+    
+    for album in albums_sorted:
+        album_name = album.get("name", "Unknown")
+        album_uuid = album.get("id")  # ReccoBeats UUID (not href which is Spotify URL)
+        album_href = album.get("href", "")
+        spotify_album_id = album_href.split("/")[-1] if album_href else None
+        release_date = album.get("releaseDate", "Unknown")
+        album_type = album.get("albumType", "album")
+        
+        if not album_uuid:
+            continue
+        
+        # Skip variant albums (remixes, acoustic, track-by-track, etc.)
+        should_skip, skip_reason = _should_skip_album(album_name, album_type, skip_variants)
+        if should_skip:
+            if verbose:
+                print(f"    Skipping ({skip_reason}): {album_name}")
+            skipped_count += 1
+            continue
+        
+        tracks = client.get_album_tracks(album_uuid)
+        track_ids = []
+        for t in tracks:
+            # Track href is Spotify URL, extract the Spotify track ID
+            href = t.get("href", "")
+            tid = href.split("/")[-1] if href else None
+            if tid:
+                track_ids.append(tid)
+        
+        existing_count = sum(1 for tid in track_ids if tid in existing_track_ids)
+        missing_count = len(track_ids) - existing_count
+        
+        album_info = {
+            "name": album_name,
+            "uuid": album_uuid,  # ReccoBeats UUID for API calls
+            "spotify_id": spotify_album_id,  # Spotify album ID
+            "release_date": release_date,
+            "type": album_type,
+            "total_tracks": len(track_ids),
+            "existing_tracks": existing_count,
+            "missing_tracks": missing_count,
+            "track_ids": track_ids,
+        }
+        
+        all_album_info.append(album_info)
+        
+        if missing_count > 0:
+            missing_albums.append(album_info)
+        
+        time.sleep(0.1)
+    
+    if verbose and skipped_count:
+        print(f"    Skipped {skipped_count} variant/duplicate albums")
+    
+    return missing_albums, all_album_info
+
+
+def add_missing_albums(
+    artist_name: str,
+    recco_uuid: str,
+    missing_albums: List[Dict],
+    genre: Optional[str],
+    existing_track_ids: Set[str],
+    df_added: pd.DataFrame,
+    df_main: pd.DataFrame,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Add tracks from missing albums to the dataset."""
+    client = ReccoBeatsClient()
+    all_new_rows = []
+    
+    for album in missing_albums:
+        album_uuid = album["uuid"]
+        album_name = album["name"]
+        
+        print(f"  Adding: {album_name} ({album['release_date']})")
+        
+        tracks = client.get_album_tracks(album_uuid)
+        new_tracks = []
+        new_track_ids = []
+        
+        for t in tracks:
+            href = t.get("href", "")
+            tid = href.split("/")[-1] if href else None
+            if tid and tid not in existing_track_ids:
+                new_tracks.append(t)
+                new_track_ids.append(tid)
+        
+        if not new_tracks:
+            print(f"    No new tracks")
+            continue
+        
+        features = client.get_audio_features(new_track_ids)
+        df_rows = build_rows(artist_name, new_tracks, features, genre, verbose)
+        
+        # Deduplicate within album (remove variants like "Song - Remastered")
+        df_rows = deduplicate_tracks(df_rows, track_col="track_name")
+        
+        if not df_rows.empty:
+            all_new_rows.append(df_rows)
+            print(f"    Added {len(df_rows)} tracks")
+        
+        time.sleep(0.2)
+    
+    if not all_new_rows:
+        return df_added
+    
+    df_new = pd.concat(all_new_rows, ignore_index=True)
+    df_combined = pd.concat([df_added, df_new], ignore_index=True)
+    df_combined, removed = deduplicate_with_report(df_combined, df_main)
+    
+    if removed:
+        print(f"  Removed {len(removed)} duplicates")
+    
+    return df_combined
+
+
+def format_album_line(album: Dict, in_dataset: bool = False) -> str:
+    """Format an album for display."""
+    status = "[x]" if in_dataset else "[ ]"
+    missing = f" ({album['missing_tracks']} new)" if album['missing_tracks'] > 0 else ""
+    return f"  {status} {album['release_date'][:10]:10} {album['type']:8} {album['name'][:50]:<50}{missing}"
+
+
+def process_artist(
+    artist_input: str,
+    is_url: bool,
+    existing_track_ids: Set[str],
+    df_main: pd.DataFrame,
+    df_added: pd.DataFrame,
+    update: bool,
+    limit: Optional[int],
+    show_all: bool,
+    genre_override: Optional[str],
+    verbose: bool,
+    skip_variants: bool = True,
+) -> Tuple[pd.DataFrame, int, int]:
+    """Process a single artist. Returns (updated_df_added, albums_checked, albums_missing)."""
+    
+    if is_url:
+        result = search_artist_by_url(artist_input, verbose)
+    else:
+        result = search_artist_by_name(artist_input, verbose)
+    
+    if not result:
+        print(f"X Could not find artist: {artist_input}")
+        return df_added, 0, 0
+    
+    recco_uuid, artist_name = result
+    print(f"\n{artist_name}")
+    print("=" * 60)
+    
+    missing_albums, all_albums = check_artist_albums(
+        recco_uuid, artist_name, existing_track_ids,
+        limit=limit, show_all=show_all, verbose=verbose,
+        skip_variants=skip_variants,
+    )
+    
+    if show_all:
+        print(f"\nAll albums ({len(all_albums)}):")
+        for album in all_albums:
+            in_dataset = album['missing_tracks'] == 0
+            print(format_album_line(album, in_dataset))
+    else:
+        if missing_albums:
+            print(f"\nMissing albums ({len(missing_albums)}):")
+            for album in missing_albums:
+                print(format_album_line(album))
+        else:
+            print(f"\n+ All albums in dataset ({len(all_albums)} albums)")
+    
+    if missing_albums and update:
+        genre = genre_override
+        if not genre:
+            print(f"\nLooking up genre...")
+            genre = get_genre_from_audiodb(artist_name)
+            if genre:
+                print(f"  Genre: {genre}")
+            else:
+                print(f"  Genre: unknown (using default)")
+                genre = "pop"
+        
+        print(f"\nAdding {len(missing_albums)} albums...")
+        df_added = add_missing_albums(
+            artist_name, recco_uuid, missing_albums, genre,
+            existing_track_ids, df_added, df_main, verbose
+        )
+        
+        for album in missing_albums:
+            for tid in album['track_ids']:
+                existing_track_ids.add(tid)
+    
+    total_missing = sum(a['missing_tracks'] for a in missing_albums)
+    return df_added, len(all_albums), len(missing_albums)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Check artist for new albums not in dataset")
+    parser.add_argument("artist", nargs="?", help="Artist name to search")
+    parser.add_argument("--url", help="Spotify artist/track/album URL")
+    parser.add_argument("--file", help="File with artist names/URLs (one per line)")
+    parser.add_argument("--update", action="store_true", help="Add missing albums to dataset")
+    parser.add_argument("--limit", type=int, help="Max albums to check (newest first)")
+    parser.add_argument("--all", action="store_true", dest="show_all", help="Show all albums, not just missing")
+    parser.add_argument("--include-variants", action="store_true", help="Include remix/acoustic/deluxe variants (skipped by default)")
+    parser.add_argument("--genre", help="Override genre (otherwise auto-detected)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    args = parser.parse_args()
+    
+    if not args.artist and not args.url and not args.file:
+        parser.print_help()
+        sys.exit(1)
+    
+    df_main, df_added = load_existing()
+    df_all = pd.concat([df_main, df_added], ignore_index=True)
+    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    
+    print(f"Dataset: {len(df_main)} tracks, Added: {len(df_added)} tracks")
+    
+    if not args.update:
+        print("\nDRY-RUN MODE (use --update to add missing albums)\n")
+    
+    artists_to_check = []
+    
+    if args.file:
+        if not os.path.exists(args.file):
+            print(f"File not found: {args.file}")
+            sys.exit(1)
+        with open(args.file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    is_url = "spotify.com" in line or "http" in line
+                    artists_to_check.append((line, is_url))
+    elif args.url:
+        artists_to_check.append((args.url, True))
+    else:
+        artists_to_check.append((args.artist, False))
+    
+    total_checked = 0
+    total_missing = 0
+    
+    skip_variants = not args.include_variants
+    
+    for artist_input, is_url in artists_to_check:
+        df_added, checked, missing = process_artist(
+            artist_input, is_url, existing_track_ids,
+            df_main, df_added, args.update, args.limit,
+            args.show_all, args.genre, args.verbose,
+            skip_variants=skip_variants,
+        )
+        total_checked += checked
+        total_missing += missing
+        time.sleep(0.3)
+    
+    print(f"\n{'=' * 60}")
+    print(f"Summary: {total_checked} albums checked, {total_missing} with missing tracks")
+    
+    if args.update and total_missing > 0:
+        save_csv_zip(df_added)
+        print(f"\n+ Saved {len(df_added)} tracks to added_artists.csv.zip")
+        print("Run process_data.py to merge with main dataset")
+
+
+if __name__ == "__main__":
+    main()
