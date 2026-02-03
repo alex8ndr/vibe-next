@@ -18,31 +18,16 @@ from pathlib import Path
 
 import pandas as pd
 
-# Christian/CCM artists mislabeled in mainstream genres (rock, alt-rock, metal, etc.)
-EXCLUDED_ARTISTS = {
-    # Worship/CCM
-    'Hillsong Worship', 'Hillsong United', 'Hillsong Young & Free', 'Bethel Music',
-    'Casting Crowns', 'MercyMe', 'for KING & COUNTRY', 'Chris Tomlin', 'Lauren Daigle',
-    'Newsboys', 'Third Day', 'TobyMac', 'DC Talk', 'Audio Adrenaline', 'Jars of Clay',
-    'Building 429', 'Sidewalk Prophets', 'Matthew West', 'Zach Williams', 'We The Kingdom',
-    'CAIN', 'Brandon Lake', 'Anne Wilson', 'I Am They', 'Danny Gokey', 'Tauren Wells',
-    'Michael W. Smith', 'Amy Grant', 'Steven Curtis Chapman', 'Natalie Grant', 'Jeremy Camp',
-    'Phil Wickham', 'Matt Redman', 'Kari Jobe', 'Passion', 'Crowder', 'Elevation Worship',
-    'Jesus Culture', 'Maverick City Music', 'Vertical Worship', 'Worship Circle',
-    
-    # Christian Rock/Metal
-    'Skillet', 'Switchfoot', 'Relient K', 'Thousand Foot Krutch', 'Kutless', 'Needtobreathe',
-    'Hawk Nelson', 'Disciple', 'Flyleaf', 'Fireflight', 'Family Force 5', 'Demon Hunter',
-    'Underoath', 'The Almost', 'House of Heroes', 'Emery', 'As I Lay Dying',
-    'August Burns Red', 'The Devil Wears Prada', 'Oh Sleeper', 'Wolves at the Gate',
-    'Fit For a King', 'Silent Planet', 'War of Ages', 'Living Sacrifice', 'Haste the Day',
-    'P.O.D.', 'Pillar', 'Twelve Stones', 'Anberlin', 'The Classic Crime', 'Icon for Hire',
-    'Lacey Sturm', 'Stryper', 'Petra', 'Red', 'Lecrae',
-}
+# Add parent directory to path for shared modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from artist_reassignments import get_reassigned_artists, get_artist_genre
+
+# Artists to exclude entirely (not reassign)
+EXCLUDED_ARTISTS: set[str] = set()
 
 # Genres to exclude entirely
 EXCLUDED_GENRES = {
-    'gospel',   # Christian content
     'comedy',   # Spoken word, not music
 }
 
@@ -76,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-songs",
         type=int,
-        default=2,
+        default=1,
         help="Minimum songs an artist must have to be included",
     )
     parser.add_argument(
@@ -96,7 +81,7 @@ def filter_data(
     input_path: Path,
     output_path: Path,
     keep_remixes: bool = False,
-    min_songs: int = 2,
+    min_songs: int = 1,
     dry_run: bool = False,
     verbose: bool = False,
 ) -> dict:
@@ -113,13 +98,24 @@ def filter_data(
         'removed': {},
     }
     
-    # Filter excluded artists
+    # Filter excluded artists (but keep those with genre reassignments)
     if 'artist_name' in df.columns:
-        artist_mask = df['artist_name'].isin(EXCLUDED_ARTISTS)
+        reassigned = get_reassigned_artists()
+        effective_exclusions = EXCLUDED_ARTISTS - reassigned
+        artist_mask = df['artist_name'].isin(effective_exclusions)
         stats['removed']['excluded_artists'] = int(artist_mask.sum())
         if verbose:
             found = df[artist_mask]['artist_name'].unique()
             print(f"  Excluded artists found: {len(found)}")
+        
+        # Apply genre reassignments
+        if reassigned and 'genre' in df.columns:
+            reassign_mask = df['artist_name'].isin(reassigned)
+            n_reassigned = reassign_mask.sum()
+            if n_reassigned > 0:
+                df.loc[reassign_mask, 'genre'] = df.loc[reassign_mask, 'artist_name'].apply(get_artist_genre)
+                if verbose:
+                    print(f"  Reassigned genres for {n_reassigned:,} tracks")
     else:
         artist_mask = pd.Series([False] * len(df))
         stats['removed']['excluded_artists'] = 0

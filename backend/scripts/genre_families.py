@@ -31,7 +31,7 @@ The Dimensions (Output Columns):
 19. reggae_dub          (Dub, Dancehall, Ska)
 20. classical_cinematic (Classical, Opera, Pop-Film, Piano, Show-Tunes)
 21. world_regional      (Specific cultural scenes: Indian, European Pop)
-22. comedy_spoken       (Comedy, Spoken Word)
+22. christian           (CCM, Worship, Christian Rock/Metal)
 """
 
 GENRE_DEFINITIONS = {
@@ -80,10 +80,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'hip-hop':          {'hip_hop': 1.0},
     'trip-hop':         {'chill_ambient': 0.6, 'electronic_house': 0.5, 'hip_hop': 0.2}, # Downtempo
-    
     'soul':             {'rnb_soul': 1.0, 'jazz_blues': 0.4, 'pop': 0.2},
-    'gospel':           {'rnb_soul': 0.6, 'acoustic_folk': 0.4, 'classical_cinematic': 0.2, 'world_regional': 0.2},
-    
     # =========================================================================
     # ELECTRONIC (House, Techno, Bass)
     # =========================================================================
@@ -170,10 +167,12 @@ GENRE_DEFINITIONS = {
     'romance':          {'world_regional': 0.3, 'classical_cinematic': 0.2, 'acoustic_folk': 0.2}, # Russian Romance
 
     # =========================================================================
-    # OTHER
+    # CHRISTIAN 
     # =========================================================================
-    'comedy':           {'comedy_spoken': 1.0},
-
+    'gospel':           {'christian': 0.3, 'acoustic_folk': 0.2},
+    'ccm':              {'christian': 0.3, 'pop': 0.2},
+    'christian-rock':   {'christian': 0.3, 'rock': 0.2},
+    'christian-metal':  {'christian': 0.3, 'metal': 0.2},
 
     # =========================================================================
     # DATASET FINDINGS
