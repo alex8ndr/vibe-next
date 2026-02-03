@@ -69,7 +69,7 @@ export const LIMITS = {
 
 export const settings = createPersistedStore('vibe-settings', {
     variety: 2,
-    genreWeight: 2.0,
+    genreWeight: 2,
     maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
     tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
     showBackground: true,

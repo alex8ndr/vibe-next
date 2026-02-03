@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
-from logic import MusicData, ParquetDataSource, generate_recommendations
+from logic import MusicData, ParquetDataSource, generate_recommendations, GENRE_FOCUS, TRACKS_PER_ARTIST, VARIETY, MAX_ARTISTS
 
 # Data path - configurable via environment in production
 DATA_PATH = Path(__file__).parent.parent / "data" / "data_encoded.parquet"
@@ -88,10 +88,10 @@ class RecommendRequest(BaseModel):
     artists: list[str]
     track_ids: list[str] | None = None
     exclude_artists: list[str] | None = None
-    diversity: int = 2
-    max_artists: int = 6
-    genre_weight: float = 2.0
-    tracks_per_artist: int = 4
+    diversity: int = VARIETY
+    max_artists: int = MAX_ARTISTS
+    genre_weight: int = GENRE_FOCUS
+    tracks_per_artist: int = TRACKS_PER_ARTIST
     vibe_mood: float = 0.0  # -1 (chill) to +1 (energetic)
     vibe_sound: float = 0.0  # -1 (acoustic) to +1 (electronic)
     popularity: float = 0.0  # -1 (hidden gems) to +1 (mainstream)

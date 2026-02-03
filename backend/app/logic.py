@@ -22,7 +22,8 @@ FEATURE_WEIGHTS = {
     'liveness': 1.0,
 }
 
-DEFAULT_GENRE_WEIGHT = 2.0
+# Effective genre weight for each slider position (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
+GENRE_WEIGHT_CURVE = [0, 0.3, 0.8, 2.0, 5.0]
 
 # Composite "vibe" dimensions that map to multiple audio features
 # Each maps a -1 to +1 slider to feature offsets
@@ -52,6 +53,15 @@ DIVERSITY_CANDIDATE_MULTIPLIER = 3
 
 # Number of tracks to recommend per artist
 TRACKS_PER_ARTIST = 4
+
+# Genre focus slider (0-4: None/Low/Medium/High/Max)
+GENRE_FOCUS = 2
+
+# Variety/diversity level (1-4: None/Low/Medium/High)
+VARIETY = 2
+
+# Max artists to return
+MAX_ARTISTS = 6
 
 # Noise strength for variety control (easy to tune)
 VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
@@ -462,9 +472,9 @@ def generate_recommendations(
     input_artists: list[str],
     track_ids: list[str] | None = None,
     exclude_artists: list[str] | None = None,
-    diversity: int = 2,
-    max_artists: int = 6,
-    genre_weight: float = DEFAULT_GENRE_WEIGHT,
+    diversity: int = VARIETY,
+    max_artists: int = MAX_ARTISTS,
+    genre_weight: int = GENRE_FOCUS,
     tracks_per_artist: int = TRACKS_PER_ARTIST,
     vibe_modifiers: dict[str, float] | None = None,  # e.g., {'mood': 0.5, 'sound': -0.3}
     popularity: float = 0.0,  # -1 (hidden gems) to +1 (mainstream)
@@ -534,9 +544,8 @@ def generate_recommendations(
         cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
     d_genre = 1.0 - cosine_sim
     
-    # Dynamic genre weight: increase at slider extremes to prevent genre drift
-    # At |popularity|=1, double genre weight to keep results genre-relevant
-    effective_genre_weight = genre_weight * (1.0 + abs(popularity))
+    # Look up effective weight from curve (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
+    effective_genre_weight = GENRE_WEIGHT_CURVE[genre_weight]
     
     # Combined distance per seed
     d_total_stack = np.sqrt(d_audio**2 + (d_genre * effective_genre_weight)**2)

@@ -9,11 +9,10 @@
     }
 
     function getGenreLabel(v: number) {
-        if (v === 0) return "Ignore";
-        if (v <= 1) return "Low";
-        if (v <= 2) return "Medium";
-        if (v <= 3) return "High";
-        if (v <= 4) return "Very High";
+        if (v === 0) return "None";
+        if (v === 1) return "Low";
+        if (v === 2) return "Medium";
+        if (v === 3) return "High";
         return "Max";
     }
 </script>
@@ -75,7 +74,7 @@
             <span>Genre Focus</span>
             <span class="setting-value">{getGenreLabel($settings.genreWeight)}</span>
         </div>
-        <input type="range" min="0" max="4" step="0.5" bind:value={$settings.genreWeight} />
+        <input type="range" min="0" max="4" step="1" bind:value={$settings.genreWeight} />
     </div>
     <div class="setting-mini">
         <div class="setting-label-row">
