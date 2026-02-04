@@ -51,15 +51,15 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # ROCK & ALTERNATIVE
     # =========================================================================
-    'rock':             {'rock': 0.8, 'alternative': 0.5},
+    'rock':             {'rock': 1.0},
     'hard-rock':        {'rock': 1.0, 'metal': 0.4}, # Heavy Radio Rock
     'grunge':           {'rock': 0.5, 'alternative': 0.5, 'metal': 0.2}, # 90s Heavy
     'rock-n-roll':      {'rock': 0.5, 'jazz_blues': 0.4, 'pop': 0.2, 'acoustic_folk': 0.2},  # Oldies
-    'garage':           {'alternative': 0.5, 'rock': 0.4, 'punk': 0.3, 'acoustic_folk': 0.3}, # Indie/acoustic rock
+    'garage':           {'alternative': 0.3, 'rock': 0.3, 'punk': 0.3, 'acoustic_folk': 0.3}, # Indie/acoustic rock
     
     'alt-rock':         {'alternative': 1.0, 'rock': 0.4, 'electronic_house': 0.1}, # Modern Radio Alternative
-    'indie-pop':        {'alternative': 1.0, 'pop': 0.5},
-    'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.3},  # Trippy!
+    'indie-pop':        {'alternative': 0.7, 'pop': 0.5, 'acoustic_folk': 0.2},
+    'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.4, 'progressive': 0.2},  # Trippy!
     
     # =========================================================================
     # METAL & PUNK

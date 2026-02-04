@@ -88,7 +88,7 @@ AUDIODB_GENRE_MAP = {
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
     'indie': 'indie-pop', 'shoegaze': 'psych-rock', 'dream pop': 'psych-rock',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
-    'progressive rock': 'rock', 'prog rock': 'rock', 'art rock': 'alt-rock',
+    'progressive rock': 'math-rock', 'prog rock': 'math-rock', 'art rock': 'psych-rock',
     'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
     'post-rock': 'psych-rock', 'noise rock': 'alt-rock', 'britpop': 'alt-rock',
     'new wave': 'alt-rock', 'post-punk revival': 'alt-rock',
@@ -173,7 +173,7 @@ AUDIODB_GENRE_MAP = {
     
     # === Math Rock / Progressive ===
     'math rock': 'math-rock', 'mathrock': 'math-rock',
-    'progressive': 'rock', 'experimental': 'alt-rock', 'avant-garde': 'alt-rock',
+    'progressive': 'math-rock', 'experimental': 'math-rock', 'avant-garde': 'math-rock',
 }
 
 
