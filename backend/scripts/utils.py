@@ -17,9 +17,14 @@ import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 
+from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
 import requests
+
+# Load environment variables from .env file (if it exists)
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 from track_dedup import deduplicate_tracks
 
@@ -29,6 +34,18 @@ DEEZER_URL = "https://api.deezer.com"
 AUDIODB_URL = "https://www.theaudiodb.com/api/v1/json/2"
 SONGLINK_URL = "https://api.song.link/v1-alpha.1/links"
 LASTFM_URL = "https://ws.audioscrobbler.com/2.0"
+
+# Rate limits (seconds between requests)
+# TheAudioDB: 30 req/min free tier → 2 sec minimum
+# Songlink: 10 req/min without API key → 6 sec minimum  
+# Deezer: 50 req/5sec → 0.1 sec minimum (generous at 0.2)
+# Last.fm: Undocumented but reasonable use → 0.3 sec
+# ReccoBeats: No documented limit → 0.2 sec
+RATE_LIMIT_AUDIODB = 2.0
+RATE_LIMIT_SONGLINK = 6.0
+RATE_LIMIT_DEEZER = 0.2
+RATE_LIMIT_LASTFM = 0.3
+RATE_LIMIT_RECCOBEATS = 0.2
 
 # File paths (relative to backend/)
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -55,62 +72,108 @@ SAMPLING_WEIGHTS = {
     'tempo': 0.6,
 }
 
-# TheAudioDB genre → dataset genre mapping
+# TheAudioDB / Last.fm tag → dataset genre mapping
+# NOTE: TheAudioDB often returns "rock/pop" for everything - we handle compound genres
 AUDIODB_GENRE_MAP = {
-    # Rock variants
+    # === COMPOUND GENRES (TheAudioDB returns these frequently) ===
+    'rock/pop': 'alt-rock',  # Most common TheAudioDB response - maps to modern alternative
+    'pop/rock': 'alt-rock',
+    'rock and roll': 'rock-n-roll',
+    'pop rock': 'alt-rock',
+    'indie pop': 'indie-pop',
+    'indie rock': 'alt-rock',
+    
+    # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
-    'alternative rock': 'alt-rock', 'indie rock': 'indie-pop', 'indie': 'indie-pop',
-    'psychedelic rock': 'psych-rock', 'progressive rock': 'rock', 'art rock': 'alt-rock',
-    'garage rock': 'garage', 'grunge': 'alt-rock', 'post-punk': 'punk-rock',
+    'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
+    'indie': 'indie-pop', 'shoegaze': 'psych-rock', 'dream pop': 'psych-rock',
+    'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
+    'progressive rock': 'rock', 'prog rock': 'rock', 'art rock': 'alt-rock',
+    'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
+    'post-rock': 'psych-rock', 'noise rock': 'alt-rock', 'britpop': 'alt-rock',
+    'new wave': 'alt-rock', 'post-punk revival': 'alt-rock',
     
-    # Metal
-    'metal': 'metal', 'heavy metal': 'heavy-metal', 'thrash metal': 'metal',
+    # === Metal ===
+    'metal': 'metal', 'heavy metal': 'heavy-metal', 'thrash metal': 'metal', 'thrash': 'metal',
+    'alternative metal': 'metal', 'alt metal': 'metal', 'alt-metal': 'metal',
     'death metal': 'death-metal', 'black metal': 'black-metal', 'doom metal': 'metal',
-    'nu metal': 'metal', 'metalcore': 'metalcore', 'industrial metal': 'industrial',
-    'gothic metal': 'goth', 'symphonic metal': 'goth', 'progressive metal': 'metal',
+    'nu metal': 'metal', 'nu-metal': 'metal', 'metalcore': 'metalcore', 
+    'industrial metal': 'industrial-metal', 'industrial': 'industrial',
+    'gothic metal': 'goth', 'symphonic metal': 'goth', 'progressive metal': 'prog-metal',
+    'prog metal': 'prog-metal', 'djent': 'prog-metal', 'groove metal': 'groove',
+    'power metal': 'heavy-metal', 'melodic death metal': 'death-metal',
+    'deathcore': 'metalcore', 'math metal': 'math-rock', 'speed metal': 'metal',
+    'stoner metal': 'metal', 'sludge metal': 'metal',
     
-    # Punk
-    'punk': 'punk', 'punk rock': 'punk-rock', 'pop punk': 'punk', 'hardcore': 'hardcore',
-    'post-hardcore': 'hardcore', 'emo': 'emo', 'screamo': 'emo',
+    # === Punk ===
+    'punk': 'punk', 'punk rock': 'punk-rock', 'pop punk': 'punk', 'pop-punk': 'punk',
+    'hardcore': 'hardcore', 'hardcore punk': 'hardcore-punk',
+    'post-hardcore': 'post-hardcore', 'emo': 'emo', 'screamo': 'emo', 'skate punk': 'punk',
     
-    # Pop
+    # === Pop ===
     'pop': 'pop', 'dance pop': 'dance', 'electropop': 'electro', 'synth-pop': 'electro',
+    'synthpop': 'electro', 'synth pop': 'electro',
     'teen pop': 'pop', 'bubblegum pop': 'pop', 'power pop': 'power-pop',
+    'art pop': 'pop', 'chamber pop': 'pop',
     
-    # K-Pop / Asian
-    'k-pop': 'k-pop', 'j-pop': 'k-pop', 'c-pop': 'cantopop', 'mandopop': 'cantopop',
+    # === K-Pop / Asian ===
+    'k-pop': 'k-pop', 'kpop': 'k-pop', 'j-pop': 'j-pop', 'jpop': 'j-pop',
+    'j-rock': 'j-rock', 'jrock': 'j-rock', 'visual kei': 'j-rock',
+    'c-pop': 'cantopop', 'mandopop': 'cantopop', 'cantopop': 'cantopop',
     
-    # Hip-Hop / R&B
-    'hip hop': 'hip-hop', 'hip-hop': 'hip-hop', 'rap': 'hip-hop', 'trap': 'hip-hop',
-    'r&b': 'soul', 'rnb': 'soul', 'soul': 'soul', 'neo soul': 'soul', 'funk': 'funk',
-    'gospel': 'gospel',
+    # === Hip-Hop / R&B ===
+    'hip hop': 'hip-hop', 'hip-hop': 'hip-hop', 'hiphop': 'hip-hop',
+    'rap': 'hip-hop', 'trap': 'hip-hop', 'underground hip-hop': 'hip-hop',
+    'r&b': 'soul', 'rnb': 'soul', 'rhythm and blues': 'soul',
+    'soul': 'soul', 'neo soul': 'soul', 'neo-soul': 'soul',
+    'funk': 'funk', 'gospel': 'gospel',
     
-    # Electronic
-    'electronic': 'electronic', 'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
-    'techno': 'techno', 'trance': 'trance', 'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass',
-    'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'trip hop': 'trip-hop',
-    'industrial': 'industrial', 'electro': 'electro', 'disco': 'disco',
+    # === Electronic ===
+    'electronic': 'electronic', 'electronica': 'electronic',
+    'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
+    'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
+    'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass',
+    'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'chill',
+    'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
+    'electro': 'electro', 'disco': 'disco', 'nu disco': 'disco',
+    'idm': 'electronic', 'glitch': 'electronic', 'breakbeat': 'breakbeat',
     
-    # Acoustic / Folk / Country
+    # === Acoustic / Folk / Country ===
     'folk': 'folk', 'acoustic': 'acoustic', 'singer-songwriter': 'singer-songwriter',
+    'singer songwriter': 'singer-songwriter',
     'country': 'country', 'americana': 'country', 'bluegrass': 'folk',
+    'folk rock': 'folk',
     
-    # Jazz / Blues
+    # === Jazz / Blues ===
     'jazz': 'jazz', 'blues': 'blues', 'swing': 'jazz', 'bebop': 'jazz',
+    'blues rock': 'blues', 'jazz fusion': 'jazz-fusion',
     
-    # Latin
-    'latin': 'salsa', 'salsa': 'salsa', 'reggaeton': 'dancehall', 'bossa nova': 'samba',
-    'samba': 'samba', 'tango': 'tango',
+    # === Latin ===
+    'latin': 'salsa', 'salsa': 'salsa', 'reggaeton': 'dancehall', 'latin pop': 'salsa',
+    'bossa nova': 'samba', 'samba': 'samba', 'tango': 'tango',
+    'latin rock': 'salsa', 'bachata': 'salsa',
     
-    # Reggae
-    'reggae': 'dancehall', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',
+    # === Reggae ===
+    'reggae': 'reggae', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',
+    'roots reggae': 'reggae',
     
-    # Classical
+    # === Classical ===
     'classical': 'classical', 'opera': 'opera', 'orchestral': 'classical',
-    'soundtrack': 'pop-film', 'musical': 'show-tunes',
+    'soundtrack': 'pop-film', 'film score': 'pop-film', 'musical': 'show-tunes',
+    'piano': 'piano', 'instrumental': 'acoustic',
     
-    # World
+    # === World / Regional ===
     'world': 'indian', 'indian': 'indian', 'bollywood': 'pop-film',
+    'world music': 'indian', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
+    
+    # === Christian / Worship ===
+    'christian': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',
+    'worship': 'ccm', 'contemporary christian': 'ccm', 'christian metal': 'christian-metal',
+    'praise': 'ccm',
+    
+    # === Math Rock / Progressive ===
+    'math rock': 'math-rock', 'mathrock': 'math-rock',
+    'progressive': 'rock', 'experimental': 'alt-rock', 'avant-garde': 'alt-rock',
 }
 
 
@@ -144,6 +207,13 @@ class ReccoBeatsClient:
         r = requests.get(url, timeout=self.TIMEOUT)
         r.raise_for_status()
         return r.json()
+
+    def search_artist(self, name: str, limit: int = 5) -> List[Dict]:
+        """Search for artist by name. Returns list of {id, name, href}."""
+        url = f"{RECCOBEATS_URL}/artist/search"
+        r = requests.get(url, params={"searchText": name, "size": limit}, timeout=self.TIMEOUT)
+        r.raise_for_status()
+        return r.json().get("content", [])
 
     def get_artist_tracks(self, recco_uuid: str, limit: int = 20) -> List[Dict]:
         fetch_limit = (limit * 3 + 49) // 50 * 50
@@ -204,11 +274,49 @@ class ReccoBeatsClient:
 
 
 class LastFmClient:
-    """Client for Last.fm API - related artist discovery."""
+    """Client for Last.fm API - related artist discovery and tags."""
     TIMEOUT = 15
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_lastfm_api_key()
+    
+    def get_artist_tags(
+        self,
+        artist_name: str,
+        limit: int = 5,
+    ) -> List[Dict]:
+        """Get top tags for an artist from Last.fm.
+        
+        Returns list of {"name": str, "count": int} sorted by count.
+        Tags are user-generated and more granular than TheAudioDB genres.
+        """
+        if not self.api_key:
+            return []
+        
+        try:
+            r = requests.get(
+                LASTFM_URL,
+                params={
+                    "method": "artist.gettoptags",
+                    "artist": artist_name,
+                    "api_key": self.api_key,
+                    "format": "json",
+                },
+                timeout=self.TIMEOUT,
+            )
+            r.raise_for_status()
+            data = r.json()
+            
+            tags = data.get("toptags", {}).get("tag", [])
+            results = []
+            for t in tags[:limit]:
+                results.append({
+                    "name": t.get("name", "").lower(),
+                    "count": int(t.get("count", 0)),
+                })
+            return results
+        except Exception:
+            return []
     
     def get_similar_artists(
         self, 
@@ -296,8 +404,12 @@ class LastFmClient:
         return results[:limit]
 
 
-def get_genre_from_audiodb(artist_name: str) -> Optional[str]:
-    """Fetch artist genre from TheAudioDB and map to dataset genre."""
+def get_genre_from_audiodb(artist_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fetch artist genre from TheAudioDB and map to dataset genre.
+    
+    Returns:
+        Tuple of (mapped_genre, raw_genre, raw_style) for debugging/inspection.
+    """
     try:
         url = f"{AUDIODB_URL}/search.php"
         r = requests.get(url, params={"s": artist_name}, timeout=10)
@@ -306,30 +418,73 @@ def get_genre_from_audiodb(artist_name: str) -> Optional[str]:
         
         artists = data.get("artists")
         if not artists:
-            return None
+            return None, None, None
         
         artist = artists[0]
         genre = artist.get("strGenre", "").lower().strip()
         style = artist.get("strStyle", "").lower().strip()
         
-        for term in [genre, style]:
+        # Try exact match first
+        for term in [style, genre]:  # Prefer style over genre (more specific)
             if term in AUDIODB_GENRE_MAP:
-                return AUDIODB_GENRE_MAP[term]
+                return AUDIODB_GENRE_MAP[term], genre, style
         
-        for term in [genre, style]:
+        # Try partial/substring match
+        for term in [style, genre]:
             for key, value in AUDIODB_GENRE_MAP.items():
                 if key in term or term in key:
-                    return value
+                    return value, genre, style
         
-        return None
+        return None, genre, style
     except Exception:
-        return None
+        return None, None, None
+
+
+def get_genre_from_lastfm(artist_name: str, lastfm_client: Optional[LastFmClient] = None) -> Tuple[Optional[str], List[str]]:
+    """Fetch artist genre from Last.fm tags (more reliable than TheAudioDB).
+    
+    Returns:
+        Tuple of (mapped_genre, raw_tags_list) for debugging/inspection.
+    """
+    if lastfm_client is None:
+        lastfm_client = LastFmClient()
+    
+    if not lastfm_client.api_key:
+        return None, []
+    
+    tags = lastfm_client.get_artist_tags(artist_name, limit=10)
+    raw_tags = [t["name"] for t in tags]
+    
+    # Try each tag in order of popularity until we find a match
+    for tag in tags:
+        tag_name = tag["name"]
+        if tag_name in AUDIODB_GENRE_MAP:
+            return AUDIODB_GENRE_MAP[tag_name], raw_tags
+    
+    # Try partial matches on top 5 tags
+    for tag in tags[:5]:
+        tag_name = tag["name"]
+        for key, value in AUDIODB_GENRE_MAP.items():
+            if key in tag_name or tag_name in key:
+                return value, raw_tags
+    
+    return None, raw_tags
 
 
 def get_cached_genre(artist_name: str) -> Optional[str]:
-    """Get genre with caching to minimize TheAudioDB calls."""
+    """Get genre with caching to minimize API calls.
+    
+    Tries Last.fm tags first (more reliable), then falls back to TheAudioDB.
+    """
     if artist_name not in _genre_cache:
-        _genre_cache[artist_name] = get_genre_from_audiodb(artist_name)
+        # Try Last.fm first (better tags)
+        genre, _ = get_genre_from_lastfm(artist_name)
+        if genre:
+            _genre_cache[artist_name] = genre
+        else:
+            # Fall back to TheAudioDB
+            genre, _, _ = get_genre_from_audiodb(artist_name)
+            _genre_cache[artist_name] = genre
     return _genre_cache[artist_name]
 
 
@@ -461,7 +616,7 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: boo
             except Exception:
                 pass
             
-            time.sleep(0.3)
+            time.sleep(RATE_LIMIT_SONGLINK) 
         
         if not quiet:
             print(f"    Could not find Spotify link")

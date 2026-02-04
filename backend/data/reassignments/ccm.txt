@@ -1,6 +1,7 @@
 # Reassignments for target genre: ccm
 # One artist per line. Sorted alphabetically.
 
+Anthem Lights
 Audio Adrenaline
 Bethel Music
 Big Daddy Weave
@@ -22,6 +23,7 @@ Keith Green
 Laura Story
 Lecrae
 Lincoln Brewster
+Mac Powell
 Mandisa
 Matt Maher
 Matt Redman

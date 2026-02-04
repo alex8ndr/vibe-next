@@ -1,6 +1,7 @@
 # Reassignments for target genre: goth
 # One artist per line. Comments starting with #/blank lines are ignored.
 
+HIM
 Boy Harsher
 Lebanon Hanover
 Molchat Doma

@@ -1,6 +1,8 @@
 # Reassignments for target genre: reggae
 # One artist per line. Comments starting with #/blank lines are ignored.
 
+
+Cultura Profética
 Ballyhoo!
 Dirty Heads
 Fortunate Youth
