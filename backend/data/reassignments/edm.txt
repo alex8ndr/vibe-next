@@ -1,0 +1,51 @@
+# Reassignments for target genre: edm
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- Trance & Progressive Legends ---
+# --- Mainstream / Festival EDM ---
+# --- Eurodance / Hands Up ---
+
+Above & Beyond
+AFROJACK
+Alan Walker
+Alesso
+Angerfist
+ARTY
+ATB
+Axwell
+Cascada
+Corona
+D-Fence
+Dada Life
+Deorro
+Dimitri Vegas & Like Mike
+Dirty South
+DJ BoBo
+Don Diablo
+Eric Prydz
+Felix Jaehn
+Gareth Emery
+Haddaway
+Hardwell
+Klaas
+Kygo
+Lucas & Steve
+Marshmello
+Martin Garrix
+Martin Solveig
+Masterboy
+Nicky Romero
+Oliver Heldens
+Orjan Nilsen
+Paul van Dyk
+Quintino
+R3HAB
+Robin Schulz
+S3RL
+Sander van Doorn
+Scooter
+Showtek
+Sigala
+The Chainsmokers
+Tritonal
+Vengaboys
+W&W

@@ -1,0 +1,12 @@
+# Reassignments for target genre: j-pop
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Aimer
+BABYMETAL
+Eve
+Kenshi Yonezu
+Kyary Pamyu Pamyu
+LiSA
+OFFICIAL HIGE DANDISM
+Perfume
+YOASOBI

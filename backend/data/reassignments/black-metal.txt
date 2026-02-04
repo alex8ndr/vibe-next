@@ -1,0 +1,3 @@
+# Reassignments for target genre: black-metal
+# One artist per line. Comments starting with #/blank lines are ignored.
+

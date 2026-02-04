@@ -1,0 +1,61 @@
+# Reassignments for target genre: heavy-metal
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- Core Heavy / Groove / Thrash ---
+# --- Power/Prog Metal (from Classical/German/Spanish) ---
+# --- French Metal ---
+# --- German Metal ---
+
+(Hed) P.E.
+Animals As Leaders
+Avantasia
+Black Label Society
+Blind Guardian
+Boris
+Buckethead
+Chimaira
+Crowbar
+Dark Moor
+Deftones
+Diablo Swing Orchestra
+DragonForce
+Dream Theater
+Drowning Pool
+Ektomorf
+Eths
+Exodus
+Five Finger Death Punch
+Helloween
+Iced Earth
+Igorrr
+Ill Niño
+ISIS
+Korn
+Kreator
+Lamb of God
+Machine Head
+Mastodon
+Mägo de Oz
+Nightwish
+Nonpoint
+Overkill
+Pantera
+Pleymo
+Powerwolf
+Primal Fear
+Prong
+Saratoga
+Saurom
+Sepultura
+Sevendust
+Six Feet Under
+Slayer
+Sodom
+Soil
+Sonata Arctica
+Soulfly
+Stratovarius
+Symphony X
+Testament
+Tierra Santa
+Trans-Siberian Orchestra
+Warcry

@@ -1,0 +1,19 @@
+# Reassignments for target genre: jazz-fusion
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Alfa Mist
+BADBADNOTGOOD
+CASIOPEA
+Cory Wong
+DOMi & JD BECK
+Galactic
+Knower
+Lettuce
+Louis Cole
+Moonchild
+Snarky Puppy
+T-SQUARE
+The Fearless Flyers
+Thundercat
+Vulfpeck
+Yussef Dayes

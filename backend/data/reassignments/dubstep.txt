@@ -1,0 +1,37 @@
+# Reassignments for target genre: dubstep
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- Added from EDM cleanup ---
+
+Alison Wonderland
+Barely Alive
+Borgore
+Bossfight
+Chase & Status
+Dillon Francis
+Excision
+Flux Pavilion
+Fox Stevenson
+Ganja White Night
+ILLENIUM
+Jauz
+Kai Wachi
+Kayzo
+Knife Party
+Liquid Stranger
+Louis The Child
+LSDREAM
+NERO
+NGHTMRE
+Pegboard Nerds
+Ray Volpe
+San Holo
+Seven Lions
+SLANDER
+Slushii
+Subtronics
+Sullivan King
+SVDDEN DEATH
+Virtual Riot
+Wooli
+Yellow Claw
+Zeds Dead

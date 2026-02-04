@@ -1,0 +1,43 @@
+# Reassignments for target genre: metalcore
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+100 Demons
+Alpha Wolf
+Bent Life
+Boundaries
+Cruel Hand
+Dying Wish
+Electric Callboy
+END
+End It
+Foundation
+God's Hate
+Greyhaven
+Gulch
+Hollow Front
+If I Were You
+Incendiary
+Inclination
+Ingrown
+Johnny Booth
+Judiciary
+Kharma
+Kublai Khan TX
+Lionheart
+Madball
+Mindforce
+Nails
+No Warning
+Ocean Grove
+Otep
+Polaris
+Power Trip
+SCALP
+Scowl
+Suburban Scum
+The Chisel
+Thornhill
+Vein.fm
+Void Of Vision
+Wound Man
+Zulu

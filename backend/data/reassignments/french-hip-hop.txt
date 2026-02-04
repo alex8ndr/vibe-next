@@ -1,0 +1,23 @@
+# Reassignments for target genre: french-hip-hop
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Black M
+Booba
+Dadju
+Damso
+GIMS
+Jul
+Kaaris
+La Fouine
+Lacrim
+Lomepal
+MC Solaar
+MHD
+Nekfeu
+Ninho
+Orelsan
+PNL
+Rohff
+Sexion d'Assaut
+Soprano
+Vald

@@ -1,0 +1,30 @@
+# Reassignments for target genre: hard-rock
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+3 Doors Down
+Alice Cooper
+Alter Bridge
+Black Stone Cherry
+Breaking Benjamin
+Chevelle
+Clutch
+Deep Purple
+Drowning Pool
+Godsmack
+Halestorm
+Joe Satriani
+Limp Bizkit
+P.O.D.
+Papa Roach
+Queens of the Stone Age
+Scorpions
+Seether
+Shinedown
+Skillet
+Staind
+Theory of a Deadman
+Three Days Grace
+Volbeat
+Whitesnake
+Wolfmother
+ZZ Top

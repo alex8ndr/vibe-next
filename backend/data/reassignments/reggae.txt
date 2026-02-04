@@ -1,0 +1,19 @@
+# Reassignments for target genre: reggae
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Ballyhoo!
+Dirty Heads
+Fortunate Youth
+Freddie McGregor
+Iration
+John Holt
+Passafire
+Pepper
+Peter Tosh
+Rebelution
+Slightly Stoopid
+Sly & Robbie
+SOJA
+Stick Figure
+The Movement
+Tribal Seeds

@@ -1,0 +1,20 @@
+# Reassignments for target genre: latin-urban
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Anuel AA
+Bad Bunny
+Calle 13
+Daddy Yankee
+Don Omar
+Farruko
+Feid
+J Balvin
+Karol G
+Maluma
+Myke Towers
+Nicky Jam
+Ozuna
+Rauw Alejandro
+Sain
+Tego Calderón
+Wisin & Yandel

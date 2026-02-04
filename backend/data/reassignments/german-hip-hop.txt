@@ -1,0 +1,28 @@
+# Reassignments for target genre: german-hip-hop
+# One artist per line. Comments starting with #/blank lines are ignored.
+
+Alligatoah
+Apache 207
+Bausa
+Bonez MC
+Bushido
+Capital Bra
+Casper
+CRO
+Genetikk
+Gzuz
+K.I.Z
+KC Rebell
+Kollegah
+Kontra K
+Kool Savas
+Luciano
+Marteria
+Pashanim
+Prinz Pi
+RAF Camora
+Samra
+Shindy
+Sido
+Summer Cem
+Ufo361

@@ -1,0 +1,28 @@
+# Reassignments for target genre: indie-pop
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- Moved from Alt-Rock / Mainstream Pop for Vibe Purity ---
+# --- Added from EDM cleanup ---
+
+AJR
+alt-J
+Colleen Brown
+Dayglow
+F & M
+Faunts
+fun.
+Lana Del Rey
+Mac DeMarco
+Manchester Orchestra
+Matt Maeson
+My Sister Ocean
+Natalia Lafourcade
+Neighbourhood
+Rainbow Kitten Surprise
+Spacey Jane
+The 1975
+The Drums
+The Kooks
+The National
+The War On Drugs
+Wet Leg
+YUNGBLUD

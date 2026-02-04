@@ -1,0 +1,37 @@
+# Reassignments for target genre: rock
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- German Rock ---
+# --- Added from EDM cleanup ---
+
+311
+All Them Witches
+Angels & Airwaves
+Bon Jovi
+Boston
+Bruce Springsteen
+Böhse Onkelz
+Depeche Mode
+Foo Fighters
+Frei.Wild
+Gov't Mule
+Heroes Del Silencio
+Incubus
+Journey
+Kings of Leon
+Lynyrd Skynyrd
+Mike Plume Band
+Muse
+Painting Daisies
+Paul Bellows
+Phish
+R.E.M.
+Red Hot Chili Peppers
+Sonic Youth
+The Cure
+The Smashing Pumpkins
+The Smiths
+The Uncas
+The White Stripes
+Thirty Seconds To Mars
+Tom Petty
+Weezer

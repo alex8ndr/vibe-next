@@ -1,0 +1,26 @@
+# Reassignments for target genre: pop
+# One artist per line. Comments starting with #/blank lines are ignored.
+# --- Pop artists mislabeled as EDM/Dance ---
+
+5 Seconds of Summer
+American Authors
+Anitta
+Big Time Rush
+Coldplay
+Diana Krall
+Ellie Goulding
+Glee Cast
+Glee Club Ensemble
+Glee Club Singers
+Jason Derulo
+Josh Groban
+La Oreja de Van Gogh
+Maroon 5
+Michael Bublé
+Mike Posner
+Nick Jonas
+OneRepublic
+Taio Cruz
+The Wanted
+Timeflies
+Tony Bennett
