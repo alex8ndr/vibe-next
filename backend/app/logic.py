@@ -90,6 +90,7 @@ class MusicData:
         self.matrix_audio: np.ndarray | None = None
         self.matrix_genre: np.ndarray | None = None
         self.audio_norms_sq: np.ndarray | None = None  # Precomputed ||x||² for fast distance
+        self.genre_norms: np.ndarray | None = None  # Precomputed genre vector norms
         self.artists_list: list[str] = []
         self.audio_cols: list[str] = []
         self.genre_cols: list[str] = []
@@ -109,19 +110,30 @@ class MusicData:
             if col not in df.columns:
                 raise ValueError(f"Missing required column: {col}")
         
+        # Filter out rows with null required fields (data quality safeguard)
+        for col in required:
+            null_count = df[col].null_count()
+            if null_count > 0:
+                print(f"Warning: Filtering {null_count} rows with null {col}")
+                df = df.filter(pl.col(col).is_not_null())
+        
         self.genre_cols = [c for c in df.columns if c.startswith('genre_')]
         self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in df.columns]
         
         # Audio Matrix (Weighted for Euclidean)
-        audio_data = df.select(self.audio_cols).to_numpy().astype(np.float16)
-        weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float16)
+        audio_data = df.select(self.audio_cols).to_numpy().astype(np.float32)
+        weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float32)
         self.matrix_audio = audio_data * weights
         
         # Precompute squared norms for fast Euclidean distance: ||x-q||² = ||x||² + ||q||² - 2x·q
-        self.audio_norms_sq = np.sum(self.matrix_audio.astype(np.float32) ** 2, axis=1)
+        self.audio_norms_sq = np.sum(self.matrix_audio ** 2, axis=1)
         
         # Genre Matrix (Unweighted for Cosine)
-        self.matrix_genre = df.select(self.genre_cols).to_numpy().astype(np.float16)
+        self.matrix_genre = df.select(self.genre_cols).to_numpy().astype(np.float32)
+        
+        # Precompute genre norms once (avoid recomputation per request)
+        self.genre_norms = np.linalg.norm(self.matrix_genre, axis=1)
+        self.genre_norms[self.genre_norms == 0] = 1.0  # Prevent division by zero
         
         # Sort artists by popularity
         artist_popularity = (
@@ -531,17 +543,16 @@ def generate_recommendations(
     
     # Batch audio distance
     seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
-    dot_products = seeds_audio_stack @ matrix_audio.astype(np.float32).T
+    dot_products = seeds_audio_stack @ matrix_audio.T
     d_audio_sq = data.audio_norms_sq + seeds_norm_sq - 2.0 * dot_products
     d_audio = np.sqrt(np.maximum(d_audio_sq, 0))
     
-    # Batch genre distance (cosine)
+    # Batch genre distance (cosine) - use precomputed norms
     seeds_genre_norms = np.linalg.norm(seeds_genre_stack, axis=1, keepdims=True)
-    matrix_genre_norms = np.linalg.norm(matrix_genre.astype(np.float32), axis=1)
-    genre_dots = seeds_genre_stack @ matrix_genre.astype(np.float32).T
+    genre_dots = seeds_genre_stack @ matrix_genre.T
     with np.errstate(divide='ignore', invalid='ignore'):
-        cosine_sim = genre_dots / (seeds_genre_norms * matrix_genre_norms)
-        cosine_sim = np.nan_to_num(cosine_sim, nan=0.0)
+        cosine_sim = genre_dots / (seeds_genre_norms * data.genre_norms)
+        cosine_sim = np.nan_to_num(cosine_sim, nan=0.0, posinf=0.0, neginf=0.0)
     d_genre = 1.0 - cosine_sim
     
     # Look up effective weight from curve (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
@@ -565,17 +576,19 @@ def generate_recommendations(
         d_total = d_total - pop_adjustment - track_adjustment
     
     # Use Gumbel noise for variety - gives controlled randomness while respecting relevance
-    n = SAMPLE_SIZE
+    # Clamp n to dataset size and fix argpartition (kth is 0-indexed, so use n-1)
+    n = min(SAMPLE_SIZE, len(d_total))
+    k = n - 1  # argpartition kth parameter is 0-indexed
     if diversity > 1:
         # Add noise scaled by diversity level
         noise_scale = VARIETY_NOISE_SCALE * (diversity - 1)
         noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_total.shape).astype(np.float32)
         d_noisy = d_total.astype(np.float32) + noise
         # Use argpartition for O(n) instead of O(n log n) argsort
-        top_n_unsorted = np.argpartition(d_noisy, n)[:n]
+        top_n_unsorted = np.argpartition(d_noisy, k)[:n]
         similar_indices = top_n_unsorted[np.argsort(d_noisy[top_n_unsorted])]
     else:
-        top_n_unsorted = np.argpartition(d_total, n)[:n]
+        top_n_unsorted = np.argpartition(d_total, k)[:n]
         similar_indices = top_n_unsorted[np.argsort(d_total[top_n_unsorted])]
     
     # Get similar songs and add score (higher = better, based on position in sorted list)

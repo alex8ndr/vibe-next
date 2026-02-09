@@ -37,3 +37,6 @@ backend/dev/
 
 # Analytics
 backend/data/analytics.jsonl
+
+# Pipeline intermediates (regenerable from data.csv.zip)
+backend/data/data_filtered.parquet

@@ -40,24 +40,25 @@ from typing import List, Dict, Optional, Set, Tuple
 from datetime import datetime
 from collections import defaultdict
 
-import pandas as pd
+import polars as pl
 import requests
 
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks
+from track_dedup import deduplicate_tracks_polars
 from utils import (
     ReccoBeatsClient,
     get_genre_from_audiodb,
     search_artist_via_deezer,
     build_rows,
     load_existing,
-    save_csv_zip,
+    save_parquet,
     deduplicate_with_report,
     DEEZER_URL,
     SONGLINK_URL,
     RAW_COLS,
+    OUTPUT_PARQUET,
 )
 
 from check_new_albums import (
@@ -89,7 +90,7 @@ def save_cache(cache: Dict) -> None:
 
 
 def get_artists_to_check(
-    df_all: pd.DataFrame,
+    df_all: pl.DataFrame,
     limit: Optional[int] = None,
     max_tracks: Optional[int] = None,
     use_cache: bool = False,
@@ -97,11 +98,10 @@ def get_artists_to_check(
 ) -> List[Tuple[str, int]]:
     """Get list of (artist_name, track_count) to check, sorted by priority."""
     
-    artist_counts = df_all.groupby("artist_name").size().reset_index(name="count")
-    artist_counts = artist_counts.sort_values("count", ascending=True)
+    artist_counts = df_all.group_by("artist_name").agg(pl.len().alias("count")).sort("count")
     
     artists = []
-    for _, row in artist_counts.iterrows():
+    for row in artist_counts.iter_rows(named=True):
         name = row["artist_name"]
         count = row["count"]
         
@@ -144,11 +144,11 @@ def main():
     cache = load_cache() if args.use_cache else {"fully_covered": {}, "last_checked": {}}
     
     df_main, df_added = load_existing()
-    df_all = pd.concat([df_main, df_added], ignore_index=True)
-    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    df_all = pl.concat([df_main, df_added])
+    existing_track_ids = set(df_all["track_id"].drop_nulls().unique().to_list())
     
-    print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].nunique()} artists)")
-    print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].nunique() if not df_added.empty else 0} artists)")
+    print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].n_unique()} artists)")
+    print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].n_unique() if len(df_added) > 0 else 0} artists)")
     
     limit = None if args.all else args.limit
     artists = get_artists_to_check(df_all, limit, args.max_tracks, args.use_cache, cache)
@@ -246,9 +246,9 @@ def main():
         if genre:
             print(f"  Genre: {genre}")
         else:
-            existing_genre = df_all[df_all["artist_name"] == name]["genre"].dropna()
-            if not existing_genre.empty:
-                genre = existing_genre.iloc[0]
+            existing_rows = df_all.filter(pl.col("artist_name") == name)["genre"].drop_nulls()
+            if len(existing_rows) > 0:
+                genre = existing_rows[0]
                 print(f"  Genre: {genre} (from existing)")
             else:
                 genre = "pop"
@@ -265,9 +265,9 @@ def main():
         
         time.sleep(0.3)
     
-    save_csv_zip(df_added)
+    save_parquet(df_added)
     print(f"\n{'=' * 60}")
-    print(f"+ Saved {len(df_added)} tracks to added_artists.csv.zip")
+    print(f"+ Saved {len(df_added)} tracks to added_artists.parquet")
     print(f"\nRun process_data.py to merge with main dataset")
 
 

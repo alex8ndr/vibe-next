@@ -7,7 +7,7 @@ Contains:
 - Genre lookup via TheAudioDB
 - Track building and deduplication
 - Weighted track sampling
-- CSV loading/saving
+- Parquet loading/saving
 """
 import os
 import sys
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 
 from dotenv import load_dotenv
-import pandas as pd
+import polars as pl
 import numpy as np
 import requests
 
@@ -26,7 +26,8 @@ import requests
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-from track_dedup import deduplicate_tracks
+from track_dedup import deduplicate_tracks_polars, normalize_artist_name
+from schema import RAW_SCHEMA, RAW_COLUMN_ORDER, coerce_to_schema, normalize_for_merge
 
 # API endpoints
 RECCOBEATS_URL = "https://api.reccobeats.com/v1"
@@ -49,8 +50,12 @@ RATE_LIMIT_RECCOBEATS = 0.2
 
 # File paths (relative to backend/)
 DATA_DIR = Path(__file__).parent.parent / "data"
-MAIN_DATASET = DATA_DIR / "data.csv.zip"
-OUTPUT_CSV = DATA_DIR / "added_artists.csv.zip"
+MAIN_DATASET = DATA_DIR / "data.parquet"  # Primary dataset (parquet)
+OUTPUT_PARQUET = DATA_DIR / "added_artists.parquet"  # Discovery output (parquet)
+
+# Legacy paths (for backward compatibility during migration)
+LEGACY_CSV = DATA_DIR / "added_artists.csv.zip"
+OUTPUT_CSV = LEGACY_CSV  # Alias for backward compat
 
 # Raw columns (before processing)
 RAW_COLS = [
@@ -372,9 +377,15 @@ class LastFmClient:
         """Expand a list of seed artists to discover new related artists.
         
         Returns list of {"name": str, "match": float, "seed": str} for new artists.
+        
+        Note: Uses normalized artist names for comparison to handle case/accent variations.
         """
         if not self.api_key:
             return []
+        
+        # Normalize existing artists for comparison
+        existing_normalized = {normalize_artist_name(a) for a in existing_artists}
+        seed_normalized = {normalize_artist_name(s) for s in seed_artists}
         
         candidates = {}
         
@@ -383,7 +394,10 @@ class LastFmClient:
             
             for artist in similar:
                 name = artist["name"]
-                if name in existing_artists or name in seed_artists:
+                name_normalized = normalize_artist_name(name)
+                
+                # Skip if already exists (case/accent insensitive)
+                if name_normalized in existing_normalized or name_normalized in seed_normalized:
                     continue
                 
                 if name not in candidates:
@@ -407,6 +421,10 @@ class LastFmClient:
 def get_genre_from_audiodb(artist_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Fetch artist genre from TheAudioDB and map to dataset genre.
     
+    Uses scored matching that prefers:
+    1. Style over genre (more specific)
+    2. Exact matches over partial matches
+    
     Returns:
         Tuple of (mapped_genre, raw_genre, raw_style) for debugging/inspection.
     """
@@ -424,24 +442,69 @@ def get_genre_from_audiodb(artist_name: str) -> Tuple[Optional[str], Optional[st
         genre = artist.get("strGenre", "").lower().strip()
         style = artist.get("strStyle", "").lower().strip()
         
-        # Try exact match first
-        for term in [style, genre]:  # Prefer style over genre (more specific)
-            if term in AUDIODB_GENRE_MAP:
-                return AUDIODB_GENRE_MAP[term], genre, style
+        # Score matches - prefer style (more specific) over genre
+        best_genre = None
+        best_score = 0.0
         
-        # Try partial/substring match
-        for term in [style, genre]:
+        for term, base_weight in [(style, 1.0), (genre, 0.8)]:
+            if not term:
+                continue
+            
+            # Exact match
+            if term in AUDIODB_GENRE_MAP:
+                score = 1.0 * base_weight
+                if score > best_score:
+                    best_genre = AUDIODB_GENRE_MAP[term]
+                    best_score = score
+                continue
+            
+            # Partial match
             for key, value in AUDIODB_GENRE_MAP.items():
                 if key in term or term in key:
-                    return value, genre, style
+                    score = 0.6 * base_weight
+                    if score > best_score:
+                        best_genre = value
+                        best_score = score
         
-        return None, genre, style
+        return best_genre, genre, style
     except Exception:
         return None, None, None
 
 
+def _score_genre_match(tag_name: str, tag_count: int, max_count: int) -> Tuple[Optional[str], float]:
+    """Score a genre match based on tag name and count.
+    
+    Returns (mapped_genre, score) where score is 0-1.
+    Score is based on:
+    - Match type: exact (1.0), key-in-tag (0.7), tag-in-key (0.5)
+    - Tag popularity: weighted by count relative to max_count
+    """
+    # Normalize score by popularity (0.3 to 1.0 range to avoid zero)
+    popularity = 0.3 + 0.7 * (tag_count / max_count) if max_count > 0 else 0.5
+    
+    # Exact match
+    if tag_name in AUDIODB_GENRE_MAP:
+        return AUDIODB_GENRE_MAP[tag_name], 1.0 * popularity
+    
+    # Partial matches - key substring in tag
+    for key, value in AUDIODB_GENRE_MAP.items():
+        if key in tag_name:
+            return value, 0.7 * popularity
+    
+    # Partial matches - tag substring in key
+    for key, value in AUDIODB_GENRE_MAP.items():
+        if tag_name in key:
+            return value, 0.5 * popularity
+    
+    return None, 0.0
+
+
 def get_genre_from_lastfm(artist_name: str, lastfm_client: Optional[LastFmClient] = None) -> Tuple[Optional[str], List[str]]:
-    """Fetch artist genre from Last.fm tags (more reliable than TheAudioDB).
+    """Fetch artist genre from Last.fm tags with weighted scoring.
+    
+    Uses a scoring system that considers:
+    - Exact vs partial matches
+    - Tag popularity (count)
     
     Returns:
         Tuple of (mapped_genre, raw_tags_list) for debugging/inspection.
@@ -455,20 +518,23 @@ def get_genre_from_lastfm(artist_name: str, lastfm_client: Optional[LastFmClient
     tags = lastfm_client.get_artist_tags(artist_name, limit=10)
     raw_tags = [t["name"] for t in tags]
     
-    # Try each tag in order of popularity until we find a match
+    if not tags:
+        return None, []
+    
+    # Get max count for normalization
+    max_count = max(t["count"] for t in tags)
+    
+    # Score all tags and pick the best match
+    best_genre = None
+    best_score = 0.0
+    
     for tag in tags:
-        tag_name = tag["name"]
-        if tag_name in AUDIODB_GENRE_MAP:
-            return AUDIODB_GENRE_MAP[tag_name], raw_tags
+        genre, score = _score_genre_match(tag["name"], tag["count"], max_count)
+        if genre and score > best_score:
+            best_genre = genre
+            best_score = score
     
-    # Try partial matches on top 5 tags
-    for tag in tags[:5]:
-        tag_name = tag["name"]
-        for key, value in AUDIODB_GENRE_MAP.items():
-            if key in tag_name or tag_name in key:
-                return value, raw_tags
-    
-    return None, raw_tags
+    return best_genre, raw_tags
 
 
 def get_cached_genre(artist_name: str) -> Optional[str]:
@@ -646,8 +712,8 @@ def build_rows(
     features: Dict[str, Dict], 
     genre: Optional[str], 
     verbose: bool = False,
-) -> pd.DataFrame:
-    """Build DataFrame from API responses with RAW (unscaled) values."""
+) -> pl.DataFrame:
+    """Build Polars DataFrame from API responses with RAW (unscaled) values."""
     rows = []
     
     for track in tracks:
@@ -662,7 +728,7 @@ def build_rows(
             "artist_name": artist_name,
             "track_name": track.get("trackTitle", ""),
             "track_id": spotify_id,
-            "popularity": track.get("popularity"),
+            "popularity": float(track.get("popularity")) if track.get("popularity") is not None else None,
             "year": None,
             "genre": genre or "unknown",
             "danceability": feat.get("danceability"),
@@ -676,16 +742,22 @@ def build_rows(
             "liveness": feat.get("liveness"),
             "valence": feat.get("valence"),
             "tempo": feat.get("tempo"),
-            "duration_ms": track.get("durationMs"),
+            "duration_ms": float(track.get("durationMs")) if track.get("durationMs") is not None else None,
             "time_signature": feat.get("time_signature"),
         })
 
-    df = pd.DataFrame(rows)
+    if not rows:
+        return pl.DataFrame(schema={col: pl.String if col in ["artist_name", "track_name", "track_id", "genre"] 
+                                    else pl.Float64 for col in RAW_COLS})
+    
+    df = pl.from_dicts(rows)
+    
+    # Ensure all RAW_COLS exist
     for col in RAW_COLS:
         if col not in df.columns:
-            df[col] = None
+            df = df.with_columns(pl.lit(None).alias(col))
     
-    return df[RAW_COLS]
+    return df.select(RAW_COLS)
 
 
 def weighted_track_sample(
@@ -819,44 +891,91 @@ def weighted_track_sample(
     return [track_data[i]["track"] for i in selected]
 
 
-def load_existing() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Load both main dataset and added_artists.csv.zip if they exist."""
-    df_main = pd.DataFrame(columns=RAW_COLS)
-    df_added = pd.DataFrame(columns=RAW_COLS)
+def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
+    """Normalize DataFrame schema for safe concatenation.
     
-    if os.path.exists(MAIN_DATASET):
-        df_main = pd.read_csv(MAIN_DATASET)
+    Uses schema.py's normalize_for_merge() for consistent type coercion.
     
-    if os.path.exists(OUTPUT_CSV):
-        df_added = pd.read_csv(OUTPUT_CSV)
+    - Removes pandas index artifacts (Unnamed: 0)
+    - Coerces types to canonical RAW_SCHEMA (Int64 for integers, Float64 for floats)
+    - Selects only RAW_COLUMN_ORDER columns
+    """
+    df = normalize_for_merge(df)
+    
+    # Select only columns we care about (in canonical order)
+    cols_to_keep = [c for c in RAW_COLUMN_ORDER if c in df.columns]
+    df = df.select(cols_to_keep)
+    
+    return df
+
+
+def load_existing() -> Tuple[pl.DataFrame, pl.DataFrame]:
+    """Load both main dataset and added_artists parquet files if they exist.
+    
+    Returns DataFrames with normalized schemas (same columns/types) for safe concatenation.
+    """
+    # Use RAW_SCHEMA from schema.py for consistent types
+    df_main = pl.DataFrame(schema=RAW_SCHEMA)
+    df_added = pl.DataFrame(schema=RAW_SCHEMA)
+    
+    if MAIN_DATASET.exists():
+        df_main = pl.read_parquet(MAIN_DATASET)
+        df_main = _normalize_schema(df_main)
+    
+    if OUTPUT_PARQUET.exists():
+        df_added = pl.read_parquet(OUTPUT_PARQUET)
+        df_added = _normalize_schema(df_added)
+    elif LEGACY_CSV.exists():
+        # Backward compat: read legacy CSV if parquet doesn't exist
+        import zipfile
+        with zipfile.ZipFile(LEGACY_CSV, 'r') as zf:
+            csv_names = [n for n in zf.namelist() if n.endswith('.csv')]
+            if csv_names:
+                with zf.open(csv_names[0]) as f:
+                    df_added = pl.read_csv(f, infer_schema_length=10000)
+        df_added = _normalize_schema(df_added)
+    
+    # If one is empty, match its schema to the other
+    if len(df_main) == 0 and len(df_added) > 0:
+        df_main = pl.DataFrame(schema={c: df_added[c].dtype for c in df_added.columns})
+    elif len(df_added) == 0 and len(df_main) > 0:
+        df_added = pl.DataFrame(schema={c: df_main[c].dtype for c in df_main.columns})
     
     return df_main, df_added
 
 
-def save_csv_zip(df: pd.DataFrame) -> None:
-    """Save DataFrame to compressed CSV zip."""
+def save_parquet(df: pl.DataFrame) -> None:
+    """Save DataFrame to parquet (primary format)."""
+    df.write_parquet(OUTPUT_PARQUET, compression="zstd", compression_level=12)
+
+
+def save_csv_zip(df: pl.DataFrame) -> None:
+    """Save DataFrame to compressed CSV zip (legacy, for backward compat)."""
     csv_buffer = io.StringIO()
-    df.to_csv(csv_buffer, index=False)
+    df.write_csv(csv_buffer)
     
-    with zipfile.ZipFile(OUTPUT_CSV, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(LEGACY_CSV, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("added_artists.csv", csv_buffer.getvalue())
 
 
 def deduplicate_with_report(
-    df_combined: pd.DataFrame, 
-    df_main: pd.DataFrame,
-) -> Tuple[pd.DataFrame, List[str]]:
+    df_combined: pl.DataFrame, 
+    df_main: pl.DataFrame,
+) -> Tuple[pl.DataFrame, List[str]]:
     """Deduplicate and return removed track names for reporting."""
     removed_tracks = []
     
-    main_track_ids = set(df_main["track_id"].dropna().unique()) if not df_main.empty else set()
-    mask_in_main = df_combined["track_id"].isin(main_track_ids)
-    for artist, track in df_combined[mask_in_main][["artist_name", "track_name"]].values:
-        removed_tracks.append(f"  - {artist} - {track} (already in dataset)")
-    df_combined = df_combined[~mask_in_main]
+    main_track_ids = set(df_main["track_id"].drop_nulls().unique().to_list()) if len(df_main) > 0 else set()
+    
+    # Find tracks already in main
+    in_main = df_combined.filter(pl.col("track_id").is_in(list(main_track_ids)))
+    for row in in_main.iter_rows(named=True):
+        removed_tracks.append(f"  - {row['artist_name']} - {row['track_name']} (already in dataset)")
+    
+    df_combined = df_combined.filter(~pl.col("track_id").is_in(list(main_track_ids)))
     
     before = len(df_combined)
-    df_combined = deduplicate_tracks(df_combined, track_col="track_name", artist_col="artist_name")
+    df_combined = deduplicate_tracks_polars(df_combined)
     n_removed = before - len(df_combined)
     if n_removed > 0:
         removed_tracks.append(f"  + {n_removed} similar track names removed")
@@ -874,7 +993,7 @@ def add_discovered_artist(
     verbose: bool = False,
     quiet: bool = False,
     lastfm_client: Optional["LastFmClient"] = None,
-) -> Optional[pd.DataFrame]:
+) -> Optional[pl.DataFrame]:
     """Fetch and add tracks for a discovered artist.
     
     Returns DataFrame of new tracks, or None if artist should be skipped.
@@ -939,6 +1058,6 @@ def add_discovered_artist(
     )
     
     df_new = build_rows(confirmed_name, sampled, features, genre, verbose)
-    df_new = deduplicate_tracks(df_new, track_col="track_name")
+    df_new = deduplicate_tracks_polars(df_new)
     
     return df_new

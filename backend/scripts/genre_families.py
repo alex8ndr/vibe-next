@@ -73,7 +73,7 @@ GENRE_DEFINITIONS = {
     'grindcore':        {'extreme_metal': 1.0, 'punk': 0.6},
     
     'punk':             {'punk': 0.8, 'emo_pop_punk': 0.5, 'rock': 0.3}, # Pop-punk
-    'punk-rock':        {'punk': 0.5, 'rock': 0.5, 'alternative': 0.5}, # Post-punk
+    'punk-rock':        {'punk': 0.5, 'rock': 0.5, 'alternative': 0.2}, # Post-punk
     
     'prog-metal':       {'progressive': 0.8, 'metal': 0.4, 'rock': 0.3},
     'math-rock':        {'progressive': 0.7, 'alternative': 0.3, 'metal': 0.3, 'jazz_blues': 0.2},

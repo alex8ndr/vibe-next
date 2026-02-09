@@ -5,6 +5,8 @@ Check an artist for new albums not in the dataset and optionally update.
 Usage:
     # Check what albums are missing (dry-run by default)
     python check_new_albums.py "Radiohead"
+    python check_new_albums.py "Radiohead, Coldplay"
+    python check_new_albums.py --names "Radiohead, Coldplay"
     python check_new_albums.py --url "https://open.spotify.com/artist/4Z8W4fKeB5YxbusRsdQVPb"
     
     # Actually add missing albums
@@ -27,7 +29,7 @@ Features:
     - Fetches artist's full discography from ReccoBeats
     - Compares album track_ids with dataset to find missing albums
     - Shows release date, track count, and which tracks are missing
-    - Can add missing albums to added_artists.csv.zip
+    - Can add missing albums to added_artists.parquet
 """
 import os
 import sys
@@ -38,7 +40,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
 from datetime import datetime
 
-import pandas as pd
+import polars as pl
 import requests
 
 # Patterns for album variants we want to skip (for singles)
@@ -61,7 +63,7 @@ SKIP_ALBUM_RE = re.compile('|'.join(SKIP_ALBUM_PATTERNS), re.IGNORECASE)
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks
+from track_dedup import deduplicate_tracks_polars
 from utils import (
     ReccoBeatsClient,
     get_genre_from_audiodb,
@@ -69,11 +71,12 @@ from utils import (
     extract_spotify_id,
     build_rows,
     load_existing,
-    save_csv_zip,
+    save_parquet,
     deduplicate_with_report,
     DEEZER_URL,
     SONGLINK_URL,
     RAW_COLS,
+    OUTPUT_PARQUET,
 )
 
 BASE_URL = "https://api.reccobeats.com/v1"
@@ -372,10 +375,10 @@ def add_missing_albums(
     missing_albums: List[Dict],
     genre: Optional[str],
     existing_track_ids: Set[str],
-    df_added: pd.DataFrame,
-    df_main: pd.DataFrame,
+    df_added: pl.DataFrame,
+    df_main: pl.DataFrame,
     verbose: bool = False,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     """Add tracks from missing albums to the dataset."""
     client = ReccoBeatsClient()
     all_new_rows = []
@@ -405,9 +408,9 @@ def add_missing_albums(
         df_rows = build_rows(artist_name, new_tracks, features, genre, verbose)
         
         # Deduplicate within album (remove variants like "Song - Remastered")
-        df_rows = deduplicate_tracks(df_rows, track_col="track_name")
+        df_rows = deduplicate_tracks_polars(df_rows)
         
-        if not df_rows.empty:
+        if len(df_rows) > 0:
             all_new_rows.append(df_rows)
             print(f"    Added {len(df_rows)} tracks")
         
@@ -416,8 +419,8 @@ def add_missing_albums(
     if not all_new_rows:
         return df_added
     
-    df_new = pd.concat(all_new_rows, ignore_index=True)
-    df_combined = pd.concat([df_added, df_new], ignore_index=True)
+    df_new = pl.concat(all_new_rows)
+    df_combined = pl.concat([df_added, df_new])
     df_combined, removed = deduplicate_with_report(df_combined, df_main)
     
     if removed:
@@ -437,15 +440,15 @@ def process_artist(
     artist_input: str,
     is_url: bool,
     existing_track_ids: Set[str],
-    df_main: pd.DataFrame,
-    df_added: pd.DataFrame,
+    df_main: pl.DataFrame,
+    df_added: pl.DataFrame,
     update: bool,
     limit: Optional[int],
     show_all: bool,
     genre_override: Optional[str],
     verbose: bool,
     skip_variants: bool = True,
-) -> Tuple[pd.DataFrame, int, int]:
+) -> Tuple[pl.DataFrame, int, int]:
     """Process a single artist. Returns (updated_df_added, albums_checked, albums_missing)."""
     
     if is_url:
@@ -507,7 +510,8 @@ def process_artist(
 
 def main():
     parser = argparse.ArgumentParser(description="Check artist for new albums not in dataset")
-    parser.add_argument("artist", nargs="?", help="Artist name to search")
+    parser.add_argument("artist", nargs="?", help="Artist name(s), comma-separated")
+    parser.add_argument("--names", help="Artist name(s), comma-separated (alternative to positional)")
     parser.add_argument("--url", help="Spotify artist/track/album URL")
     parser.add_argument("--file", help="File with artist names/URLs (one per line)")
     parser.add_argument("--update", action="store_true", help="Add missing albums to dataset")
@@ -518,13 +522,16 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
     
-    if not args.artist and not args.url and not args.file:
+    # Accept artist names from positional arg or --names flag
+    artist_input = args.artist or args.names
+    
+    if not artist_input and not args.url and not args.file:
         parser.print_help()
         sys.exit(1)
     
     df_main, df_added = load_existing()
-    df_all = pd.concat([df_main, df_added], ignore_index=True)
-    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    df_all = pl.concat([df_main, df_added])
+    existing_track_ids = set(df_all["track_id"].drop_nulls().unique().to_list())
     
     print(f"Dataset: {len(df_main)} tracks, Added: {len(df_added)} tracks")
     
@@ -545,8 +552,12 @@ def main():
                     artists_to_check.append((line, is_url))
     elif args.url:
         artists_to_check.append((args.url, True))
-    else:
-        artists_to_check.append((args.artist, False))
+    elif artist_input:
+        # Support comma-separated artist names
+        for name in artist_input.split(","):
+            name = name.strip()
+            if name:
+                artists_to_check.append((name, False))
     
     total_checked = 0
     total_missing = 0
@@ -568,8 +579,8 @@ def main():
     print(f"Summary: {total_checked} albums checked, {total_missing} with missing tracks")
     
     if args.update and total_missing > 0:
-        save_csv_zip(df_added)
-        print(f"\n+ Saved {len(df_added)} tracks to added_artists.csv.zip")
+        save_parquet(df_added)
+        print(f"\n+ Saved {len(df_added)} tracks to added_artists.parquet")
         print("Run process_data.py to merge with main dataset")
 
 

@@ -42,13 +42,13 @@ from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
 from collections import defaultdict
 
-import pandas as pd
+import polars as pl
 import requests
 
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks
+from track_dedup import deduplicate_tracks_polars, normalize_artist_name
 from utils import (
     ReccoBeatsClient,
     get_genre_from_audiodb,
@@ -56,11 +56,12 @@ from utils import (
     extract_spotify_id,
     build_rows,
     load_existing,
-    save_csv_zip,
+    save_parquet,
     deduplicate_with_report,
     DEEZER_URL,
     SONGLINK_URL,
     RAW_COLS,
+    OUTPUT_PARQUET,
 )
 
 BASE_URL = "https://api.reccobeats.com/v1"
@@ -217,8 +218,8 @@ def fetch_chart_artists(
 
 
 def get_artist_track_count(artist_name: str, existing_artists: Dict[str, int]) -> int:
-    """Get number of tracks for artist in dataset."""
-    return existing_artists.get(artist_name, 0)
+    """Get number of tracks for artist in dataset (case/accent insensitive)."""
+    return existing_artists.get(normalize_artist_name(artist_name), 0)
 
 
 def search_artist_tracks_reccobeats(artist_name: str, limit: int = 15) -> Optional[Tuple[str, List[Dict]]]:
@@ -254,7 +255,7 @@ def add_artist_from_trending(
     genre: Optional[str],
     limit: int = 15,
     verbose: bool = False,
-) -> Optional[pd.DataFrame]:
+) -> Optional[pl.DataFrame]:
     """Add a trending artist to the dataset."""
     result = search_artist_tracks_reccobeats(artist_name, limit)
     if not result:
@@ -300,15 +301,16 @@ def main():
     args = parser.parse_args()
     
     df_main, df_added = load_existing()
-    df_all = pd.concat([df_main, df_added], ignore_index=True)
-    existing_track_ids = set(df_all["track_id"].dropna().unique())
+    df_all = pl.concat([df_main, df_added])
+    existing_track_ids = set(df_all["track_id"].drop_nulls().unique().to_list())
     
+    # Use normalized artist names for case/accent-insensitive comparison
     existing_artists = defaultdict(int)
-    for name in df_all["artist_name"].dropna():
-        existing_artists[name] += 1
+    for name in df_all["artist_name"].drop_nulls().to_list():
+        existing_artists[normalize_artist_name(name)] += 1
     
-    print(f"Dataset: {len(df_main)} tracks ({len(set(df_main['artist_name']))} artists)")
-    print(f"Added: {len(df_added)} tracks ({len(set(df_added['artist_name'])) if not df_added.empty else 0} artists)")
+    print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].n_unique()} artists)")
+    print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].n_unique() if len(df_added) > 0 else 0} artists)")
     print()
     
     if args.trending:
@@ -395,7 +397,7 @@ def main():
                 limit=15, verbose=args.verbose
             )
             
-            if df_rows is None or df_rows.empty:
+            if df_rows is None or len(df_rows) == 0:
                 print(f"    X Not found or no tracks")
                 continue
             
@@ -403,13 +405,13 @@ def main():
                 print(f"    X Only {len(df_rows)} tracks (min: {args.min_tracks})")
                 continue
             
-            genre = df_rows['genre'].iloc[0] if 'genre' in df_rows.columns else 'unknown'
+            genre = df_rows['genre'][0] if 'genre' in df_rows.columns else 'unknown'
             print(f"    + Added {len(df_rows)} tracks ({genre})")
             
             all_new_rows.append(df_rows)
             added_count += 1
             
-            for tid in df_rows['track_id'].dropna():
+            for tid in df_rows['track_id'].drop_nulls().to_list():
                 existing_track_ids.add(tid)
             
         except Exception as e:
@@ -421,14 +423,14 @@ def main():
         print("\nNo artists added")
         return
     
-    df_new = pd.concat(all_new_rows, ignore_index=True)
-    df_combined = pd.concat([df_added, df_new], ignore_index=True)
+    df_new = pl.concat(all_new_rows)
+    df_combined = pl.concat([df_added, df_new])
     df_combined, removed = deduplicate_with_report(df_combined, df_main)
     
-    save_csv_zip(df_combined)
+    save_parquet(df_combined)
     print(f"\n{'=' * 60}")
     print(f"+ Added {added_count} artists ({len(df_new)} tracks)")
-    print(f"+ Total in added_artists.csv.zip: {len(df_combined)} tracks")
+    print(f"+ Total in added_artists.parquet: {len(df_combined)} tracks")
     print(f"\nRun process_data.py to merge with main dataset")
 
 
