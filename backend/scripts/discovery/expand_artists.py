@@ -56,6 +56,8 @@ from utils import (
     save_parquet,
     deduplicate_with_report,
     OUTPUT_PARQUET,
+    DEFAULT_TRACKS_PER_ARTIST,
+    DEFAULT_DIVERSITY_WEIGHT,
 )
 
 
@@ -87,8 +89,8 @@ def main():
     parser.add_argument("--seeds", help="Seed artist names (alternative to positional arg)")
     parser.add_argument("--limit", type=int, default=20, help="Max artists to discover")
     parser.add_argument("--min-match", type=float, default=0.4, help="Minimum Last.fm match score (0-1)")
-    parser.add_argument("--tracks", type=int, default=15, help="Tracks per artist")
-    parser.add_argument("--diversity", type=float, default=0.3, help="Track diversity weight (0-1)")
+    parser.add_argument("--tracks", type=int, default=DEFAULT_TRACKS_PER_ARTIST, help="Tracks per artist")
+    parser.add_argument("--diversity", type=float, default=DEFAULT_DIVERSITY_WEIGHT, help="Track diversity weight (0-1)")
     parser.add_argument("--update", action="store_true", help="Actually add artists to dataset")
     parser.add_argument("--skip-unknown-genre", action="store_true", default=True, 
                         help="Skip artists with unknown genre (default)")

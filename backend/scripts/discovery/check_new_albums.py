@@ -67,7 +67,7 @@ from track_dedup import deduplicate_tracks_polars
 from utils import (
     ReccoBeatsClient,
     get_genre_from_audiodb,
-    search_artist_via_deezer,
+    search_artist,
     extract_spotify_id,
     build_rows,
     load_existing,
@@ -75,7 +75,6 @@ from utils import (
     deduplicate_with_report,
     DEEZER_URL,
     SONGLINK_URL,
-    RAW_COLS,
     OUTPUT_PARQUET,
 )
 
@@ -133,48 +132,13 @@ def get_recco_artist_from_spotify_track_id(client: ReccoBeatsClient, spotify_tra
 
 
 def search_artist_by_name(name: str, verbose: bool = False) -> Optional[Tuple[str, str]]:
-    """Search for artist by name via Deezer → Songlink → ReccoBeats.
+    """Search for artist by name using the unified search_artist function.
     Returns (recco_uuid, artist_name) or None.
     """
-    try:
-        r = requests.get(f"{DEEZER_URL}/search/artist", params={"q": name, "limit": 1}, timeout=10)
-        r.raise_for_status()
-        artists = r.json().get("data", [])
-        if not artists:
-            return None
-        
-        deezer_artist = artists[0]
-        found_name = deezer_artist["name"]
-        
-        r = requests.get(f"{DEEZER_URL}/artist/{deezer_artist['id']}/top", params={"limit": 3}, timeout=10)
-        r.raise_for_status()
-        tracks = r.json().get("data", [])
-        if not tracks:
-            return None
-        
-        for track in tracks:
-            track_id = track.get("id")
-            try:
-                deezer_url = f"https://deezer.com/track/{track_id}"
-                r = requests.get(SONGLINK_URL, params={"url": deezer_url}, timeout=15)
-                if r.status_code == 200:
-                    data = r.json()
-                    spotify_url = data.get("linksByPlatform", {}).get("spotify", {}).get("url")
-                    if spotify_url:
-                        spotify_id = spotify_url.split("/")[-1].split("?")[0]
-                        client = ReccoBeatsClient()
-                        result = get_recco_artist_from_spotify_track_id(client, spotify_id)
-                        if result:
-                            return result
-            except Exception:
-                pass
-            time.sleep(0.3)
-        
-        return None
-    except Exception as e:
-        if verbose:
-            print(f"  Search error: {e}")
-        return None
+    result = search_artist(name, quiet=not verbose, verbose=verbose)
+    if result:
+        return (result.recco_uuid, result.name)
+    return None
 
 
 def search_artist_by_url(url_input: str, verbose: bool = False) -> Optional[Tuple[str, str]]:

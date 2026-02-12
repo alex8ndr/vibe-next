@@ -46,18 +46,11 @@ import requests
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks_polars
+
 from utils import (
-    ReccoBeatsClient,
     get_genre_from_audiodb,
-    search_artist_via_deezer,
-    build_rows,
     load_existing,
     save_parquet,
-    deduplicate_with_report,
-    DEEZER_URL,
-    SONGLINK_URL,
-    RAW_COLS,
     OUTPUT_PARQUET,
 )
 

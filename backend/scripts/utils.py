@@ -17,6 +17,9 @@ import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 
+from dataclasses import dataclass
+from typing import Literal
+
 from dotenv import load_dotenv
 import polars as pl
 import numpy as np
@@ -25,6 +28,20 @@ import requests
 # Load environment variables from .env file (if it exists)
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
+
+
+# =============================================================================
+# DEFAULT CONSTANTS (for consistency across discovery scripts)
+# =============================================================================
+DEFAULT_TRACKS_PER_ARTIST = 15
+DEFAULT_SEARCH_LIMIT = 20
+DEFAULT_DIVERSITY_WEIGHT = 0.3
+DEFAULT_MAX_ADD = 10          # Max artists to add in one run
+DEFAULT_MIN_TRACKS = 3        # Min tracks for an artist to be added
+DEFAULT_MIN_MATCH = 0.4       # Last.fm minimum match score
+DEFAULT_BACKFILL_LIMIT = 50   # Artists to check for backfill
+DEFAULT_EXPAND_LIMIT = 20     # Artists to discover via expansion
+DEFAULT_TRENDING_LIMIT = 50   # Chart entries to check
 
 from track_dedup import deduplicate_tracks_polars, normalize_artist_name
 from schema import RAW_SCHEMA, RAW_COLUMN_ORDER, coerce_to_schema, normalize_for_merge
@@ -57,13 +74,8 @@ OUTPUT_PARQUET = DATA_DIR / "added_artists.parquet"  # Discovery output (parquet
 LEGACY_CSV = DATA_DIR / "added_artists.csv.zip"
 OUTPUT_CSV = LEGACY_CSV  # Alias for backward compat
 
-# Raw columns (before processing)
-RAW_COLS = [
-    "artist_name", "track_name", "track_id", "popularity", "year", "genre",
-    "danceability", "energy", "key", "loudness", "mode", "speechiness",
-    "acousticness", "instrumentalness", "liveness", "valence", "tempo",
-    "duration_ms", "time_signature"
-]
+# Use canonical column order from schema.py
+RAW_COLS = RAW_COLUMN_ORDER
 
 # Feature weights for sampling (adapted from logic.py, simplified)
 SAMPLING_WEIGHTS = {
@@ -91,7 +103,7 @@ AUDIODB_GENRE_MAP = {
     # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
-    'indie': 'indie-pop', 'shoegaze': 'psych-rock', 'dream pop': 'psych-rock',
+    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
     'progressive rock': 'math-rock', 'prog rock': 'math-rock', 'art rock': 'psych-rock',
     'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
@@ -716,6 +728,10 @@ def build_rows(
     """Build Polars DataFrame from API responses with RAW (unscaled) values."""
     rows = []
     
+    if verbose and tracks:
+        print(f"      Tracks: {', '.join(t.get('trackTitle', '?') for t in tracks[:5])}" + 
+              (f" (+{len(tracks)-5} more)" if len(tracks) > 5 else ""))
+    
     for track in tracks:
         href = track.get("href", "")
         spotify_id = href.split("/")[-1] if href else None
@@ -747,8 +763,7 @@ def build_rows(
         })
 
     if not rows:
-        return pl.DataFrame(schema={col: pl.String if col in ["artist_name", "track_name", "track_id", "genre"] 
-                                    else pl.Float64 for col in RAW_COLS})
+        return pl.DataFrame(schema=RAW_SCHEMA)
     
     df = pl.from_dicts(rows)
     
@@ -757,6 +772,8 @@ def build_rows(
         if col not in df.columns:
             df = df.with_columns(pl.lit(None).alias(col))
     
+    # Coerce types and select in canonical order
+    df = coerce_to_schema(df)
     return df.select(RAW_COLS)
 
 
@@ -983,41 +1000,157 @@ def deduplicate_with_report(
     return df_combined, removed_tracks
 
 
+@dataclass(frozen=True)
+class ArtistSearchResult:
+    """Result of artist search with source attribution."""
+    name: str                                      # Confirmed/canonical name
+    recco_uuid: str                                # ReccoBeats artist UUID
+    source: Literal["reccobeats", "deezer_fallback"]
+
+
+def search_artist(
+    name: str,
+    limit: int = DEFAULT_SEARCH_LIMIT,
+    *,
+    client: Optional["ReccoBeatsClient"] = None,
+    quiet: bool = True,
+    verbose: bool = False,
+) -> Optional[ArtistSearchResult]:
+    """Unified artist search: ReccoBeats direct search, then Deezer fallback.
+    
+    This is the canonical search function. All discovery scripts should use this
+    or functions that call it (like add_discovered_artist).
+    
+    Args:
+        name: Artist name to search for
+        limit: Max results from ReccoBeats search (default 20, API can return up to 1000)
+        client: Optional ReccoBeatsClient instance (created if not provided)
+        quiet: Suppress output
+        verbose: Print extra details
+        
+    Returns:
+        ArtistSearchResult with recco_uuid and confirmed name, or None if not found
+    """
+    client = client or ReccoBeatsClient()
+    target_norm = normalize_artist_name(name)
+    
+    # 1) Try ReccoBeats direct search first
+    try:
+        candidates = client.search_artist(name, limit=limit)
+        if candidates:
+            # Prefer exact normalized match, else first result
+            best = None
+            for c in candidates:
+                if normalize_artist_name(c.get("name", "")) == target_norm:
+                    best = c
+                    break
+            best = best or candidates[0]
+            
+            recco_uuid = best.get("id")
+            confirmed = best.get("name") or name
+            
+            if recco_uuid:
+                if verbose and not quiet:
+                    if normalize_artist_name(confirmed) == target_norm:
+                        print(f"    Found: {confirmed} (ReccoBeats)")
+                    else:
+                        print(f"    Found (approximate): {confirmed} (ReccoBeats)")
+                return ArtistSearchResult(name=confirmed, recco_uuid=recco_uuid, source="reccobeats")
+    except Exception as e:
+        if verbose and not quiet:
+            print(f"    ReccoBeats search failed: {e}")
+    
+    # 2) Fallback: Deezer → Songlink → Spotify track → ReccoBeats artist
+    spotify_id = search_artist_via_deezer(name, verbose=verbose, quiet=quiet)
+    if not spotify_id:
+        if not quiet:
+            print(f"    Not found on ReccoBeats or Deezer")
+        return None
+    
+    tracks = client.get_tracks([spotify_id])
+    if not tracks:
+        return None
+    
+    artists = (tracks[0] or {}).get("artists") or []
+    if not artists:
+        return None
+    
+    href = artists[0].get("href", "")
+    recco_uuid = href.split("/")[-1] if href else None
+    confirmed = artists[0].get("name") or name
+    
+    if not recco_uuid:
+        return None
+    
+    if verbose and not quiet:
+        print(f"    Found: {confirmed} (Deezer fallback)")
+    
+    return ArtistSearchResult(name=confirmed, recco_uuid=recco_uuid, source="deezer_fallback")
+
+
+def search_artist_via_reccobeats(
+    artist_name: str, 
+    limit: int = DEFAULT_SEARCH_LIMIT,
+    verbose: bool = False, 
+    quiet: bool = False
+) -> Optional[Tuple[str, str]]:
+    """Search for artist via ReccoBeats only (no Deezer fallback).
+    
+    DEPRECATED: Prefer search_artist() for full fallback handling.
+    
+    Args:
+        artist_name: Artist to search for
+        limit: Max search results (default 20)
+        verbose: Print extra details
+        quiet: Suppress output
+        
+    Returns:
+        Tuple of (recco_artist_uuid, confirmed_name) or None if not found
+    """
+    result = search_artist(artist_name, limit=limit, quiet=quiet, verbose=verbose)
+    if result and result.source == "reccobeats":
+        return (result.recco_uuid, result.name)
+    # If only ReccoBeats search failed but Deezer worked, still return None
+    # to preserve original "ReccoBeats only" behavior
+    if result and result.source == "deezer_fallback":
+        return None
+    return None
+
+
 def add_discovered_artist(
     artist_name: str,
     existing_track_ids: Set[str],
     skip_unknown: bool = True,
     use_infer: bool = False,
-    tracks_per_artist: int = 15,
-    diversity_weight: float = 0.3,
+    tracks_per_artist: int = DEFAULT_TRACKS_PER_ARTIST,
+    diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
     verbose: bool = False,
     quiet: bool = False,
     lastfm_client: Optional["LastFmClient"] = None,
+    use_deezer_fallback: bool = True,
 ) -> Optional[pl.DataFrame]:
     """Fetch and add tracks for a discovered artist.
     
+    This is the canonical function for the full artist→tracks pipeline.
+    Uses search_artist() for unified ReccoBeats → Deezer fallback.
+    
     Returns DataFrame of new tracks, or None if artist should be skipped.
     """
-    spotify_id = search_artist_via_deezer(artist_name, verbose=verbose, quiet=quiet)
-    if not spotify_id:
-        if verbose:
-            print(f"    Not found via Deezer")
-        return None
-    
     client = ReccoBeatsClient()
-    tracks = client.get_tracks([spotify_id])
-    if not tracks:
-        if verbose:
-            print(f"    Track not found on ReccoBeats")
+    
+    # Use unified search_artist() which handles ReccoBeats → Deezer fallback internally
+    if use_deezer_fallback:
+        result = search_artist(artist_name, client=client, quiet=quiet, verbose=verbose)
+    else:
+        # ReccoBeats only - use the legacy wrapper that filters to reccobeats source
+        rb_result = search_artist_via_reccobeats(artist_name, verbose=verbose, quiet=quiet)
+        result = ArtistSearchResult(name=rb_result[1], recco_uuid=rb_result[0], source="reccobeats") if rb_result else None
+    
+    if not result:
         return None
     
-    track = tracks[0]
-    artists = track.get("artists", [])
-    if not artists:
-        return None
-    
-    artist_uuid = artists[0]["id"]
-    confirmed_name = artists[0]["name"]
+    artist_uuid = result.recco_uuid
+    confirmed_name = result.name
     
     genre = resolve_genre(
         confirmed_name,

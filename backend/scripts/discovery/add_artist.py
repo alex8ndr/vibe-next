@@ -75,6 +75,7 @@ from utils import (
     get_genre_from_audiodb,
     get_cached_genre,
     search_artist_via_deezer,
+    search_artist,
     extract_spotify_id,
     build_rows,
     load_existing,
@@ -85,8 +86,9 @@ from utils import (
     AUDIODB_GENRE_MAP,
     RAW_COLS,
     DEEZER_URL,
-    SONGLINK_URL,
     OUTPUT_PARQUET,
+    DEFAULT_TRACKS_PER_ARTIST,
+    DEFAULT_DIVERSITY_WEIGHT,
 )
 
 
@@ -605,11 +607,11 @@ def main():
     group.add_argument("--remove", help="Remove artist(s): 'Artist1,Artist2' or 'all'")
     group.add_argument("--list", action="store_true", help="List artists in added_artists.parquet")
     
-    parser.add_argument("--limit", type=int, default=15, help="Max tracks per artist (default: 15, ignored for albums)")
+    parser.add_argument("--limit", type=int, default=DEFAULT_TRACKS_PER_ARTIST, help="Max tracks per artist (ignored for albums)")
     parser.add_argument("--genre", default=None, help="Genre name (auto-detected if not provided)")
     parser.add_argument("--expand", type=int, nargs="?", const=5, default=0, 
                         help="Also add N similar artists via Last.fm (default: 5, requires LASTFM_API_KEY)")
-    parser.add_argument("--dry-run", action="store_true", help="Preview changes without saving")
+    parser.add_argument("--update", action="store_true", help="Actually save changes (dry-run by default)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print detailed info")
     args = parser.parse_args()
     
@@ -661,69 +663,96 @@ def main():
                     items.append(extract_spotify_id(line))
         print(f"Loaded {len(items)} items from {args.file}")
     
-    elif artist_names:
-        names = [n.strip() for n in artist_names.split(",") if n.strip()]
-        print(f"Searching for {len(names)} artists via Deezer...\n")
-        
-        for name in names:
-            print(f"  {name}:")
-            spotify_id = search_artist_via_deezer(name)
-            if spotify_id:
-                items.append((spotify_id, "track"))
-            time.sleep(0.3)
-        
-        if not items:
-            print("\nNo artists found. Try using Spotify URLs instead.")
-            sys.exit(1)
-        
-        print(f"\nFound {len(items)}/{len(names)} artists\n")
-    
-    if not items:
-        print("No items to process")
-        sys.exit(1)
-    
-    # Load existing data
+    # Load existing data first (needed for both paths)
     client = ReccoBeatsClient()
     df_main, df_added = load_existing()
     df_all = pl.concat([df_main, df_added])
     
     existing_track_ids = set(df_all["track_id"].drop_nulls().unique().to_list())
-    # Use normalized artist names for case/accent-insensitive comparison
     existing_artists = {normalize_artist_name(a) for a in df_all["artist_name"].drop_nulls().unique().to_list()}
     
     print(f"Dataset: {len(df_main)} tracks ({df_main['artist_name'].n_unique() if len(df_main) > 0 else 0} artists)")
     print(f"Added: {len(df_added)} tracks ({df_added['artist_name'].n_unique() if len(df_added) > 0 else 0} artists)\n")
     
-    if args.dry_run:
-        print("DRY-RUN MODE: No changes will be saved\n")
+    if not args.update:
+        print("DRY-RUN MODE: Use --update to save changes\n")
     
     all_new_rows = []
     
-    for i, (spotify_id, item_type) in enumerate(items):
-        print(f"[{i+1}/{len(items)}] Processing {item_type}: {spotify_id}")
+    # Artist names mode - use add_discovered_artist() directly
+    if artist_names:
+        names = [n.strip() for n in artist_names.split(",") if n.strip()]
+        print(f"Adding {len(names)} artists...\n")
         
-        try:
-            if item_type == "album":
-                result = process_album(client, spotify_id, args.genre, existing_track_ids, args.verbose)
-                if result:
-                    df_rows, artist_name, album_name = result
-                    all_new_rows.append(df_rows)
-                    # Update existing_track_ids for subsequent albums
-                    existing_track_ids.update(df_rows["track_id"].to_list())
-            else:
-                result = process_single_track(client, spotify_id, args.limit, args.genre, existing_artists, args.verbose)
-                if result:
-                    df_rows, artist_name = result
-                    all_new_rows.append(df_rows)
-                    existing_artists.add(normalize_artist_name(artist_name))
-        except Exception as e:
-            print(f"  Error: {e}")
-            if args.verbose:
-                import traceback
-                traceback.print_exc()
-        
-        if i < len(items) - 1:
-            time.sleep(0.3)
+        for i, name in enumerate(names):
+            print(f"[{i+1}/{len(names)}] {name}:")
+            
+            # Skip if already in dataset
+            if normalize_artist_name(name) in existing_artists:
+                print(f"    Already in dataset (skipped)")
+                continue
+            
+            try:
+                df_rows = add_discovered_artist(
+                    name,
+                    existing_track_ids,
+                    skip_unknown=False,
+                    tracks_per_artist=args.limit,
+                    diversity_weight=DEFAULT_DIVERSITY_WEIGHT,
+                    verbose=args.verbose,
+                    quiet=False,
+                )
+                
+                if df_rows is None or len(df_rows) == 0:
+                    print(f"    Not found or no tracks")
+                    continue
+                
+                genre = df_rows['genre'][0] if 'genre' in df_rows.columns else 'unknown'
+                print(f"    + Added {len(df_rows)} tracks ({genre})")
+                
+                all_new_rows.append(df_rows)
+                existing_artists.add(normalize_artist_name(name))
+                for tid in df_rows['track_id'].drop_nulls().to_list():
+                    existing_track_ids.add(tid)
+                    
+            except Exception as e:
+                print(f"    Error: {e}")
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+            
+            if i < len(names) - 1:
+                time.sleep(0.3)
+    
+    # Track/album URL mode
+    elif items:
+        for i, (spotify_id, item_type) in enumerate(items):
+            print(f"[{i+1}/{len(items)}] Processing {item_type}: {spotify_id}")
+            
+            try:
+                if item_type == "album":
+                    result = process_album(client, spotify_id, args.genre, existing_track_ids, args.verbose)
+                    if result:
+                        df_rows, artist_name, album_name = result
+                        all_new_rows.append(df_rows)
+                        existing_track_ids.update(df_rows["track_id"].to_list())
+                else:
+                    result = process_single_track(client, spotify_id, args.limit, args.genre, existing_artists, args.verbose)
+                    if result:
+                        df_rows, artist_name = result
+                        all_new_rows.append(df_rows)
+                        existing_artists.add(normalize_artist_name(artist_name))
+            except Exception as e:
+                print(f"  Error: {e}")
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+            
+            if i < len(items) - 1:
+                time.sleep(0.3)
+    else:
+        print("No items to process")
+        sys.exit(1)
     
     if not all_new_rows:
         print("\nNo new tracks to add")
@@ -743,8 +772,8 @@ def main():
         if len(removed_tracks) > 5:
             print(f"  ... and {len(removed_tracks) - 5} more")
     
-    # Dry-run preview
-    if args.dry_run:
+    # Dry-run preview (default unless --update)
+    if not args.update:
         print(f"\n--- DRY-RUN PREVIEW ---")
         print(f"Would save: {len(df_combined)} tracks ({df_combined['artist_name'].n_unique()} artists)")
         print(f"\nNew tracks by artist:")
@@ -753,17 +782,14 @@ def main():
             count = len(artist_df)
             genre = artist_df["genre"][0]
             print(f"  {artist}: {count} tracks ({genre})")
-        
-        confirm = input("\nSave these changes? [y/N]: ").strip().lower()
-        if confirm not in ('y', 'yes'):
-            print("Discarded.")
-            return
+        print("\nRun with --update to save changes.")
+        return
     
     save_parquet(df_combined)
     print(f"\n✓ Saved: {len(df_combined)} tracks ({df_combined['artist_name'].n_unique()} artists)")
     
     # Expand to similar artists if requested
-    if args.expand and not args.dry_run:
+    if args.expand:
         added_artists = df_new["artist_name"].unique().to_list()
         df_combined = expand_from_artists(
             seed_artists=added_artists,

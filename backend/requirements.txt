@@ -4,3 +4,6 @@ uvicorn[standard]>=0.34.0
 polars[rtcompat]>=1.37.0
 numpy>=2.2.0
 python-dotenv>=1.0.0
+
+# Optional: Backblaze B2 sync 
+# b2sdk>=1.20.0

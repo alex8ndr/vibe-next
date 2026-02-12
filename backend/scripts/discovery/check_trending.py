@@ -33,13 +33,12 @@ Features:
     - Can add missing artists with their top tracks
     - Supports global, country-specific, and viral charts
 """
-import os
 import sys
 import argparse
 import time
 import re
 from pathlib import Path
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Set
 from collections import defaultdict
 
 import polars as pl
@@ -48,20 +47,15 @@ import requests
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks_polars, normalize_artist_name
+from track_dedup import normalize_artist_name
 from utils import (
-    ReccoBeatsClient,
-    get_genre_from_audiodb,
-    search_artist_via_deezer,
-    extract_spotify_id,
-    build_rows,
+    add_discovered_artist,
     load_existing,
     save_parquet,
     deduplicate_with_report,
     DEEZER_URL,
-    SONGLINK_URL,
-    RAW_COLS,
     OUTPUT_PARQUET,
+    DEFAULT_TRACKS_PER_ARTIST,
 )
 
 BASE_URL = "https://api.reccobeats.com/v1"
@@ -222,71 +216,6 @@ def get_artist_track_count(artist_name: str, existing_artists: Dict[str, int]) -
     return existing_artists.get(normalize_artist_name(artist_name), 0)
 
 
-def search_artist_tracks_reccobeats(artist_name: str, limit: int = 15) -> Optional[Tuple[str, List[Dict]]]:
-    """Search for artist and get their tracks via ReccoBeats.
-    Returns (recco_uuid, tracks) or None.
-    """
-    spotify_id = search_artist_via_deezer(artist_name, verbose=False)
-    if not spotify_id:
-        return None
-    
-    client = ReccoBeatsClient()
-    tracks = client.get_tracks([spotify_id])
-    if not tracks:
-        return None
-    
-    track = tracks[0]
-    artists = track.get("artists", [])
-    if not artists:
-        return None
-    
-    artist_href = artists[0].get("href", "")
-    recco_uuid = artist_href.split("/")[-1] if artist_href else None
-    if not recco_uuid:
-        return None
-    
-    artist_tracks = client.get_artist_tracks(recco_uuid, limit=limit)
-    return (recco_uuid, artist_tracks)
-
-
-def add_artist_from_trending(
-    artist_name: str,
-    existing_track_ids: Set[str],
-    genre: Optional[str],
-    limit: int = 15,
-    verbose: bool = False,
-) -> Optional[pl.DataFrame]:
-    """Add a trending artist to the dataset."""
-    result = search_artist_tracks_reccobeats(artist_name, limit)
-    if not result:
-        return None
-    
-    recco_uuid, tracks = result
-    
-    new_tracks = []
-    new_ids = []
-    for t in tracks:
-        href = t.get("href", "")
-        tid = href.split("/")[-1] if href else None
-        if tid and tid not in existing_track_ids:
-            new_tracks.append(t)
-            new_ids.append(tid)
-    
-    if not new_tracks:
-        return None
-    
-    client = ReccoBeatsClient()
-    features = client.get_audio_features(new_ids)
-    
-    if not genre:
-        genre = get_genre_from_audiodb(artist_name)
-    if not genre:
-        genre = "pop"
-    
-    df_rows = build_rows(artist_name, new_tracks, features, genre, verbose)
-    return df_rows
-
-
 def main():
     parser = argparse.ArgumentParser(description="Check trending artists against dataset")
     parser.add_argument("--viral", action="store_true", help="Use viral chart instead of top")
@@ -392,9 +321,13 @@ def main():
         print(f"\n  {name}...")
         
         try:
-            df_rows = add_artist_from_trending(
-                name, existing_track_ids, None, 
-                limit=15, verbose=args.verbose
+            df_rows = add_discovered_artist(
+                name, 
+                existing_track_ids,
+                skip_unknown=False,
+                tracks_per_artist=DEFAULT_TRACKS_PER_ARTIST,
+                verbose=args.verbose,
+                quiet=False,
             )
             
             if df_rows is None or len(df_rows) == 0:
