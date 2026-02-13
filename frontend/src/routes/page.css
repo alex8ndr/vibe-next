@@ -11,25 +11,27 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: url("$lib/assets/background_dark.webp") center center no-repeat;
+    background-position: center center;
+    background-repeat: no-repeat;
     background-size: 1920px auto;
-    opacity: 0.06;
     filter: blur(2px) saturate(2);
-}
-
-@media (prefers-color-scheme: light) {
-    .bg-image {
-        background-image: url("$lib/assets/background_light.webp");
-    }
-}
-
-:global([data-theme="light"]) .bg-image {
-    background-image: url("$lib/assets/background_light.webp");
-}
-
-:global([data-theme="dark"]) .bg-image {
+    /* Default dark theme background */
     background-image: url("$lib/assets/background_dark.webp");
     opacity: 0.12;
+}
+
+/* Light theme override */
+[data-theme="light"] .bg-image {
+    background-image: url("$lib/assets/background_light.webp");
+    opacity: 0.06;
+}
+
+/* System preference: light when no explicit theme set */
+@media (prefers-color-scheme: light) {
+    html:not([data-theme]) .bg-image {
+        background-image: url("$lib/assets/background_light.webp");
+        opacity: 0.06;
+    }
 }
 
 .bg-fade {
@@ -204,7 +206,6 @@
     overflow-y: auto;
     z-index: 90;
     animation: slideInRight 0.2s ease-out;
-    text-align: left;
 }
 
 @keyframes slideInRight {
@@ -1018,7 +1019,7 @@
 
     /* Compact fine-tune section on mobile */
     .fine-tune-section {
-        position: relative;
+        z-index: 50;
     }
 
     .fine-tune-artists {

@@ -6,6 +6,7 @@
         type FavoriteTrack,
     } from "$lib/stores";
     import { trackRemoveKnown, trackRemoveFavorite } from "$lib/analytics";
+    import { generateFavouritesHTML } from "$lib/utils/htmlExport";
 
     interface Props {
         onplay: (track: FavoriteTrack) => void;
@@ -16,10 +17,33 @@
     let { onplay, onclose, showCloseButton = false }: Props = $props();
 
     // Track collapsed artist groups
-    let collapsedArtists = $state<Set<string>>(new Set());
     let allCollapsed = $state(false);
+    let exportDropdownOpen = $state(false);
+    let exportDropdownRef = $state<HTMLDivElement | null>(null);
 
-    const favoritesByArtist = $derived.by(() => {
+    // Persist collapsed artists to localStorage
+    const COLLAPSED_STORAGE_KEY = 'vibe-collapsed-artists';
+    let collapsedArtists = $state<Set<string>>(new Set(
+        typeof localStorage !== 'undefined'
+            ? JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) || '[]')
+            : []
+    ));
+
+    // Save to localStorage whenever collapsedArtists changes
+    $effect(() => {
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedArtists]));
+        }
+    });
+
+    // Close dropdown when clicking outside
+    function handleExportClickOutside(event: MouseEvent) {
+        if (exportDropdownRef && !exportDropdownRef.contains(event.target as Node)) {
+            exportDropdownOpen = false;
+        }
+    }
+
+    const favouritesByArtist = $derived.by(() => {
         const map: Record<string, FavoriteTrack[]> = {};
         for (const fav of $favoriteTracks) {
             const artist = fav.artist_name || "Unknown Artist";
@@ -41,7 +65,7 @@
     }
 
     function toggleAllCollapsed() {
-        const artists = Object.keys(favoritesByArtist);
+        const artists = Object.keys(favouritesByArtist);
         if (allCollapsed) {
             // Expand all
             collapsedArtists = new Set();
@@ -53,7 +77,7 @@
     }
 
     function updateAllCollapsedState() {
-        const artists = Object.keys(favoritesByArtist);
+        const artists = Object.keys(favouritesByArtist);
         allCollapsed = artists.length > 0 && artists.every(a => collapsedArtists.has(a));
     }
 
@@ -79,7 +103,7 @@
         }
     }
 
-    function downloadFavoritesJSON() {
+    function downloadFavouritesJSON() {
         const data = $favoriteTracks.map((t) => ({
             track_id: t.track_id,
             track_name: t.track_name,
@@ -89,7 +113,20 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "vibe-favorites.json";
+        a.download = "vibe-favourites.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function downloadFavouritesHTML() {
+        const html = generateFavouritesHTML({
+            favourites: favouritesByArtist,
+        });
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vibe-favourites.html";
         a.click();
         URL.revokeObjectURL(url);
     }
@@ -129,7 +166,7 @@
     </div>
 
     <div class="section-header mt">
-        <h4>Favorites <span class="cnt">{$favoriteTracks.length}</span></h4>
+        <h4>Favourites <span class="cnt">{$favoriteTracks.length}</span></h4>
         <div class="header-btns">
             {#if $favoriteTracks.length > 0}
                 <button class="header-btn" onclick={toggleAllCollapsed} title={allCollapsed ? "Expand all" : "Collapse all"}>
@@ -146,20 +183,40 @@
                         <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                     </svg>
                 </button>
-                <button class="header-btn" onclick={downloadFavoritesJSON} title="Export">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                </button>
+                <div class="export-dropdown" bind:this={exportDropdownRef}>
+                    <button class="header-btn" onclick={() => exportDropdownOpen = !exportDropdownOpen} title="Export">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </button>
+                    {#if exportDropdownOpen}
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="export-menu" onclick={handleExportClickOutside}>
+                            <button class="export-option" onclick={() => { downloadFavouritesJSON(); exportDropdownOpen = false; }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+                                </svg>
+                                JSON
+                            </button>
+                            <button class="export-option" onclick={() => { downloadFavouritesHTML(); exportDropdownOpen = false; }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                                </svg>
+                                HTML
+                            </button>
+                        </div>
+                    {/if}
+                </div>
             {/if}
         </div>
     </div>
 
-    <div class="favorites-list">
+    <div class="favourites-list">
         {#if $favoriteTracks.length === 0}
-            <span class="empty">No favorite tracks yet</span>
+            <span class="empty">No favourite tracks yet</span>
         {/if}
-        {#each Object.entries(favoritesByArtist) as [artist, tracks] (artist)}
+        {#each Object.entries(favouritesByArtist) as [artist, tracks] (artist)}
             <div class="fav-group">
                 <button
                     class="fav-artist"
@@ -306,7 +363,7 @@
     .chip .x { color: var(--text-3); font-size: 0.8rem; }
     .chip:hover .x { color: #e55; }
 
-    .favorites-list {
+    .favourites-list {
         flex: 1;
         overflow-y: auto;
         display: flex;
@@ -315,10 +372,49 @@
         padding-right: 0.25rem;
     }
 
-    .favorites-list::-webkit-scrollbar { width: 6px; }
-    .favorites-list::-webkit-scrollbar-track { background: transparent; }
-    .favorites-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    .favorites-list::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+    .favourites-list::-webkit-scrollbar { width: 6px; }
+    .favourites-list::-webkit-scrollbar-track { background: transparent; }
+    .favourites-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .favourites-list::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+    .export-dropdown {
+        position: relative;
+    }
+
+    .export-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 100px;
+        z-index: 10;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .export-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: var(--text-2);
+        font-size: 0.75rem;
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .export-option:hover {
+        background: var(--bg-alt);
+        color: var(--text);
+    }
 
     .fav-group {
         display: flex;
