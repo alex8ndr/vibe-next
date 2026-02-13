@@ -246,7 +246,7 @@
 
     @media (max-width: 768px) {
         .wrapper {
-            position: static;
+            position: relative;
         }
 
         .list {

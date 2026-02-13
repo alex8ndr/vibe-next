@@ -1018,7 +1018,7 @@
 
     /* Compact fine-tune section on mobile */
     .fine-tune-section {
-        z-index: 50;
+        position: relative;
     }
 
     .fine-tune-artists {

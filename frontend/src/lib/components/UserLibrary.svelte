@@ -15,6 +15,10 @@
 
     let { onplay, onclose, showCloseButton = false }: Props = $props();
 
+    // Track collapsed artist groups
+    let collapsedArtists = $state<Set<string>>(new Set());
+    let allCollapsed = $state(false);
+
     const favoritesByArtist = $derived.by(() => {
         const map: Record<string, FavoriteTrack[]> = {};
         for (const fav of $favoriteTracks) {
@@ -24,6 +28,34 @@
         }
         return map;
     });
+
+    function toggleArtistCollapse(artist: string) {
+        const next = new Set(collapsedArtists);
+        if (next.has(artist)) {
+            next.delete(artist);
+        } else {
+            next.add(artist);
+        }
+        collapsedArtists = next;
+        updateAllCollapsedState();
+    }
+
+    function toggleAllCollapsed() {
+        const artists = Object.keys(favoritesByArtist);
+        if (allCollapsed) {
+            // Expand all
+            collapsedArtists = new Set();
+        } else {
+            // Collapse all
+            collapsedArtists = new Set(artists);
+        }
+        allCollapsed = !allCollapsed;
+    }
+
+    function updateAllCollapsedState() {
+        const artists = Object.keys(favoritesByArtist);
+        allCollapsed = artists.length > 0 && artists.every(a => collapsedArtists.has(a));
+    }
 
     function removeFromKnown(artist: string) {
         trackRemoveKnown(artist);
@@ -100,6 +132,15 @@
         <h4>Favorites <span class="cnt">{$favoriteTracks.length}</span></h4>
         <div class="header-btns">
             {#if $favoriteTracks.length > 0}
+                <button class="header-btn" onclick={toggleAllCollapsed} title={allCollapsed ? "Expand all" : "Collapse all"}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        {#if allCollapsed}
+                            <path d="m5 15 7-7 7 7"/>
+                        {:else}
+                            <path d="m19 9-7 7-7-7"/>
+                        {/if}
+                    </svg>
+                </button>
                 <button class="header-btn danger" onclick={clearFavorites} title="Clear all">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -120,20 +161,36 @@
         {/if}
         {#each Object.entries(favoritesByArtist) as [artist, tracks] (artist)}
             <div class="fav-group">
-                <span class="fav-artist">{artist}</span>
-                {#each tracks as track (track.track_id)}
-                    <div
-                        class="fav-track"
-                        class:playing={$sidebarPlaying?.trackId === track.track_id}
-                        role="button"
-                        tabindex="0"
-                        onclick={() => onplay(track)}
-                        onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onplay(track); } }}
-                    >
-                        <span class="track-name">{track.track_name}</span>
-                        <button class="remove-btn" onclick={(e) => { e.stopPropagation(); removeFavorite(track); }}>×</button>
-                    </div>
-                {/each}
+                <button
+                    class="fav-artist"
+                    class:collapsed={collapsedArtists.has(artist)}
+                    onclick={() => toggleArtistCollapse(artist)}
+                    tabindex="0"
+                    onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleArtistCollapse(artist); } }}
+                >
+                    <svg class="collapse-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                    {artist}
+                    {#if collapsedArtists.has(artist)}
+                        <span class="track-count">{tracks.length}</span>
+                    {/if}
+                </button>
+                <div class="fav-tracks-container" class:collapsed={collapsedArtists.has(artist)}>
+                    {#each tracks as track (track.track_id)}
+                        <div
+                            class="fav-track"
+                            class:playing={$sidebarPlaying?.trackId === track.track_id}
+                            role="button"
+                            tabindex="0"
+                            onclick={() => onplay(track)}
+                            onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onplay(track); } }}
+                        >
+                            <span class="track-name">{track.track_name}</span>
+                            <button class="remove-btn" onclick={(e) => { e.stopPropagation(); removeFavorite(track); }}>×</button>
+                        </div>
+                    {/each}
+                </div>
             </div>
         {/each}
     </div>
@@ -254,7 +311,7 @@
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
+        gap: 0.35rem;
         padding-right: 0.25rem;
     }
 
@@ -266,14 +323,64 @@
     .fav-group {
         display: flex;
         flex-direction: column;
-        gap: 0.2rem;
     }
 
     .fav-artist {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
         font-size: 0.7rem;
         font-weight: 600;
         color: var(--gold);
-        margin-bottom: 0.15rem;
+        background: none;
+        border: none;
+        padding: 0.15rem 0;
+        cursor: pointer;
+        text-align: left;
+        transition: opacity 0.15s;
+    }
+
+    .fav-artist:hover {
+        opacity: 0.8;
+    }
+
+    .fav-artist:focus-visible {
+        outline: none;
+        border-radius: 4px;
+        box-shadow: 0 0 0 2px var(--gold-glow);
+    }
+
+    .collapse-icon {
+        transition: transform 0.2s ease;
+        flex-shrink: 0;
+    }
+
+    .fav-artist.collapsed .collapse-icon {
+        transform: rotate(-90deg);
+    }
+
+    .track-count {
+        font-size: 0.65rem;
+        color: var(--text-3);
+        font-weight: 500;
+        margin-left: 0.2rem;
+    }
+
+    .fav-tracks-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        overflow: hidden;
+        transition: max-height 0.2s ease, opacity 0.2s ease, margin 0.2s ease;
+        max-height: 1000px;
+        opacity: 1;
+        margin-top: 0.1rem;
+    }
+
+    .fav-tracks-container.collapsed {
+        max-height: 0;
+        opacity: 0;
+        margin-top: 0;
     }
 
     .fav-track {
