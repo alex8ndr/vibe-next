@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import LandingView from "$lib/components/views/LandingView.svelte";
     import ResultsView from "$lib/components/views/ResultsView.svelte";
+    import FeedbackForm from "$lib/components/FeedbackForm.svelte";
     import {
         fetchArtists,
         fetchRecommendations,
@@ -283,3 +284,5 @@
         onplay={playTrack}
     />
 {/if}
+
+<FeedbackForm />

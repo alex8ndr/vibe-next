@@ -204,6 +204,7 @@
     overflow-y: auto;
     z-index: 90;
     animation: slideInRight 0.2s ease-out;
+    text-align: left;
 }
 
 @keyframes slideInRight {
@@ -1010,8 +1011,9 @@
         max-height: none;
         border-right: none;
         border-bottom: 1px solid var(--border);
-        z-index: 100;
+        z-index: auto;
         padding: 0.75rem;
+        overflow: visible;
     }
 
     /* Compact fine-tune section on mobile */

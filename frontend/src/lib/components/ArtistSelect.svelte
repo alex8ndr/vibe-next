@@ -245,6 +245,10 @@
     }
 
     @media (max-width: 768px) {
+        .wrapper {
+            position: static;
+        }
+
         .list {
             position: fixed;
             left: 1rem;
@@ -253,7 +257,7 @@
             bottom: 50%;
             max-height: 40vh;
             border-radius: 12px;
-            z-index: 1000;
+            z-index: 9999;
         }
     }
 
