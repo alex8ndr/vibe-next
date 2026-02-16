@@ -115,12 +115,41 @@ def normalize_track_name_aggressive(name: str) -> str:
     return ' '.join(words)
 
 
+def _strip_accents_expr(expr: pl.Expr) -> pl.Expr:
+    """
+    Strip accents/diacritics from a Polars string expression.
+    
+    Note: This uses explicit character replacements rather than NFD decomposition
+    like the Python _normalize_unicode(). It covers common Latin accented characters
+    (à, é, ñ, ö, etc.) but may miss some rare Unicode combining marks. For music
+    artist/track names this coverage is sufficient.
+    """
+    return (
+        expr
+        .str.replace_all(r'[àáâãäåāăą]', 'a', literal=False)
+        .str.replace_all(r'[èéêëēĕėęě]', 'e', literal=False)
+        .str.replace_all(r'[ìíîïĩīĭįı]', 'i', literal=False)
+        .str.replace_all(r'[òóôõöōŏőø]', 'o', literal=False)
+        .str.replace_all(r'[ùúûüũūŭůűų]', 'u', literal=False)
+        .str.replace_all(r'[ýÿŷ]', 'y', literal=False)
+        .str.replace_all(r'[ñń]', 'n', literal=False)
+        .str.replace_all(r'[çćĉċč]', 'c', literal=False)
+        .str.replace_all(r'[šśŝş]', 's', literal=False)
+        .str.replace_all(r'[žźż]', 'z', literal=False)
+        .str.replace_all(r'[ðđ]', 'd', literal=False)
+        .str.replace_all(r'[æ]', 'ae', literal=False)
+        .str.replace_all(r'[œ]', 'oe', literal=False)
+        .str.replace_all(r'[ß]', 'ss', literal=False)
+        .str.replace_all(r'[þ]', 'th', literal=False)
+    )
+
+
 def artist_norm_expr(col: str = "artist_name") -> pl.Expr:
     """
     Polars expression for artist name normalization.
     Matches normalize_artist_name() Python function behavior.
     """
-    return (
+    return _strip_accents_expr(
         pl.col(col)
         .str.to_lowercase()
         .str.replace_all(r"['`´'']", "'", literal=False)  # normalize quotes
@@ -136,7 +165,7 @@ def track_norm_expr(col: str = "track_name") -> pl.Expr:
     Polars expression for track name normalization.
     Matches normalize_track_name() Python function behavior.
     """
-    return (
+    return _strip_accents_expr(
         pl.col(col)
         .str.to_lowercase()
         .str.replace_all(r"['`´'']", "'", literal=False)

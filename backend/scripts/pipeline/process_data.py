@@ -448,7 +448,7 @@ def process_data(
         df,
         output_path,
         compression="zstd",
-        compression_level=20,
+        compression_level=22,
         validate=validate_encoded_dataset,
         verbose=verbose,
     )

@@ -157,7 +157,7 @@
                             {#each (artistTracks[heroExpandedArtist] || []).filter((t: Track) => !songSearch || t.track_name.toLowerCase().includes(songSearch.toLowerCase())) as t (t.track_id)}
                                 {@const sel = (
                                     fineTune[heroExpandedArtist] || []
-                                ).includes(t.track_name)}
+                                ).includes(t.track_id)}
                                 {@const atLimit =
                                     isAtSongLimit(heroExpandedArtist)}
                                 <button
@@ -167,7 +167,7 @@
                                     onclick={() =>
                                         toggleSong(
                                             heroExpandedArtist!,
-                                            t.track_name,
+                                            t.track_id,
                                         )}
                                     title={!sel && atLimit
                                         ? `Max ${LIMITS.MAX_INPUT_SONGS_PER_ARTIST} songs per artist`

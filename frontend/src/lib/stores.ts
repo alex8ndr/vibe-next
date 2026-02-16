@@ -48,12 +48,32 @@ export const playerCompact = createPersistedStore<boolean>('vibe-player-compact'
 
 // Settings with localStorage persistence
 function createPersistedStore<T>(key: string, initial: T) {
-    const stored = browser ? localStorage.getItem(key) : null;
-    const value = stored ? JSON.parse(stored) : initial;
+    let stored: string | null = null;
+    if (browser) {
+        try {
+            stored = localStorage.getItem(key);
+        } catch {
+            // Safari private mode or quota errors
+        }
+    }
+    let value: T = initial;
+    if (stored) {
+        try {
+            value = JSON.parse(stored);
+        } catch {
+            value = initial;
+        }
+    }
     const store = writable<T>(value);
 
     if (browser) {
-        store.subscribe((v) => localStorage.setItem(key, JSON.stringify(v)));
+        store.subscribe((v) => {
+            try {
+                localStorage.setItem(key, JSON.stringify(v));
+            } catch {
+                // Safari private mode or quota errors
+            }
+        });
     }
 
     return store;
@@ -106,10 +126,19 @@ export const devSettings = createPersistedStore('vibe-dev-settings', {
 function getOrCreateClientId(): string {
     if (!browser) return 'ssr';
     const key = 'vibe-client-id';
-    let id = localStorage.getItem(key);
+    let id: string | null = null;
+    try {
+        id = localStorage.getItem(key);
+    } catch {
+        // Safari private mode or quota errors
+    }
     if (!id) {
         id = crypto.randomUUID();
-        localStorage.setItem(key, id);
+        try {
+            localStorage.setItem(key, id);
+        } catch {
+            // Safari private mode or quota errors
+        }
     }
     return id;
 }

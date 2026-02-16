@@ -8,7 +8,7 @@ import os
 import hashlib
 from time import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter, deque
 
@@ -56,11 +56,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS for frontend
+# CORS for frontend - configurable via environment
+# Note: allow_credentials=True requires specific origins, not "*"
+_cors_origins_env = os.getenv("CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else ["*"]
+_cors_allow_credentials = _cors_origins != ["*"]  # Only allow credentials with specific origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -72,6 +77,15 @@ def get_admin(credentials: HTTPBasicCredentials = Depends(security)):
     """Check basic auth credentials."""
     correct_username = secrets.compare_digest(credentials.username, "admin")
     password = os.getenv("ANALYTICS_PASSWORD", "admin")
+    
+    # Reject default password in non-local environments
+    env = os.getenv("ENVIRONMENT", "local").lower()
+    if password == "admin" and env not in ("local", "development", "dev"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ANALYTICS_PASSWORD must be set in production",
+        )
+    
     correct_password = secrets.compare_digest(credentials.password, password)
     
     if not (correct_username and correct_password):
@@ -128,7 +142,7 @@ class AnalyticsEvent(BaseModel):
     """Generic event for tracking user interactions."""
     event_type: str  # e.g., "add_favorite", "remove_favorite", "add_known", "remove_known", "play_track"
     client_id: str | None = None
-    payload: dict = {}  # Event-specific data (track info, artist name, etc.)
+    payload: dict = Field(default_factory=dict)  # Event-specific data (track info, artist name, etc.)
 
 
 def log_event_async(event_data: dict):
@@ -206,6 +220,9 @@ async def get_artists(q: str = "", limit: int = 1000) -> list[str]:
     if not music_data:
         raise HTTPException(status_code=503, detail="Data not loaded")
     
+    # Clamp limit to reasonable bounds
+    limit = max(1, min(limit, 5000))
+    
     artists = music_data.artists_list
     
     if q:
@@ -262,7 +279,7 @@ async def recommend(
     # Log search in background (with rate limiting)
     if should_log_search(request.client_id, request, valid_artists, valid_exclude):
         log_data = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "input_artists": valid_artists,
             "track_ids": request.track_ids, # Explicitly save input track IDs
             "exclude_artists": valid_exclude,
@@ -314,7 +331,7 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
 async def track_event(event: AnalyticsEvent, background_tasks: BackgroundTasks):
     """Track a user interaction event (favorites, known artists, plays)."""
     event_data = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "event_type": event.event_type,
         "client_id": event.client_id,
         **event.payload,
@@ -335,9 +352,11 @@ async def get_analytics_stats(username: str = Depends(get_admin)):
         with open(ANALYTICS_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    total += 1
                     data = json.loads(line)
-                    artists.update(data.get("input_artists", []))
+                    # Only count search entries (no event_type = search, with event_type = user action)
+                    if "event_type" not in data:
+                        total += 1
+                        artists.update(data.get("input_artists", []))
         
         return {
             "total_searches": total,

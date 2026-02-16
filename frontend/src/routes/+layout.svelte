@@ -6,7 +6,9 @@
 		themePreference,
 		recommendations,
 	} from "$lib/stores";
+	import { goto } from "$app/navigation";
 	import { onMount } from "svelte";
+	import { page } from "$app/state";
 
 	const DEV_MODE = import.meta.env.DEV;
 
@@ -116,6 +118,10 @@
 			onclick={(e) => {
 				e.preventDefault();
 				recommendations.set({});
+				// Navigate to home if not already there (handles 404 pages)
+				if (page.url.pathname !== "/") {
+					goto("/");
+				}
 			}}
 		>
 			<svg class="logo" viewBox="0 0 40 40" fill="none">

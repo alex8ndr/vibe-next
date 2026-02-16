@@ -269,7 +269,7 @@
                                     {#each getFilteredTracks(artist, globalSongSearch) as t (t.track_id)}
                                         {@const sel = (
                                             fineTune[artist] || []
-                                        ).includes(t.track_name)}
+                                        ).includes(t.track_id)}
                                         {@const atLimit =
                                             isAtSongLimit(artist)}
                                         <button
@@ -279,7 +279,7 @@
                                             onclick={() =>
                                                 toggleSong(
                                                     artist,
-                                                    t.track_name,
+                                                    t.track_id,
                                                 )}
                                         >
                                             {t.track_name.length > 26

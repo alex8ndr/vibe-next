@@ -24,6 +24,8 @@ from dotenv import load_dotenv
 import polars as pl
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Load environment variables from .env file (if it exists)
 env_path = Path(__file__).parent.parent / ".env"
@@ -199,6 +201,47 @@ _genre_cache: Dict[str, Optional[str]] = {}
 _lastfm_api_key: Optional[str] = None
 
 
+def create_retry_session(
+    retries: int = 3,
+    backoff_factor: float = 0.5,
+    status_forcelist: Tuple[int, ...] = (429, 500, 502, 503, 504),
+) -> requests.Session:
+    """Create a requests Session with retry/backoff for external API calls.
+    
+    Args:
+        retries: Number of retry attempts
+        backoff_factor: Backoff multiplier (0.5 means 0.5s, 1s, 2s delays)
+        status_forcelist: HTTP status codes to retry on
+        
+    Returns:
+        Configured Session instance
+    """
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=["GET", "POST"],
+        raise_on_status=True,
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+# Shared session for API clients
+_api_session: Optional[requests.Session] = None
+
+
+def get_api_session() -> requests.Session:
+    """Get or create the shared API session with retry logic."""
+    global _api_session
+    if _api_session is None:
+        _api_session = create_retry_session()
+    return _api_session
+
+
 def get_lastfm_api_key() -> Optional[str]:
     """Get Last.fm API key from environment."""
     global _lastfm_api_key
@@ -211,8 +254,9 @@ class ReccoBeatsClient:
     """Client for ReccoBeats API."""
     TIMEOUT = 20
 
-    def __init__(self):
+    def __init__(self, session: Optional[requests.Session] = None):
         self._album_tracks_cache: Dict[str, List[Dict]] = {}
+        self._session = session or get_api_session()
     
     def get_artist_from_spotify_id(self, spotify_artist_id: str) -> Optional[Tuple[str, str]]:
         """Look up ReccoBeats artist UUID from Spotify artist ID.
@@ -221,7 +265,7 @@ class ReccoBeatsClient:
             Tuple of (recco_uuid, artist_name) or None if not found
         """
         url = f"{RECCOBEATS_URL}/artist"
-        r = requests.get(url, params={"ids": spotify_artist_id}, timeout=self.TIMEOUT)
+        r = self._session.get(url, params={"ids": spotify_artist_id}, timeout=self.TIMEOUT)
         r.raise_for_status()
         content = r.json().get("content", [])
         if not content:
@@ -232,20 +276,20 @@ class ReccoBeatsClient:
         if not spotify_ids:
             return []
         url = f"{RECCOBEATS_URL}/track"
-        r = requests.get(url, params={"ids": ",".join(spotify_ids)}, timeout=self.TIMEOUT)
+        r = self._session.get(url, params={"ids": ",".join(spotify_ids)}, timeout=self.TIMEOUT)
         r.raise_for_status()
         return r.json().get("content", [])
 
     def get_artist(self, recco_uuid: str) -> Dict:
         url = f"{RECCOBEATS_URL}/artist/{recco_uuid}"
-        r = requests.get(url, timeout=self.TIMEOUT)
+        r = self._session.get(url, timeout=self.TIMEOUT)
         r.raise_for_status()
         return r.json()
 
     def search_artist(self, name: str, limit: int = 5) -> List[Dict]:
         """Search for artist by name. Returns list of {id, name, href}."""
         url = f"{RECCOBEATS_URL}/artist/search"
-        r = requests.get(url, params={"searchText": name, "size": limit}, timeout=self.TIMEOUT)
+        r = self._session.get(url, params={"searchText": name, "size": limit}, timeout=self.TIMEOUT)
         r.raise_for_status()
         return r.json().get("content", [])
 
@@ -255,7 +299,7 @@ class ReccoBeatsClient:
         page = 0
         while len(tracks) < fetch_limit:
             url = f"{RECCOBEATS_URL}/artist/{recco_uuid}/track"
-            r = requests.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
+            r = self._session.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
             r.raise_for_status()
             batch = r.json().get("content", [])
             if not batch:
@@ -274,7 +318,7 @@ class ReccoBeatsClient:
         for i in range(0, len(spotify_ids), 40):
             batch = spotify_ids[i:i+40]
             url = f"{RECCOBEATS_URL}/audio-features"
-            r = requests.get(url, params={"ids": ",".join(batch)}, timeout=self.TIMEOUT)
+            r = self._session.get(url, params={"ids": ",".join(batch)}, timeout=self.TIMEOUT)
             r.raise_for_status()
             for feat in r.json().get("content", []):
                 if feat and "href" in feat:
@@ -284,7 +328,7 @@ class ReccoBeatsClient:
 
     def get_album(self, spotify_id: str) -> Optional[Dict]:
         url = f"{RECCOBEATS_URL}/album"
-        r = requests.get(url, params={"ids": spotify_id}, timeout=self.TIMEOUT)
+        r = self._session.get(url, params={"ids": spotify_id}, timeout=self.TIMEOUT)
         r.raise_for_status()
         albums = r.json().get("content", [])
         return albums[0] if albums else None
@@ -298,7 +342,7 @@ class ReccoBeatsClient:
         page = 0
         while True:
             url = f"{RECCOBEATS_URL}/album/{recco_uuid}/track"
-            r = requests.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
+            r = self._session.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
             r.raise_for_status()
             data = r.json()
             batch = data.get("content", [])
@@ -318,7 +362,7 @@ class ReccoBeatsClient:
         page = 0
         while True:
             url = f"{RECCOBEATS_URL}/artist/{recco_uuid}/album"
-            r = requests.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
+            r = self._session.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
             r.raise_for_status()
             data = r.json()
             batch = data.get("content", [])
@@ -336,8 +380,9 @@ class LastFmClient:
     """Client for Last.fm API - related artist discovery and tags."""
     TIMEOUT = 15
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, session: Optional[requests.Session] = None):
         self.api_key = api_key or get_lastfm_api_key()
+        self._session = session or get_api_session()
     
     def get_artist_tags(
         self,
@@ -353,7 +398,7 @@ class LastFmClient:
             return []
         
         try:
-            r = requests.get(
+            r = self._session.get(
                 LASTFM_URL,
                 params={
                     "method": "artist.gettoptags",
@@ -391,7 +436,7 @@ class LastFmClient:
             return []
         
         try:
-            r = requests.get(
+            r = self._session.get(
                 LASTFM_URL,
                 params={
                     "method": "artist.getsimilar",
@@ -472,7 +517,7 @@ class LastFmClient:
         return results[:limit]
 
 
-def get_genre_from_audiodb(artist_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def get_genre_from_audiodb(artist_name: str, session: Optional[requests.Session] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Fetch artist genre from TheAudioDB and map to dataset genre.
     
     Uses scored matching that prefers:
@@ -482,9 +527,10 @@ def get_genre_from_audiodb(artist_name: str) -> Tuple[Optional[str], Optional[st
     Returns:
         Tuple of (mapped_genre, raw_genre, raw_style) for debugging/inspection.
     """
+    _session = session or get_api_session()
     try:
         url = f"{AUDIODB_URL}/search.php"
-        r = requests.get(url, params={"s": artist_name}, timeout=10)
+        r = _session.get(url, params={"s": artist_name}, timeout=10)
         r.raise_for_status()
         data = r.json()
         
@@ -683,16 +729,18 @@ def resolve_genre(
     return "pop"
 
 
-def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: bool = False) -> Optional[str]:
+def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: bool = False, session: Optional[requests.Session] = None) -> Optional[str]:
     """Search for artist on Deezer, convert track to Spotify via Songlink.
     
     Args:
         artist_name: Artist to search for
         verbose: Print extra details about search process
         quiet: Suppress all output (overrides verbose)
+        session: Optional requests session with retry logic
     """
+    _session = session or get_api_session()
     try:
-        r = requests.get(f"{DEEZER_URL}/search/artist", params={"q": artist_name, "limit": 1}, timeout=10)
+        r = _session.get(f"{DEEZER_URL}/search/artist", params={"q": artist_name, "limit": 1}, timeout=10)
         r.raise_for_status()
         artists = r.json().get("data", [])
         if not artists:
@@ -705,7 +753,7 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: boo
         if not quiet:
             print(f"    Found: {found_name}")
         
-        r = requests.get(f"{DEEZER_URL}/artist/{deezer_artist['id']}/top", params={"limit": 5}, timeout=10)
+        r = _session.get(f"{DEEZER_URL}/artist/{deezer_artist['id']}/top", params={"limit": 5}, timeout=10)
         r.raise_for_status()
         tracks = r.json().get("data", [])
         if not tracks:
@@ -722,7 +770,7 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: boo
             
             try:
                 deezer_url = f"https://deezer.com/track/{track_id}"
-                r = requests.get(SONGLINK_URL, params={"url": deezer_url}, timeout=15)
+                r = _session.get(SONGLINK_URL, params={"url": deezer_url}, timeout=15)
                 
                 if r.status_code == 200:
                     data = r.json()

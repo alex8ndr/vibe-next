@@ -26,7 +26,7 @@
     import "./page.css";
 
     let selected = $state<string[]>([]);
-    let fineTune = $state<Record<string, string[]>>({});
+    let fineTune = $state<Record<string, string[]>>({}); // stores track_ids
     let artistTracks = $state<Record<string, Track[]>>({});
     let error = $state<string | null>(null);
     let loadingProgress = $state(0);
@@ -85,15 +85,8 @@
             );
         }, 150);
 
-        const trackIds: string[] = [];
-        for (const a of selected) {
-            (fineTune[a] || []).forEach((name) => {
-                const t = (artistTracks[a] || []).find(
-                    (x) => x.track_name === name,
-                );
-                if (t) trackIds.push(t.track_id);
-            });
-        }
+        // fineTune now stores track_ids directly, no lookup needed
+        const trackIds = selected.flatMap((a) => fineTune[a] || []);
 
         try {
             // Reset regeneration history on new search
@@ -142,13 +135,8 @@
             loadingProgress = Math.min(loadingProgress + Math.random() * 15, 90);
         }, 150);
 
-        const trackIds: string[] = [];
-        for (const a of selected) {
-            (fineTune[a] || []).forEach((name) => {
-                const t = (artistTracks[a] || []).find((x) => x.track_name === name);
-                if (t) trackIds.push(t.track_id);
-            });
-        }
+        // fineTune now stores track_ids directly, no lookup needed
+        const trackIds = selected.flatMap((a) => fineTune[a] || []);
 
         try {
             const res = await fetchRecommendations({
