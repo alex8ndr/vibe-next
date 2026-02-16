@@ -33,10 +33,10 @@ load_dotenv(dotenv_path=env_path)
 # =============================================================================
 # DEFAULT CONSTANTS (for consistency across discovery scripts)
 # =============================================================================
-DEFAULT_TRACKS_PER_ARTIST = 15
-DEFAULT_SEARCH_LIMIT = 20
+DEFAULT_TRACKS_PER_ARTIST = 25
+DEFAULT_SEARCH_LIMIT = 50
 DEFAULT_DIVERSITY_WEIGHT = 0.3
-DEFAULT_MAX_ADD = 10          # Max artists to add in one run
+DEFAULT_MAX_ADD = 15          # Max artists to add in one run
 DEFAULT_MIN_TRACKS = 3        # Min tracks for an artist to be added
 DEFAULT_MIN_MATCH = 0.4       # Last.fm minimum match score
 DEFAULT_BACKFILL_LIMIT = 50   # Artists to check for backfill
@@ -211,6 +211,23 @@ class ReccoBeatsClient:
     """Client for ReccoBeats API."""
     TIMEOUT = 20
 
+    def __init__(self):
+        self._album_tracks_cache: Dict[str, List[Dict]] = {}
+    
+    def get_artist_from_spotify_id(self, spotify_artist_id: str) -> Optional[Tuple[str, str]]:
+        """Look up ReccoBeats artist UUID from Spotify artist ID.
+        
+        Returns:
+            Tuple of (recco_uuid, artist_name) or None if not found
+        """
+        url = f"{RECCOBEATS_URL}/artist"
+        r = requests.get(url, params={"ids": spotify_artist_id}, timeout=self.TIMEOUT)
+        r.raise_for_status()
+        content = r.json().get("content", [])
+        if not content:
+            return None
+        return (content[0]["id"], content[0].get("name", "Unknown"))
+
     def get_tracks(self, spotify_ids: List[str]) -> List[Dict]:
         if not spotify_ids:
             return []
@@ -273,6 +290,10 @@ class ReccoBeatsClient:
         return albums[0] if albums else None
 
     def get_album_tracks(self, recco_uuid: str) -> List[Dict]:
+        """Get all tracks for an album (with per-instance caching)."""
+        if recco_uuid in self._album_tracks_cache:
+            return self._album_tracks_cache[recco_uuid]
+        
         tracks = []
         page = 0
         while True:
@@ -287,7 +308,28 @@ class ReccoBeatsClient:
             if page >= data.get("totalPages", 1) - 1:
                 break
             page += 1
+        
+        self._album_tracks_cache[recco_uuid] = tracks
         return tracks
+
+    def get_artist_albums(self, recco_uuid: str) -> List[Dict]:
+        """Get all albums for an artist (paginated)."""
+        albums = []
+        page = 0
+        while True:
+            url = f"{RECCOBEATS_URL}/artist/{recco_uuid}/album"
+            r = requests.get(url, params={"page": page, "size": 50}, timeout=self.TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            batch = data.get("content", [])
+            if not batch:
+                break
+            albums.extend(batch)
+            if page >= data.get("totalPages", 1) - 1:
+                break
+            page += 1
+            time.sleep(0.2)
+        return albums
 
 
 class LastFmClient:
@@ -781,7 +823,7 @@ def weighted_track_sample(
     tracks: List[Dict],
     features: Dict[str, Dict],
     target_count: int,
-    diversity_weight: float = 0.4,
+    diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
 ) -> List[Dict]:
     """Sample tracks using weighted scoring for diversity.
     
@@ -1034,40 +1076,37 @@ def search_artist(
     client = client or ReccoBeatsClient()
     target_norm = normalize_artist_name(name)
     
-    # 1) Try ReccoBeats direct search first
+    # 1) Try ReccoBeats direct search first - ONLY use exact match
     try:
         candidates = client.search_artist(name, limit=limit)
         if candidates:
-            # Prefer exact normalized match, else first result
+            # Only use ReccoBeats if we have an exact normalized match
             best = None
             for c in candidates:
                 if normalize_artist_name(c.get("name", "")) == target_norm:
                     best = c
                     break
-            best = best or candidates[0]
             
-            recco_uuid = best.get("id")
-            confirmed = best.get("name") or name
-            
-            if recco_uuid:
-                if verbose and not quiet:
-                    if normalize_artist_name(confirmed) == target_norm:
+            if best:
+                recco_uuid = best.get("id")
+                confirmed = best.get("name") or name
+                
+                if recco_uuid:
+                    if verbose and not quiet:
                         print(f"    Found: {confirmed} (ReccoBeats)")
-                    else:
-                        print(f"    Found (approximate): {confirmed} (ReccoBeats)")
-                return ArtistSearchResult(name=confirmed, recco_uuid=recco_uuid, source="reccobeats")
+                    return ArtistSearchResult(name=confirmed, recco_uuid=recco_uuid, source="reccobeats")
     except Exception as e:
         if verbose and not quiet:
             print(f"    ReccoBeats search failed: {e}")
     
     # 2) Fallback: Deezer → Songlink → Spotify track → ReccoBeats artist
-    spotify_id = search_artist_via_deezer(name, verbose=verbose, quiet=quiet)
-    if not spotify_id:
+    spotify_track_id = search_artist_via_deezer(name, verbose=verbose, quiet=quiet)
+    if not spotify_track_id:
         if not quiet:
             print(f"    Not found on ReccoBeats or Deezer")
         return None
     
-    tracks = client.get_tracks([spotify_id])
+    tracks = client.get_tracks([spotify_track_id])
     if not tracks:
         return None
     
@@ -1075,12 +1114,21 @@ def search_artist(
     if not artists:
         return None
     
+    # Extract Spotify artist ID from href, then look up ReccoBeats UUID
     href = artists[0].get("href", "")
-    recco_uuid = href.split("/")[-1] if href else None
-    confirmed = artists[0].get("name") or name
+    spotify_artist_id = href.split("/")[-1] if href else None
     
-    if not recco_uuid:
+    if not spotify_artist_id:
         return None
+    
+    # Convert Spotify artist ID to ReccoBeats UUID via /artist?ids= endpoint
+    result = client.get_artist_from_spotify_id(spotify_artist_id)
+    if not result:
+        if not quiet:
+            print(f"    Could not resolve ReccoBeats UUID for Spotify artist")
+        return None
+    
+    recco_uuid, confirmed = result
     
     if verbose and not quiet:
         print(f"    Found: {confirmed} (Deezer fallback)")
@@ -1147,11 +1195,16 @@ def add_discovered_artist(
         result = ArtistSearchResult(name=rb_result[1], recco_uuid=rb_result[0], source="reccobeats") if rb_result else None
     
     if not result:
+        if verbose:
+            print(f"    Search returned no result")
         return None
-    
+
     artist_uuid = result.recco_uuid
     confirmed_name = result.name
-    
+
+    if verbose:
+        print(f"    Search found: {confirmed_name} (uuid: {artist_uuid[:8]}...)")
+
     genre = resolve_genre(
         confirmed_name,
         skip_unknown=skip_unknown,
@@ -1165,16 +1218,22 @@ def add_discovered_artist(
     
     fetch_limit = tracks_per_artist * 3
     artist_tracks = client.get_artist_tracks(artist_uuid, fetch_limit)
+    if verbose:
+        print(f"    ReccoBeats has {len(artist_tracks)} tracks for this artist")
     if not artist_tracks:
         if verbose:
             print(f"    No tracks found")
         return None
-    
+
     new_tracks = [
         t for t in artist_tracks
         if t.get("href", "").split("/")[-1] not in existing_track_ids
     ]
-    
+    if verbose:
+        existing_count = len(artist_tracks) - len(new_tracks)
+        if existing_count > 0:
+            print(f"    Filtered {existing_count} tracks already in dataset, {len(new_tracks)} new tracks remain")
+
     if not new_tracks:
         if verbose:
             print(f"    All tracks already in dataset")
@@ -1194,3 +1253,299 @@ def add_discovered_artist(
     df_new = deduplicate_tracks_polars(df_new)
     
     return df_new
+
+
+def get_artist_unique_count(
+    df_all: pl.DataFrame,
+    artist_name: str,
+) -> int:
+    """Get the number of unique tracks for an artist after deduplication.
+    
+    Uses normalize_artist_name() for case/accent-insensitive matching.
+    """
+    target_norm = normalize_artist_name(artist_name)
+    
+    df_artist = df_all.filter(
+        pl.col("artist_name").map_elements(
+            normalize_artist_name, return_dtype=pl.String
+        ) == target_norm
+    )
+    
+    if df_artist.is_empty():
+        return 0
+    
+    df_deduped = deduplicate_tracks_polars(df_artist)
+    return len(df_deduped)
+
+
+def backfill_artist_quota(
+    *,
+    client: "ReccoBeatsClient",
+    artist_name: str,
+    recco_uuid: str,
+    genre: str,
+    df_main: pl.DataFrame,
+    df_added: pl.DataFrame,
+    existing_track_ids: Set[str],
+    target_track_count: int = DEFAULT_TRACKS_PER_ARTIST,
+    diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
+    verbose: bool = False,
+) -> Tuple[pl.DataFrame, int]:
+    """Backfill an artist to quota using the CHEAP top tracks endpoint.
+    
+    This uses get_artist_tracks() (1-2 API calls) instead of scanning every album.
+    Use this for --backfill-partial in check_trending.py.
+    
+    For full album scanning (e.g., check_new_albums.py --update), use add_tracks_for_artist().
+    
+    Args:
+        client: ReccoBeatsClient instance (reused for caching)
+        artist_name: Canonical artist name
+        recco_uuid: ReccoBeats artist UUID  
+        genre: Genre to assign to tracks
+        df_main: Main dataset DataFrame
+        df_added: Added artists DataFrame
+        existing_track_ids: Set of track IDs already in dataset
+        target_track_count: Target number of unique tracks for artist
+        diversity_weight: Weight for diversity vs popularity in sampling
+        verbose: Print progress
+        
+    Returns:
+        Tuple of (updated df_added, number of tracks added)
+    """
+    df_all = pl.concat([df_main, df_added])
+    
+    existing_count = get_artist_unique_count(df_all, artist_name)
+    needed = max(0, target_track_count - existing_count)
+    
+    if verbose:
+        print(f"    Existing: {existing_count}, target: {target_track_count}, needed: {needed}")
+    
+    if needed == 0:
+        if verbose:
+            print(f"    Already at quota")
+        return df_added, 0
+    
+    # Use cheap top tracks endpoint (1-2 paginated calls)
+    fetch_limit = needed * 3  # Fetch extra to account for dedup/filtering
+    artist_tracks = client.get_artist_tracks(recco_uuid, fetch_limit)
+    
+    if not artist_tracks:
+        if verbose:
+            print(f"    No tracks found via top tracks endpoint")
+        return df_added, 0
+    
+    # Filter out tracks already in dataset
+    new_tracks = [
+        t for t in artist_tracks
+        if t.get("href", "").split("/")[-1] not in existing_track_ids
+    ]
+    
+    if verbose:
+        existing_filtered = len(artist_tracks) - len(new_tracks)
+        if existing_filtered > 0:
+            print(f"    Filtered {existing_filtered} tracks already in dataset, {len(new_tracks)} remain")
+    
+    if not new_tracks:
+        if verbose:
+            print(f"    All top tracks already in dataset")
+        return df_added, 0
+    
+    # Get audio features for sampling
+    spotify_ids = [t.get("href", "").split("/")[-1] for t in new_tracks if t.get("href")]
+    features = client.get_audio_features(spotify_ids)
+    
+    # Sample using weighted_track_sample (popularity + diversity)
+    sampled = weighted_track_sample(
+        new_tracks,
+        features,
+        target_count=needed,
+        diversity_weight=diversity_weight,
+    )
+    
+    # Build rows and deduplicate
+    df_new = build_rows(artist_name, sampled, features, genre, verbose)
+    df_new = deduplicate_tracks_polars(df_new)
+    
+    # Remove tracks already in main dataset
+    if len(df_main) > 0:
+        main_track_ids = set(df_main["track_id"].drop_nulls().unique().to_list())
+        df_new = df_new.filter(~pl.col("track_id").is_in(list(main_track_ids)))
+    
+    # Limit to needed count
+    if len(df_new) > needed:
+        df_new = df_new.head(needed)
+    
+    added_count = len(df_new)
+    
+    if added_count > 0:
+        df_added = normalize_for_merge(df_added)
+        df_new = normalize_for_merge(df_new)
+        df_added = pl.concat([df_added, df_new])
+        
+        # Update existing_track_ids
+        for tid in df_new["track_id"].drop_nulls().to_list():
+            existing_track_ids.add(tid)
+    
+    return df_added, added_count
+
+
+def add_tracks_for_artist(
+    *,
+    client: "ReccoBeatsClient",
+    artist_name: str,
+    recco_uuid: str,
+    genre: str,
+    df_main: pl.DataFrame,
+    df_added: pl.DataFrame,
+    existing_track_ids: Set[str],
+    target_track_count: int = DEFAULT_TRACKS_PER_ARTIST,
+    include_singles: bool = False,
+    keep_all: bool = False,
+    skip_variants: bool = True,
+    diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
+    verbose: bool = False,
+) -> Tuple[pl.DataFrame, int]:
+    """Add tracks for an artist up to a target quota (after deduplication).
+    
+    This is the unified function for backfilling/updating artist tracks.
+    It ensures the artist ends up with `target_track_count` unique tracks
+    by adding only as many new tracks as needed.
+    
+    Args:
+        client: ReccoBeatsClient instance (reused for caching)
+        artist_name: Canonical artist name
+        recco_uuid: ReccoBeats artist UUID  
+        genre: Genre to assign to tracks
+        df_main: Main dataset DataFrame
+        df_added: Added artists DataFrame
+        existing_track_ids: Set of track IDs already in dataset
+        target_track_count: Target number of unique tracks for artist
+        include_singles: Include singles in candidate albums
+        keep_all: If True, add ALL tracks from albums (ignore sampling)
+        skip_variants: Skip remix/acoustic/live album variants
+        diversity_weight: Weight for diversity vs popularity in sampling
+        verbose: Print progress
+        
+    Returns:
+        Tuple of (updated df_added, number of tracks added)
+    """
+    df_all = pl.concat([df_main, df_added])
+    
+    # Calculate how many tracks needed
+    existing_count = get_artist_unique_count(df_all, artist_name)
+    needed = max(0, target_track_count - existing_count)
+    
+    if verbose:
+        print(f"    Existing: {existing_count}, target: {target_track_count}, needed: {needed}")
+    
+    if needed == 0 and not keep_all:
+        if verbose:
+            print(f"    Already at quota")
+        return df_added, 0
+    
+    # Get all albums for artist
+    albums = client.get_artist_albums(recco_uuid)
+    if not albums:
+        return df_added, 0
+    
+    # Filter albums
+    candidate_albums = []
+    for album in albums:
+        album_type = album.get("type", "").lower()
+        album_name = album.get("name", "")
+        
+        # Skip singles unless requested
+        if not include_singles and album_type == "single":
+            continue
+        
+        # Skip variant albums (remix/acoustic/live) if requested
+        if skip_variants:
+            import re
+            skip_patterns = [
+                r'\bremix(es)?\b', r'\bacoustic\s*(version|collection)?\b',
+                r'\blive\s*(at|from|in|version)?\b', r'\bremaster(ed)?\b',
+                r'\bkaraoke\b', r'\binstrumental\s*version\b',
+                r'\btrack\s*by\s*track\b',
+            ]
+            skip_re = re.compile('|'.join(skip_patterns), re.IGNORECASE)
+            if skip_re.search(album_name):
+                continue
+        
+        candidate_albums.append(album)
+    
+    if not candidate_albums:
+        if verbose:
+            print(f"    No candidate albums after filtering")
+        return df_added, 0
+    
+    # Collect tracks from candidate albums
+    all_tracks = []
+    for album in candidate_albums:
+        album_uuid = album.get("id")
+        if not album_uuid:
+            continue
+        
+        tracks = client.get_album_tracks(album_uuid)
+        for t in tracks:
+            href = t.get("href", "")
+            tid = href.split("/")[-1] if href else None
+            if tid and tid not in existing_track_ids:
+                all_tracks.append(t)
+    
+    if not all_tracks:
+        if verbose:
+            print(f"    No new tracks found in albums")
+        return df_added, 0
+    
+    if verbose:
+        print(f"    Found {len(all_tracks)} candidate tracks from {len(candidate_albums)} albums")
+    
+    # Get audio features for sampling
+    spotify_ids = list({t.get("href", "").split("/")[-1] for t in all_tracks if t.get("href")})
+    
+    # Cap features fetch to avoid excessive API calls
+    max_features = min(len(spotify_ids), max(needed * 8, 100))
+    features = client.get_audio_features(spotify_ids[:max_features])
+    
+    # Sample or keep all
+    if keep_all:
+        sampled = all_tracks
+    else:
+        # Sample enough to reach quota after deduplication
+        # Fetch extra to account for dedup losses
+        sample_target = min(len(all_tracks), needed * 2)
+        sampled = weighted_track_sample(
+            all_tracks,
+            features,
+            target_count=sample_target,
+            diversity_weight=diversity_weight,
+        )
+    
+    # Build rows
+    df_new = build_rows(artist_name, sampled, features, genre, verbose)
+    
+    # Deduplicate within new tracks
+    df_new = deduplicate_tracks_polars(df_new)
+    
+    # Remove tracks already in main dataset
+    if len(df_main) > 0:
+        main_track_ids = set(df_main["track_id"].drop_nulls().unique().to_list())
+        df_new = df_new.filter(~pl.col("track_id").is_in(list(main_track_ids)))
+    
+    # Limit to needed count (quota)
+    if not keep_all and len(df_new) > needed:
+        df_new = df_new.head(needed)
+    
+    added_count = len(df_new)
+    
+    if added_count > 0:
+        df_added = normalize_for_merge(df_added)
+        df_new = normalize_for_merge(df_new)
+        df_added = pl.concat([df_added, df_new])
+        
+        # Update existing_track_ids
+        for tid in df_new["track_id"].drop_nulls().to_list():
+            existing_track_ids.add(tid)
+    
+    return df_added, added_count

@@ -18,6 +18,8 @@
     let artistName = $state("");
     let albumName = $state("");
     let tracks = $state<string[]>([""]);
+    let albums = $state<string[]>([""]);
+    let artistAvailable = $state<string | null>(null);
 
     // Artists list for artist suggestions
     let artists = $state<string[]>([""]);
@@ -25,7 +27,8 @@
     onMount(() => {
         if (!document.querySelector('script[src*="recaptcha"]')) {
             const script = document.createElement("script");
-            script.src = "https://www.google.com/recaptcha/api.js?render=explicit";
+            script.src =
+                "https://www.google.com/recaptcha/api.js?render=explicit";
             script.async = true;
             script.defer = true;
             document.head.appendChild(script);
@@ -35,12 +38,14 @@
     function getTheme(): "dark" | "light" {
         const dataTheme = document.documentElement.getAttribute("data-theme");
         if (dataTheme) return dataTheme as "dark" | "light";
-        return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        return window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
     }
 
     function renderCaptcha() {
         if (captchaWidgetId !== null || !captchaContainer) return;
-        
+
         const grecaptcha = (window as any).grecaptcha;
         if (!grecaptcha?.render) {
             setTimeout(renderCaptcha, 100);
@@ -50,8 +55,12 @@
         captchaWidgetId = grecaptcha.render(captchaContainer, {
             sitekey: RECAPTCHA_SITE_KEY,
             theme: getTheme(),
-            callback: (token: string) => { captchaToken = token; },
-            "expired-callback": () => { captchaToken = null; }
+            callback: (token: string) => {
+                captchaToken = token;
+            },
+            "expired-callback": () => {
+                captchaToken = null;
+            },
         });
     }
 
@@ -67,7 +76,9 @@
         artistName = "";
         albumName = "";
         tracks = [""];
+        albums = [""];
         artists = [""];
+        artistAvailable = null;
         message = "";
     });
 
@@ -91,31 +102,61 @@
         }
     }
 
+    function addAlbum() {
+        albums = [...albums, ""];
+    }
+
+    function removeAlbum(idx: number) {
+        if (albums.length > 1) {
+            albums = albums.filter((_, i) => i !== idx);
+        }
+    }
+
     function buildMessage(): string {
         if (feedbackType === "artist") {
-            const artistList = artists.filter(a => a.trim()).join("\n- ");
+            const artistList = artists.filter((a) => a.trim()).join("\n- ");
             return `Artist Suggestion(s):\n- ${artistList}${message ? `\n\nNotes: ${message}` : ""}`;
         }
         if (feedbackType === "album") {
-            const trackList = tracks.filter(t => t.trim()).map((t, i) => `${i + 1}. ${t}`).join("\n");
-            return `Album Suggestion:\nArtist: ${artistName}\nAlbum: ${albumName}${trackList ? `\n\nTracks:\n${trackList}` : ""}${message ? `\n\nNotes: ${message}` : ""}`;
+            const albumList = albums
+                .filter((a) => a.trim())
+                .map((a, i) => `${i + 1}. ${a}`)
+                .join("\n");
+            const availability = artistAvailable
+                ? `Artist in Vibe: ${artistAvailable}`
+                : "";
+            return `Album Suggestion(s):\nArtist: ${artistName}${availability ? `\n${availability}` : ""}${albumList ? `\n\nAlbums:\n${albumList}` : ""}${message ? `\n\nNotes: ${message}` : ""}`;
         }
         if (feedbackType === "track") {
-            const trackList = tracks.filter(t => t.trim()).map((t, i) => `${i + 1}. ${t}`).join("\n");
-            return `Track Suggestion:\nArtist: ${artistName}\n\nTracks:\n${trackList}${message ? `\n\nNotes: ${message}` : ""}`;
+            const trackList = tracks
+                .filter((t) => t.trim())
+                .map((t, i) => `${i + 1}. ${t}`)
+                .join("\n");
+            const availability = artistAvailable
+                ? `Artist in Vibe: ${artistAvailable}`
+                : "";
+            return `Track Suggestion(s):\nArtist: ${artistName}${availability ? `\n${availability}` : ""}${trackList ? `\n\nTracks:\n${trackList}` : ""}${message ? `\n\nNotes: ${message}` : ""}`;
         }
         return message;
     }
 
     function isValid(): boolean {
         if (feedbackType === "artist") {
-            return artists.some(a => a.trim().length > 0);
+            return artists.some((a) => a.trim().length > 0);
         }
         if (feedbackType === "album") {
-            return artistName.trim().length > 0 && albumName.trim().length > 0;
+            return (
+                artistAvailable !== null &&
+                artistName.trim().length > 0 &&
+                albums.some((a) => a.trim().length > 0)
+            );
         }
         if (feedbackType === "track") {
-            return artistName.trim().length > 0 && tracks.some(t => t.trim().length > 0);
+            return (
+                artistAvailable !== null &&
+                artistName.trim().length > 0 &&
+                tracks.some((t) => t.trim().length > 0)
+            );
         }
         return message.trim().length > 0;
     }
@@ -140,8 +181,8 @@
                     subject: `Vibe Feedback: ${feedbackType}`,
                     message: buildMessage(),
                     replyTo: email || "noreply@vibe.app",
-                    "g-recaptcha-response": captchaToken
-                })
+                    "g-recaptcha-response": captchaToken,
+                }),
             });
 
             if (res.ok) {
@@ -173,7 +214,11 @@
 </script>
 
 <!-- FEEDBACK FORM - Comment out  to disable -->
-<button class="feedback-toggle" onclick={() => (isOpen = !isOpen)} title="Send Feedback">
+<button
+    class="feedback-toggle"
+    onclick={() => (isOpen = !isOpen)}
+    title="Send Feedback"
+>
     💬
 </button>
 
@@ -193,7 +238,7 @@
                     <option value="feedback">General Feedback</option>
                     <option value="bug">Bug Report</option>
                     <option value="artist">Suggest Artist(s)</option>
-                    <option value="album">Suggest Album</option>
+                    <option value="album">Suggest Album(s)</option>
                     <option value="track">Suggest Track(s)</option>
                 </select>
 
@@ -208,41 +253,98 @@
                                 required={idx === 0 ? true : undefined}
                             />
                             {#if artists.length > 1}
-                                <button type="button" class="remove-btn" onclick={() => removeArtist(idx)}>✕</button>
+                                <button
+                                    type="button"
+                                    class="remove-btn"
+                                    onclick={() => removeArtist(idx)}>✕</button
+                                >
                             {/if}
                         </div>
                     {/each}
-                    <button type="button" class="add-btn" onclick={addArtist}>+ Add another artist</button>
-
+                    <button type="button" class="add-btn" onclick={addArtist}
+                        >+ Add another artist</button
+                    >
                 {:else if feedbackType === "album"}
+                    <p class="field-hint">
+                        Is this artist already available in Vibe?
+                    </p>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input
+                                type="radio"
+                                name="artistAvailable"
+                                value="yes"
+                                bind:group={artistAvailable}
+                                required
+                            />
+                            <span>Yes</span>
+                        </label>
+                        <label class="radio-label">
+                            <input
+                                type="radio"
+                                name="artistAvailable"
+                                value="no"
+                                bind:group={artistAvailable}
+                                required
+                            />
+                            <span>No</span>
+                        </label>
+                    </div>
+
                     <input
                         type="text"
                         bind:value={artistName}
                         placeholder="Artist name *"
                         required
                     />
-                    <input
-                        type="text"
-                        bind:value={albumName}
-                        placeholder="Album name *"
-                        required
-                    />
-                    <p class="field-hint">Tracks (optional):</p>
-                    {#each tracks as track, idx}
+                    <p class="field-hint">Album(s):</p>
+                    {#each albums as album, idx}
                         <div class="multi-input">
                             <input
                                 type="text"
-                                bind:value={tracks[idx]}
-                                placeholder="Track {idx + 1}"
+                                bind:value={albums[idx]}
+                                placeholder="Album {idx + 1}"
+                                required={idx === 0 ? true : undefined}
                             />
-                            {#if tracks.length > 1}
-                                <button type="button" class="remove-btn" onclick={() => removeTrack(idx)}>✕</button>
+                            {#if albums.length > 1}
+                                <button
+                                    type="button"
+                                    class="remove-btn"
+                                    onclick={() => removeAlbum(idx)}>✕</button
+                                >
                             {/if}
                         </div>
                     {/each}
-                    <button type="button" class="add-btn" onclick={addTrack}>+ Add track</button>
-
+                    <button type="button" class="add-btn" onclick={addAlbum}
+                        >+ Add another album</button
+                    >
                 {:else if feedbackType === "track"}
+                    <p class="field-hint">
+                        Is this artist already available in Vibe?
+                    </p>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input
+                                type="radio"
+                                name="artistAvailable"
+                                value="yes"
+                                bind:group={artistAvailable}
+                                required
+                            />
+                            <span>Yes</span>
+                        </label>
+                        <label class="radio-label">
+                            <input
+                                type="radio"
+                                name="artistAvailable"
+                                value="no"
+                                bind:group={artistAvailable}
+                                required
+                            />
+                            <span>No</span>
+                        </label>
+                    </div>
+
                     <input
                         type="text"
                         bind:value={artistName}
@@ -259,11 +361,17 @@
                                 required={idx === 0 ? true : undefined}
                             />
                             {#if tracks.length > 1}
-                                <button type="button" class="remove-btn" onclick={() => removeTrack(idx)}>✕</button>
+                                <button
+                                    type="button"
+                                    class="remove-btn"
+                                    onclick={() => removeTrack(idx)}>✕</button
+                                >
                             {/if}
                         </div>
                     {/each}
-                    <button type="button" class="add-btn" onclick={addTrack}>+ Add track</button>
+                    <button type="button" class="add-btn" onclick={addTrack}
+                        >+ Add track</button
+                    >
                 {/if}
 
                 <textarea
@@ -273,8 +381,11 @@
                         : feedbackType === "feedback"
                           ? "Your feedback..."
                           : "Additional notes (optional)..."}
-                    rows={feedbackType === "feedback" || feedbackType === "bug" ? 4 : 2}
-                    required={feedbackType === "feedback" || feedbackType === "bug"}
+                    rows={feedbackType === "feedback" || feedbackType === "bug"
+                        ? 4
+                        : 2}
+                    required={feedbackType === "feedback" ||
+                        feedbackType === "bug"}
                 ></textarea>
 
                 <input
@@ -377,7 +488,9 @@
         font-family: inherit;
         font-size: 0.85rem;
         outline: none;
-        transition: border-color 0.15s, box-shadow 0.15s;
+        transition:
+            border-color 0.15s,
+            box-shadow 0.15s;
         box-sizing: border-box;
     }
 
@@ -456,12 +569,34 @@
         color: var(--text-2);
         font-size: 0.8rem;
         cursor: pointer;
-        transition: border-color 0.15s, color 0.15s;
+        transition:
+            border-color 0.15s,
+            color 0.15s;
     }
 
     .add-btn:hover {
         border-color: var(--gold);
         color: var(--gold);
+    }
+
+    .radio-group {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .radio-label {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.85rem;
+        color: var(--text);
+        cursor: pointer;
+    }
+
+    .radio-label input[type="radio"] {
+        margin: 0;
+        cursor: pointer;
     }
 
     .feedback-panel button[type="submit"] {

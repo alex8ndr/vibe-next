@@ -287,7 +287,7 @@ async def recommend(
     return RecommendResponse(recommendations=recs, meta=meta)
 
 
-@app.get("/artists/{artist_name}/tracks")
+@app.get("/artists/{artist_name:path}/tracks")
 async def get_artist_tracks(artist_name: str) -> list[Track]:
     """Get all tracks for a specific artist (for fine-tuning)."""
     if not music_data:

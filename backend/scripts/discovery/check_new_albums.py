@@ -66,39 +66,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from track_dedup import deduplicate_tracks_polars
 from utils import (
     ReccoBeatsClient,
-    get_genre_from_audiodb,
     search_artist,
     extract_spotify_id,
-    build_rows,
     load_existing,
     save_parquet,
+    add_tracks_for_artist,
+    resolve_genre,
+    weighted_track_sample,
+    build_rows,
     deduplicate_with_report,
-    DEEZER_URL,
-    SONGLINK_URL,
+    RECCOBEATS_URL,
     OUTPUT_PARQUET,
+    DEFAULT_TRACKS_PER_ARTIST,
+    DEFAULT_DIVERSITY_WEIGHT,
 )
-
-BASE_URL = "https://api.reccobeats.com/v1"
-
-
-def get_artist_albums(client: ReccoBeatsClient, recco_uuid: str) -> List[Dict]:
-    """Get all albums for an artist from ReccoBeats (paginated)."""
-    albums = []
-    page = 0
-    while True:
-        url = f"{BASE_URL}/artist/{recco_uuid}/album"
-        r = requests.get(url, params={"page": page, "size": 50}, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        batch = data.get("content", [])
-        if not batch:
-            break
-        albums.extend(batch)
-        if page >= data.get("totalPages", 1) - 1:
-            break
-        page += 1
-        time.sleep(0.2)
-    return albums
 
 
 def get_recco_artist_from_spotify_track_id(client: ReccoBeatsClient, spotify_track_id: str) -> Optional[Tuple[str, str]]:
@@ -119,7 +100,7 @@ def get_recco_artist_from_spotify_track_id(client: ReccoBeatsClient, spotify_tra
         return None
     
     # Look up the artist by Spotify ID to get ReccoBeats UUID
-    url = f"{BASE_URL}/artist"
+    url = f"{RECCOBEATS_URL}/artist"
     r = requests.get(url, params={"ids": spotify_artist_id}, timeout=20)
     r.raise_for_status()
     artist_data = r.json().get("content", [])
@@ -150,7 +131,7 @@ def search_artist_by_url(url_input: str, verbose: bool = False) -> Optional[Tupl
     
     if "artist" in url_input:
         # Direct artist lookup by Spotify ID
-        api_url = f"{BASE_URL}/artist"
+        api_url = f"{RECCOBEATS_URL}/artist"
         r = requests.get(api_url, params={"ids": spotify_id}, timeout=20)
         r.raise_for_status()
         artists = r.json().get("content", [])
@@ -168,7 +149,7 @@ def search_artist_by_url(url_input: str, verbose: bool = False) -> Optional[Tupl
                 artist_href = artists[0].get("href", "")
                 spotify_artist_id = artist_href.split("/")[-1] if artist_href else None
                 if spotify_artist_id:
-                    api_url = f"{BASE_URL}/artist"
+                    api_url = f"{RECCOBEATS_URL}/artist"
                     r = requests.get(api_url, params={"ids": spotify_artist_id}, timeout=20)
                     r.raise_for_status()
                     artist_data = r.json().get("content", [])
@@ -235,16 +216,18 @@ def check_artist_albums(
     show_all: bool = False,
     verbose: bool = False,
     skip_variants: bool = True,
+    include_singles: bool = False,
 ) -> Tuple[List[Dict], List[Dict]]:
     """Check which albums are missing from the dataset.
     
     Args:
         skip_variants: If True, skip remix singles, acoustic versions, track-by-track, etc.
+        include_singles: If True, include singles in the scan. Default False (albums only).
     
     Returns: (missing_albums, all_albums)
     """
     client = ReccoBeatsClient()
-    albums = get_artist_albums(client, recco_uuid)
+    albums = client.get_artist_albums(recco_uuid)
     
     # First, deduplicate by normalized name - prefer shortest (base) album
     # Group albums by their normalized name
@@ -288,6 +271,13 @@ def check_artist_albums(
         if not album_uuid:
             continue
         
+        # Skip singles unless --include-singles is passed
+        if album_type == "single" and not include_singles:
+            if verbose:
+                print(f"    Skipping (single): {album_name}")
+            skipped_count += 1
+            continue
+        
         # Skip variant albums (remixes, acoustic, track-by-track, etc.)
         should_skip, skip_reason = _should_skip_album(album_name, album_type, skip_variants)
         if should_skip:
@@ -322,8 +312,13 @@ def check_artist_albums(
         
         all_album_info.append(album_info)
         
-        if missing_count > 0:
+        # Only consider album "missing" if less than 20% of tracks are in dataset
+        # This avoids re-adding albums we mostly have already
+        coverage_ratio = existing_count / len(track_ids) if track_ids else 0
+        if missing_count > 0 and coverage_ratio < 0.2:
             missing_albums.append(album_info)
+        elif verbose and missing_count > 0:
+            print(f"    Skipping (already {coverage_ratio:.0%} covered): {album_name}")
         
         time.sleep(0.1)
     
@@ -342,10 +337,24 @@ def add_missing_albums(
     df_added: pl.DataFrame,
     df_main: pl.DataFrame,
     verbose: bool = False,
+    keep_all: bool = False,
+    tracks_per_album: int = 5,
+    diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
 ) -> pl.DataFrame:
-    """Add tracks from missing albums to the dataset."""
+    """Add tracks from missing albums to the dataset.
+    
+    Args:
+        keep_all: If True, add ALL tracks from each album. If False, sample a representative subset.
+        tracks_per_album: Target tracks per album when sampling (default 5).
+        diversity_weight: Weight for diversity vs popularity in sampling (0-1).
+    """
+    from schema import normalize_for_merge
+
     client = ReccoBeatsClient()
     all_new_rows = []
+
+    # Normalize schemas to prevent casting errors during concat
+    df_added = normalize_for_merge(df_added)
     
     for album in missing_albums:
         album_uuid = album["uuid"]
@@ -368,7 +377,22 @@ def add_missing_albums(
             print(f"    No new tracks")
             continue
         
-        features = client.get_audio_features(new_track_ids)
+        # Get audio features for all tracks (needed for sampling)
+        all_track_ids = [t.get("href", "").split("/")[-1] for t in new_tracks if t.get("href")]
+        features = client.get_audio_features(all_track_ids)
+        
+        # Sample tracks using weighted_track_sample (popularity + diversity)
+        if not keep_all and len(new_tracks) > tracks_per_album:
+            sampled = weighted_track_sample(
+                new_tracks,
+                features,
+                target_count=tracks_per_album,
+                diversity_weight=diversity_weight,
+            )
+            if verbose:
+                print(f"    Sampled {len(sampled)}/{len(new_tracks)} tracks (diversity={diversity_weight})")
+            new_tracks = sampled
+        
         df_rows = build_rows(artist_name, new_tracks, features, genre, verbose)
         
         # Deduplicate within album (remove variants like "Song - Remastered")
@@ -412,8 +436,11 @@ def process_artist(
     genre_override: Optional[str],
     verbose: bool,
     skip_variants: bool = True,
+    include_singles: bool = False,
+    keep_all: bool = False,
 ) -> Tuple[pl.DataFrame, int, int]:
     """Process a single artist. Returns (updated_df_added, albums_checked, albums_missing)."""
+    client = ReccoBeatsClient()
     
     if is_url:
         result = search_artist_by_url(artist_input, verbose)
@@ -432,6 +459,7 @@ def process_artist(
         recco_uuid, artist_name, existing_track_ids,
         limit=limit, show_all=show_all, verbose=verbose,
         skip_variants=skip_variants,
+        include_singles=include_singles,
     )
     
     if show_all:
@@ -451,22 +479,26 @@ def process_artist(
         genre = genre_override
         if not genre:
             print(f"\nLooking up genre...")
-            genre = get_genre_from_audiodb(artist_name)
+            genre = resolve_genre(artist_name, skip_unknown=False, verbose=verbose)
             if genre:
                 print(f"  Genre: {genre}")
             else:
                 print(f"  Genre: unknown (using default)")
                 genre = "pop"
         
-        print(f"\nAdding {len(missing_albums)} albums...")
+        mode_desc = "all tracks" if keep_all else "sampled tracks"
+        print(f"\nAdding {mode_desc} from {len(missing_albums)} missing albums...")
         df_added = add_missing_albums(
-            artist_name, recco_uuid, missing_albums, genre,
-            existing_track_ids, df_added, df_main, verbose
+            artist_name=artist_name,
+            recco_uuid=recco_uuid,
+            missing_albums=missing_albums,
+            genre=genre,
+            existing_track_ids=existing_track_ids,
+            df_added=df_added,
+            df_main=df_main,
+            verbose=verbose,
+            keep_all=keep_all,
         )
-        
-        for album in missing_albums:
-            for tid in album['track_ids']:
-                existing_track_ids.add(tid)
     
     total_missing = sum(a['missing_tracks'] for a in missing_albums)
     return df_added, len(all_albums), len(missing_albums)
@@ -482,6 +514,9 @@ def main():
     parser.add_argument("--limit", type=int, help="Max albums to check (newest first)")
     parser.add_argument("--all", action="store_true", dest="show_all", help="Show all albums, not just missing")
     parser.add_argument("--include-variants", action="store_true", help="Include remix/acoustic/deluxe variants (skipped by default)")
+    parser.add_argument("--include-singles", action="store_true", help="Include singles when adding tracks")
+    parser.add_argument("--keep-all", action="store_true", help="Add ALL tracks from albums (skip sampling)")
+    parser.add_argument("--quota", type=int, default=25, help="Target total tracks per artist (default: 25)")
     parser.add_argument("--genre", help="Override genre (otherwise auto-detected)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -534,6 +569,8 @@ def main():
             df_main, df_added, args.update, args.limit,
             args.show_all, args.genre, args.verbose,
             skip_variants=skip_variants,
+            include_singles=args.include_singles,
+            keep_all=args.keep_all,
         )
         total_checked += checked
         total_missing += missing

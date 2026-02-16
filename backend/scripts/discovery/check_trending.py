@@ -50,15 +50,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from track_dedup import normalize_artist_name
 from utils import (
     add_discovered_artist,
+    backfill_artist_quota,
     load_existing,
     save_parquet,
     deduplicate_with_report,
+    resolve_genre,
+    search_artist,
     DEEZER_URL,
+    RECCOBEATS_URL,
     OUTPUT_PARQUET,
     DEFAULT_TRACKS_PER_ARTIST,
+    ReccoBeatsClient,
 )
-
-BASE_URL = "https://api.reccobeats.com/v1"
 
 CHART_PLAYLISTS = {
     "global": "37i9dQZEVXbMDoHDwVN2tF",
@@ -94,7 +97,7 @@ def fetch_chart_via_reccobeats(playlist_id: str, limit: int = 50) -> List[Dict]:
     """Fetch chart playlist tracks via ReccoBeats."""
     tracks = []
     page = 0
-    url = f"{BASE_URL}/track/recommendation"
+    url = f"{RECCOBEATS_URL}/track/recommendation"
     
     while len(tracks) < limit:
         try:
@@ -226,9 +229,11 @@ def main():
     parser.add_argument("--update", action="store_true", help="Add missing artists to dataset")
     parser.add_argument("--min-tracks", type=int, default=3, help="Min tracks available to add artist")
     parser.add_argument("--max-add", type=int, default=20, help="Max artists to add in one run")
+    parser.add_argument("--backfill-partial", action="store_true", help="Also backfill partial artists (<5 tracks) from charts")
+    parser.add_argument("--quota", type=int, default=25, help="Target tracks per artist (default: 25)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
-    
+
     df_main, df_added = load_existing()
     df_all = pl.concat([df_main, df_added])
     existing_track_ids = set(df_all["track_id"].drop_nulls().unique().to_list())
@@ -308,61 +313,124 @@ def main():
         print(f"\nDRY-RUN MODE (use --update to add missing artists)")
         return
     
-    to_add = missing[:args.max_add]
-    print(f"\n{'=' * 60}")
-    print(f"ADDING {len(to_add)} ARTISTS")
-    print(f"{'=' * 60}")
-    
     all_new_rows = []
     added_count = 0
+    backfilled_count = 0
     
-    for artist in to_add:
-        name = artist["artist_name"]
-        print(f"\n  {name}...")
+    # Add missing artists
+    to_add = missing[:args.max_add]
+    if to_add:
+        print(f"\n{'=' * 60}")
+        print(f"ADDING {len(to_add)} MISSING ARTISTS")
+        print(f"{'=' * 60}")
         
-        try:
-            df_rows = add_discovered_artist(
-                name, 
-                existing_track_ids,
-                skip_unknown=False,
-                tracks_per_artist=DEFAULT_TRACKS_PER_ARTIST,
-                verbose=args.verbose,
-                quiet=False,
-            )
+        for artist in to_add:
+            name = artist["artist_name"]
+            print(f"\n  {name}...")
             
-            if df_rows is None or len(df_rows) == 0:
-                print(f"    X Not found or no tracks")
-                continue
+            try:
+                df_rows = add_discovered_artist(
+                    name, 
+                    existing_track_ids,
+                    skip_unknown=False,
+                    tracks_per_artist=DEFAULT_TRACKS_PER_ARTIST,
+                    verbose=args.verbose,
+                    quiet=False,
+                )
+                
+                if df_rows is None or len(df_rows) == 0:
+                    print(f"    X Not found or no tracks")
+                    continue
+                
+                if len(df_rows) < args.min_tracks:
+                    print(f"    X Only {len(df_rows)} tracks (min: {args.min_tracks})")
+                    continue
+                
+                genre = df_rows['genre'][0] if 'genre' in df_rows.columns else 'unknown'
+                print(f"    + Added {len(df_rows)} tracks ({genre})")
+                
+                all_new_rows.append(df_rows)
+                added_count += 1
+                
+                for tid in df_rows['track_id'].drop_nulls().to_list():
+                    existing_track_ids.add(tid)
+                
+            except Exception as e:
+                print(f"    X Error: {e}")
             
-            if len(df_rows) < args.min_tracks:
-                print(f"    X Only {len(df_rows)} tracks (min: {args.min_tracks})")
-                continue
-            
-            genre = df_rows['genre'][0] if 'genre' in df_rows.columns else 'unknown'
-            print(f"    + Added {len(df_rows)} tracks ({genre})")
-            
-            all_new_rows.append(df_rows)
-            added_count += 1
-            
-            for tid in df_rows['track_id'].drop_nulls().to_list():
-                existing_track_ids.add(tid)
-            
-        except Exception as e:
-            print(f"    X Error: {e}")
-        
-        time.sleep(0.5)
+            time.sleep(0.5)
     
-    if not all_new_rows:
-        print("\nNo artists added")
+    # Backfill partial artists to quota using add_tracks_for_artist
+    if args.backfill_partial and partial:
+        remaining_slots = args.max_add - added_count
+        to_backfill = partial[:remaining_slots] if remaining_slots > 0 else []
+        
+        if to_backfill:
+            print(f"\n{'=' * 60}")
+            print(f"BACKFILLING {len(to_backfill)} PARTIAL ARTISTS (quota: {args.quota})")
+            print(f"{'=' * 60}")
+            
+            client = ReccoBeatsClient()
+            
+            for artist in to_backfill:
+                name = artist["artist_name"]
+                current_tracks = artist["dataset_tracks"]
+                print(f"\n  {name} ({current_tracks} tracks)...")
+                
+                try:
+                    result = search_artist(name, client=client, quiet=True, verbose=args.verbose)
+                    if not result:
+                        print(f"    X Not found")
+                        continue
+
+                    recco_uuid = result.recco_uuid
+                    found_name = result.name
+                    
+                    genre = resolve_genre(found_name, skip_unknown=False, verbose=args.verbose)
+                    if not genre:
+                        existing_rows = df_all.filter(pl.col("artist_name") == name)["genre"].drop_nulls()
+                        genre = existing_rows[0] if len(existing_rows) > 0 else "pop"
+
+                    df_added, new_tracks = backfill_artist_quota(
+                        client=client,
+                        artist_name=found_name,
+                        recco_uuid=recco_uuid,
+                        genre=genre,
+                        df_main=df_main,
+                        df_added=df_added,
+                        existing_track_ids=existing_track_ids,
+                        target_track_count=args.quota,
+                        verbose=args.verbose,
+                    )
+                    
+                    if new_tracks > 0:
+                        print(f"    + Backfilled {new_tracks} tracks (total now: {current_tracks + new_tracks})")
+                        backfilled_count += 1
+                    else:
+                        print(f"    = Already at quota ({current_tracks} tracks)")
+                    
+                except Exception as e:
+                    print(f"    X Error: {e}")
+                
+                time.sleep(0.5)
+    
+    if not all_new_rows and backfilled_count == 0:
+        print("\nNo changes made")
         return
     
-    df_new = pl.concat(all_new_rows)
-    df_combined = pl.concat([df_added, df_new])
-    df_combined, removed = deduplicate_with_report(df_combined, df_main)
+    if all_new_rows:
+        df_new = pl.concat(all_new_rows)
+        df_combined = pl.concat([df_added, df_new])
+        df_combined, removed = deduplicate_with_report(df_combined, df_main)
+    else:
+        df_combined = df_added
     
     save_parquet(df_combined)
     print(f"\n{'=' * 60}")
-    print(f"+ Added {added_count} artists ({len(df_new)} tracks)")
+    if added_count > 0:
+        print(f"+ Added {added_count} new artists")
+    if backfilled_count > 0:
+        print(f"+ Backfilled {backfilled_count} partial artists")
     print(f"+ Total in added_artists.parquet: {len(df_combined)} tracks")
     print(f"\nRun process_data.py to merge with main dataset")
 

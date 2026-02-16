@@ -154,33 +154,38 @@ def _types_compatible(actual: pl.DataType, expected: pl.DataType) -> bool:
 def coerce_to_schema(df: pl.DataFrame, schema: Dict[str, pl.DataType] = None) -> pl.DataFrame:
     """
     Coerce a DataFrame's columns to match the expected schema.
-    
+
     This is the preferred way to normalize schemas - call it once at data ingestion
     rather than at merge time.
-    
+
     Args:
         df: DataFrame to coerce
         schema: Schema to use (defaults to RAW_SCHEMA)
-    
+
     Returns:
         DataFrame with corrected types
     """
     if schema is None:
         schema = RAW_SCHEMA
-    
+
     casts = []
     for col in df.columns:
         if col in schema:
             expected = schema[col]
             actual = df[col].dtype
-            
+
             if actual != expected:
-                # Cast to expected type
-                casts.append(pl.col(col).cast(expected).alias(col))
-    
+                # Handle List types by extracting first element
+                if hasattr(actual, 'inner') and expected == pl.String:
+                    # List(String) -> String (take first element)
+                    casts.append(pl.col(col).list.get(0).cast(expected).alias(col))
+                else:
+                    # Regular cast
+                    casts.append(pl.col(col).cast(expected).alias(col))
+
     if casts:
         df = df.with_columns(casts)
-    
+
     return df
 
 
