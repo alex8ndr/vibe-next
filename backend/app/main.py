@@ -6,12 +6,15 @@ import json
 import secrets
 import os
 import hashlib
+import pickle
 from time import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter, deque
 
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,9 +28,53 @@ from logic import MusicData, ParquetDataSource, generate_recommendations, GENRE_
 # Data path - configurable via environment in production
 DATA_PATH = Path(__file__).parent.parent / "data" / "data_encoded.parquet"
 ANALYTICS_PATH = Path(__file__).parent.parent / "data" / "analytics.jsonl"
+CACHE_PATH = Path(__file__).parent.parent / "data" / ".music_data_cache.pkl"
+
+# Data caching - disabled by default (safe for production). Enable for dev with ENABLE_DATA_CACHE=true
+ENABLE_DATA_CACHE = os.getenv("ENABLE_DATA_CACHE", "").lower() == "true"
 
 # Global data container
 music_data: MusicData | None = None
+
+
+def _load_cached_data() -> MusicData:
+    """Load data from cache if valid and enabled, otherwise reload from parquet."""
+    global music_data
+    
+    if not DATA_PATH.exists():
+        raise RuntimeError(f"Data file not found: {DATA_PATH}")
+    
+    # Check cache if enabled
+    if ENABLE_DATA_CACHE and CACHE_PATH.exists():
+        cache_mtime = CACHE_PATH.stat().st_mtime
+        data_mtime = DATA_PATH.stat().st_mtime
+        
+        if cache_mtime >= data_mtime:
+            try:
+                with open(CACHE_PATH, 'rb') as f:
+                    music_data = pickle.load(f)
+                print(f"Restored {len(music_data.df):,} tracks from cache")
+                return music_data
+            except Exception as e:
+                print(f"Cache load failed: {e}, reloading from parquet...")
+    
+    # Load fresh data
+    source = ParquetDataSource(DATA_PATH)
+    music_data = MusicData(source)
+    music_data.load()
+    
+    # Save to cache if enabled
+    if ENABLE_DATA_CACHE:
+        try:
+            with open(CACHE_PATH, 'wb') as f:
+                pickle.dump(music_data, f)
+            print(f"Cached {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists")
+        except Exception as e:
+            print(f"Warning: Failed to write cache: {e}")
+    else:
+        print(f"Loaded {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists (caching disabled)")
+    
+    return music_data
 
 
 @asynccontextmanager
@@ -35,14 +82,7 @@ async def lifespan(app: FastAPI):
     """Load data once at startup, cleanup on shutdown."""
     global music_data
     
-    if not DATA_PATH.exists():
-        raise RuntimeError(f"Data file not found: {DATA_PATH}")
-    
-    source = ParquetDataSource(DATA_PATH)
-    music_data = MusicData(source)
-    music_data.load()
-    
-    print(f"Loaded {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists")
+    _load_cached_data()
     
     yield
     

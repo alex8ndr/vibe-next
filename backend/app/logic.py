@@ -274,7 +274,7 @@ def cosine_distance(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 WEIGHT_USER_SELECTED_TOTAL = 8.0  # Total weight budget for user-selected tracks per artist
 WEIGHT_USER_SELECTED_MIN = 2.0    # Minimum weight per user track (prevents dilution)
 WEIGHT_AUTO_SAMPLED_TOTAL = 6.0   # Total weight budget for auto-sampled tracks per artist
-MAX_DIVERSE_SEEDS_PER_ARTIST_BASE = 15  # Max diverse tracks when single artist
+MAX_DIVERSE_SEEDS_PER_ARTIST_BASE = 16  # Max diverse tracks when single artist
 
 # Hierarchical soft-min tau values
 TAU_WITHIN_ARTIST = 0.3  # Low = close to ANY track from artist counts
