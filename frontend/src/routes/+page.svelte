@@ -18,6 +18,7 @@
         knownArtists,
         nowPlaying,
         sidebarPlaying,
+        sidebarLoadingTrackId,
         devSettings,
         clientId,
         type Track,
@@ -171,9 +172,14 @@
     }
 
     function playTrack(track: FavoriteTrack) {
-        // Toggle if clicking the same track
+        // Toggle if clicking the same track - use explicit play/pause
         if ($sidebarPlaying?.trackId === track.track_id && sidebarController) {
-            sidebarController.togglePlay();
+            if (sidebarActuallyPlaying) {
+                sidebarController.pause();
+            } else {
+                // Use resume() instead of play() - correct API for unpausing
+                sidebarController.resume();
+            }
             return;
         }
 
@@ -186,7 +192,10 @@
             nowPlaying.set(null);
         }
 
-        // Update sidebar playing state
+        // Set loading state
+        sidebarLoadingTrackId.set(track.track_id);
+
+        // Update sidebar playing state immediately for highlight
         sidebarPlaying.set({
             artist: track.artist_name,
             trackId: track.track_id,
@@ -213,6 +222,10 @@
                     });
                     c.addListener("playback_update", (e: any) => {
                         sidebarActuallyPlaying = !e.data.isPaused;
+                        // Clear loading state when playback starts
+                        if (!e.data.isPaused) {
+                            sidebarLoadingTrackId.set(null);
+                        }
                     });
                     setTimeout(() => {
                         sidebarReady = true;
@@ -238,7 +251,7 @@
         if (!track || !sidebarController) return;
 
         sidebarController.loadUri(`spotify:track:${track.trackId}`);
-        sidebarController.play();
+        setTimeout(() => sidebarController.play(), 50);
     });
 </script>
 

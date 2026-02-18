@@ -326,6 +326,7 @@ def main():
         
         for artist in to_add:
             name = artist["artist_name"]
+            top_track = artist.get("top_track")  # From chart data
             print(f"\n  {name}...")
             
             try:
@@ -336,6 +337,7 @@ def main():
                     tracks_per_artist=DEFAULT_TRACKS_PER_ARTIST,
                     verbose=args.verbose,
                     quiet=False,
+                    expected_track=top_track,  # Pass chart track for validation
                 )
                 
                 if df_rows is None or len(df_rows) == 0:

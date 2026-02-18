@@ -3,6 +3,7 @@
         knownArtists,
         favoriteTracks,
         sidebarPlaying,
+        sidebarLoadingTrackId,
         type FavoriteTrack,
     } from "$lib/stores";
     import { trackRemoveKnown, trackRemoveFavorite } from "$lib/analytics";
@@ -238,11 +239,19 @@
                         <div
                             class="fav-track"
                             class:playing={$sidebarPlaying?.trackId === track.track_id}
+                            class:loading={$sidebarLoadingTrackId === track.track_id}
                             role="button"
                             tabindex="0"
                             onclick={() => onplay(track)}
                             onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onplay(track); } }}
                         >
+                            {#if $sidebarLoadingTrackId === track.track_id}
+                                <span class="loading-icon">
+                                    <svg class="spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                                    </svg>
+                                </span>
+                            {/if}
                             <span class="track-name">{track.track_name}</span>
                             <button class="remove-btn" onclick={(e) => { e.stopPropagation(); removeFavorite(track); }}>×</button>
                         </div>
@@ -492,10 +501,28 @@
     }
 
     .fav-track:hover { background: var(--border); }
+    .fav-track.loading { background: var(--gold); color: #111; opacity: 0.7; }
+    .fav-track.loading .track-name { color: #111; }
     .fav-track.playing { background: var(--gold); color: #111; }
     .fav-track.playing .track-name { color: #111; }
     .fav-track.playing .remove-btn { color: #333; }
     .fav-track.playing .remove-btn:hover { color: #900; }
+    
+    .loading-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    
+    .spinner {
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
 
     .track-name {
         font-size: 0.75rem;

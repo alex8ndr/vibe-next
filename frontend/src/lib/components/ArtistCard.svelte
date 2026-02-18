@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Track, ArtistDebugInfo } from "$lib/stores";
-    import { nowPlaying, sidebarPlaying, devSettings, favoriteTracks } from "$lib/stores";
+    import { nowPlaying, sidebarPlaying, loadingTrackId, devSettings, favoriteTracks } from "$lib/stores";
     import { trackPlayTrack, trackAddFavorite, trackRemoveFavorite } from "$lib/analytics";
     import { onMount } from "svelte";
 
@@ -76,8 +76,9 @@
     }
 
     const hue = $derived(getHue(artist));
-    const isPlaying = $derived($nowPlaying?.artist === artist);
-    const playingTrackId = $derived(isPlaying ? $nowPlaying?.trackId : null);
+    const isThisArtist = $derived($nowPlaying?.artist === artist);
+    const playingTrackId = $derived(isThisArtist ? $nowPlaying?.trackId : null);
+    const isLoadingTrack = $derived((id: string) => $loadingTrackId === id);
 
     onMount(() => {
         firstTrack = tracks[0]?.track_id || "";
@@ -112,24 +113,32 @@
                         }
                     });
                     c.addListener("playback_update", (e: any) => {
-                        isReady = true;
+                        const wasPlaying = isActuallyPlaying;
                         isActuallyPlaying = !e.data.isPaused;
-                        // Play pending track if user clicked before ready
-                        if (pendingPlay) {
-                            const { trackId, trackName } = pendingPlay;
-                            pendingPlay = null;
-                            play(trackId, trackName);
+                        
+                        // Clear loading state when playback starts for this card's current track
+                        if (!e.data.isPaused && $loadingTrackId === currentTrackId) {
+                            loadingTrackId.set(null);
                         }
+                        
+                        // Sync nowPlaying when user clicks directly on embed's play/pause button
+                        if (!e.data.isPaused && !wasPlaying) {
+                            // Started playing - pause other cards and sidebar, set nowPlaying
+                            const prev = $nowPlaying;
+                            if (prev && prev.artist !== artist) {
+                                window.dispatchEvent(new CustomEvent("vibeReset", { detail: prev.artist }));
+                            }
+                            const sidebarCtrl = (window as any).vibeSidebarController;
+                            if (sidebarCtrl) {
+                                try { sidebarCtrl.pause(); } catch {}
+                            }
+                            sidebarPlaying.set(null);
+                            
+                            const track = tracks.find(t => t.track_id === currentTrackId);
+                            nowPlaying.set({ artist, trackId: currentTrackId, trackName: track?.track_name || "" });
+                        }
+                        // Don't clear nowPlaying on pause - track stays highlighted (green)
                     });
-                    setTimeout(() => {
-                        isReady = true;
-                        // Play pending track if user clicked before ready
-                        if (pendingPlay) {
-                            const { trackId, trackName } = pendingPlay;
-                            pendingPlay = null;
-                            play(trackId, trackName);
-                        }
-                    }, 3000);
                 },
             );
         };
@@ -155,11 +164,17 @@
                 }
                 if (controller) {
                     controller.pause();
-                    if (currentTrackId)
+                    // Reload current track to avoid Spotify login nag screen (keeps same track)
+                    if (currentTrackId) {
                         controller.loadUri(`spotify:track:${currentTrackId}`);
+                    }
+                }
+                isActuallyPlaying = false;
+                // Clear loading state if it was for this card
+                if ($loadingTrackId === currentTrackId) {
+                    loadingTrackId.set(null);
                 }
             }
-
         };
         window.addEventListener("vibeReset", resetHandler as EventListener);
         return () =>
@@ -173,39 +188,59 @@
         // If controller isn't ready yet, queue the play request
         if (!controller || !isReady) {
             pendingPlay = { trackId, trackName };
-            // Still update UI state so user sees selection
+            loadingTrackId.set(trackId);
             nowPlaying.set({ artist, trackId, trackName });
             
-            // Auto-clear pending play if it takes too long (e.g. iframe error)
             setTimeout(() => {
                 if (pendingPlay && pendingPlay.trackId === trackId) {
                     pendingPlay = null;
-                    // Reset UI if we're still showing this track as playing
+                    loadingTrackId.set(null);
                     if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === trackId) {
                         nowPlaying.set(null);
                     }
                 }
             }, 8000);
             return;
-
         }
 
         const prev = $nowPlaying;
 
-        // Toggle play/pause if clicking the same track
-        if (prev?.artist === artist && prev?.trackId === trackId) {
-            controller.togglePlay();
-            isActuallyPlaying = !isActuallyPlaying;
+        // Track is already loaded in THIS embed - just toggle play/pause
+        if (currentTrackId === trackId) {
+            if (isActuallyPlaying) {
+                controller.pause();
+                // Don't clear nowPlaying - keep track highlighted (green) when paused
+            } else {
+                // Reset other cards first
+                if (prev && prev.artist !== artist) {
+                    window.dispatchEvent(
+                        new CustomEvent("vibeReset", { detail: prev.artist }),
+                    );
+                }
+                // Pause sidebar
+                const sidebarCtrl = (window as any).vibeSidebarController;
+                if (sidebarCtrl) {
+                    try { sidebarCtrl.pause(); } catch {}
+                }
+                sidebarPlaying.set(null);
+                
+                // Use resume() instead of play() - this is the correct API for unpausing
+                controller.resume();
+                nowPlaying.set({ artist, trackId, trackName });
+            }
             return;
         }
 
+        // Different track - need to load it
+        
+        // Reset other artist's card if playing
         if (prev && prev.artist !== artist) {
             window.dispatchEvent(
                 new CustomEvent("vibeReset", { detail: prev.artist }),
             );
         }
 
-        // Pause sidebar player if playing and clear its highlight
+        // Pause sidebar player if playing
         const sidebarCtrl = (window as any).vibeSidebarController;
         if (sidebarCtrl) {
             try {
@@ -214,10 +249,13 @@
         }
         sidebarPlaying.set(null);
 
+        // Set loading state before starting to load
+        loadingTrackId.set(trackId);
+        
+        // Load and play new track (small delay helps with embed race conditions)
         currentTrackId = trackId;
         controller.loadUri(`spotify:track:${trackId}`);
-        controller.play();
-        isActuallyPlaying = true;
+        setTimeout(() => controller.play(), 50);
         nowPlaying.set({ artist, trackId, trackName });
         trackPlayTrack(trackId, trackName, artist);
     }
@@ -270,20 +308,32 @@
 
     <div class="tracks">
         {#each tracks as t (t.track_id)}
+            {@const isSelected = playingTrackId === t.track_id}
+            {@const isLoading = isLoadingTrack(t.track_id)}
             <div class="trk-row">
                 <button
                     class="trk"
-                    class:playing={playingTrackId === t.track_id}
+                    class:playing={isSelected}
+                    class:loading={isLoading}
                     onclick={() => play(t.track_id, t.track_name)}
                 >
                     <span class="ico">
-                        {#if playingTrackId === t.track_id && isActuallyPlaying}
+                        {#if isLoading}
+                            <!-- Loading spinner -->
+                            <svg class="spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+                            </svg>
+                        {:else if isSelected && isActuallyPlaying}
                             <!-- Pause Icon -->
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5V19M16 5V19" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+                        {:else if isSelected && !isActuallyPlaying}
+                            <!-- Play Icon (paused state) -->
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         {:else}
                             <!-- Note Icon -->
                             <svg class="note" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                            <!-- Play Icon -->
+                            <!-- Play Icon on hover -->
                             <svg class="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         {/if}
                     </span>
@@ -528,7 +578,20 @@
         color: #fff;
     }
 
+    .trk.loading {
+        background: linear-gradient(135deg, #1db954, #169c46);
+        color: #fff;
+        opacity: 0.8;
+    }
 
+    .spinner {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
 
     .ico {
         width: 14px;

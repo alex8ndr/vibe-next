@@ -732,6 +732,8 @@ def resolve_genre(
 def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: bool = False, session: Optional[requests.Session] = None) -> Optional[str]:
     """Search for artist on Deezer, convert track to Spotify via Songlink.
     
+    Uses popularity to disambiguate when multiple artists have similar names.
+    
     Args:
         artist_name: Artist to search for
         verbose: Print extra details about search process
@@ -740,7 +742,8 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: boo
     """
     _session = session or get_api_session()
     try:
-        r = _session.get(f"{DEEZER_URL}/search/artist", params={"q": artist_name, "limit": 1}, timeout=10)
+        # Search with higher limit to find potential duplicates
+        r = _session.get(f"{DEEZER_URL}/search/artist", params={"q": artist_name, "limit": 10}, timeout=10)
         r.raise_for_status()
         artists = r.json().get("data", [])
         if not artists:
@@ -748,7 +751,18 @@ def search_artist_via_deezer(artist_name: str, verbose: bool = False, quiet: boo
                 print(f"    Not found on Deezer")
             return None
         
-        deezer_artist = artists[0]
+        # Disambiguate: pick the most popular artist when names match
+        target_norm = normalize_artist_name(artist_name)
+        matching = [a for a in artists if normalize_artist_name(a.get("name", "")) == target_norm]
+        
+        if matching:
+            # Use fan count (followers) as popularity proxy for disambiguation
+            deezer_artist = max(matching, key=lambda a: a.get("nb_fan", 0) or 0)
+            if verbose and not quiet and len(matching) > 1:
+                print(f"    Found {len(matching)} matches on Deezer, picked most popular ({deezer_artist.get('nb_fan', 0)} fans)")
+        else:
+            deezer_artist = artists[0]  # Fallback to first result
+        
         found_name = deezer_artist["name"]
         if not quiet:
             print(f"    Found: {found_name}")
@@ -1105,6 +1119,7 @@ def search_artist(
     client: Optional["ReccoBeatsClient"] = None,
     quiet: bool = True,
     verbose: bool = False,
+    expected_track: Optional[str] = None,
 ) -> Optional[ArtistSearchResult]:
     """Unified artist search: ReccoBeats direct search, then Deezer fallback.
     
@@ -1117,31 +1132,75 @@ def search_artist(
         client: Optional ReccoBeatsClient instance (created if not provided)
         quiet: Suppress output
         verbose: Print extra details
+        expected_track: Optional track name to validate the artist (e.g., chart top track)
         
     Returns:
         ArtistSearchResult with recco_uuid and confirmed name, or None if not found
     """
     client = client or ReccoBeatsClient()
     target_norm = normalize_artist_name(name)
+    expected_norm = normalize_artist_name(expected_track) if expected_track else None
     
     # 1) Try ReccoBeats direct search first - ONLY use exact match
     try:
         candidates = client.search_artist(name, limit=limit)
         if candidates:
-            # Only use ReccoBeats if we have an exact normalized match
-            best = None
-            for c in candidates:
-                if normalize_artist_name(c.get("name", "")) == target_norm:
-                    best = c
-                    break
+            # Find ALL candidates that match by normalized name
+            matching = [
+                c for c in candidates
+                if normalize_artist_name(c.get("name", "")) == target_norm
+            ]
             
-            if best:
+            if matching:
+                # Sort by popularity (descending) for disambiguation
+                matching_sorted = sorted(
+                    matching, 
+                    key=lambda c: c.get("popularity", 0) or 0, 
+                    reverse=True
+                )
+                
+                # If we have an expected track, try to find an artist that has it
+                best = None
+                if expected_norm:
+                    for candidate in matching_sorted:
+                        recco_uuid = candidate.get("id")
+                        if not recco_uuid:
+                            continue
+                        # Quick check: get top tracks and see if expected track is there
+                        try:
+                            top_tracks = client.get_artist_tracks(recco_uuid, 20)
+                            for t in top_tracks:
+                                track_title = t.get("trackTitle") or t.get("name", "")
+                                if normalize_artist_name(track_title) == expected_norm:
+                                    best = candidate
+                                    if verbose and not quiet:
+                                        print(f"    Found: {candidate.get('name')} (ReccoBeats, has expected track: {track_title})")
+                                    break
+                            if best:
+                                break
+                        except Exception:
+                            continue
+                    
+                    # If expected track provided but no match found, skip ReccoBeats
+                    # and go straight to Deezer fallback for better accuracy
+                    if not best:
+                        if verbose and not quiet:
+                            print(f"    ReccoBeats: No match for expected track '{expected_track}', trying Deezer fallback...")
+                        raise Exception("No matching artist with expected track")
+                
+                # No expected track: use most popular match
+                if not best:
+                    best = matching_sorted[0]
+                    if verbose and not quiet and len(matching_sorted) > 1:
+                        print(f"    Found: {best.get('name')} (ReccoBeats, {len(matching)} matches, picked most popular)")
+                
                 recco_uuid = best.get("id")
                 confirmed = best.get("name") or name
                 
                 if recco_uuid:
                     if verbose and not quiet:
-                        print(f"    Found: {confirmed} (ReccoBeats)")
+                        if len(matching) == 1:
+                            print(f"    Found: {confirmed} (ReccoBeats)")
                     return ArtistSearchResult(name=confirmed, recco_uuid=recco_uuid, source="reccobeats")
     except Exception as e:
         if verbose and not quiet:
@@ -1224,19 +1283,40 @@ def add_discovered_artist(
     quiet: bool = False,
     lastfm_client: Optional["LastFmClient"] = None,
     use_deezer_fallback: bool = True,
+    expected_track: Optional[str] = None,
 ) -> Optional[pl.DataFrame]:
     """Fetch and add tracks for a discovered artist.
     
     This is the canonical function for the full artist→tracks pipeline.
     Uses search_artist() for unified ReccoBeats → Deezer fallback.
     
-    Returns DataFrame of new tracks, or None if artist should be skipped.
+    Args:
+        artist_name: Artist name to search for
+        existing_track_ids: Set of track IDs already in dataset
+        skip_unknown: Skip artists with unknown genre
+        use_infer: Use Last.fm to infer genre
+        tracks_per_artist: Number of tracks to fetch per artist
+        diversity_weight: Weight for diversity vs popularity in sampling
+        verbose: Print extra details
+        quiet: Suppress output
+        lastfm_client: Optional Last.fm client for genre inference
+        use_deezer_fallback: Allow fallback to Deezer if ReccoBeats fails
+        expected_track: Optional expected track name (e.g., from chart) for validation
+        
+    Returns:
+        DataFrame of new tracks, or None if artist should be skipped.
     """
     client = ReccoBeatsClient()
     
     # Use unified search_artist() which handles ReccoBeats → Deezer fallback internally
     if use_deezer_fallback:
-        result = search_artist(artist_name, client=client, quiet=quiet, verbose=verbose)
+        result = search_artist(
+            artist_name, 
+            client=client, 
+            quiet=quiet, 
+            verbose=verbose,
+            expected_track=expected_track,
+        )
     else:
         # ReccoBeats only - use the legacy wrapper that filters to reccobeats source
         rb_result = search_artist_via_reccobeats(artist_name, verbose=verbose, quiet=quiet)

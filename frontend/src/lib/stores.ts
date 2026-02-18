@@ -40,6 +40,12 @@ export const nowPlaying = writable<{ artist: string; trackId: string; trackName:
 // Separate store for sidebar player (favorites only, doesn't interfere with result cards)
 export const sidebarPlaying = writable<{ artist: string; trackId: string; trackName: string } | null>(null);
 
+// Loading state for result card tracks (shows loading indicator while track loads)
+export const loadingTrackId = writable<string | null>(null);
+
+// Loading state for sidebar tracks
+export const sidebarLoadingTrackId = writable<string | null>(null);
+
 // Mobile sidebar visibility
 export const mobileSidebarOpen = writable(false);
 

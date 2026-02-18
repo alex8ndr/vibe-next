@@ -3,7 +3,6 @@
 # --- From Audit / Cleanups ---
 # --- Added from EDM cleanup ---
 
-311
 AA Sound System
 Arctic Monkeys
 Bastille
@@ -25,11 +24,11 @@ Miss Black America
 Screwtape Lewis
 STARSET
 Sufjan Stevens
-The 1975
 The Growlers
 Thee Oh Sees
 Twenty One Pilots
 Ty Segall
 WALK THE MOON
 Wavves
+YUNGBLUD
 zebrahead
