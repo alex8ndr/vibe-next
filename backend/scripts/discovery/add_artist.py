@@ -26,15 +26,6 @@ Usage:
     # Dry-run: preview changes without saving
     python add_artist.py "Radiohead" --dry-run
     
-    # List artists in added_artists.parquet
-    python add_artist.py --list
-    
-    # Remove specific artists
-    python add_artist.py --remove "Radiohead,Coldplay"
-    
-    # Clear all added data
-    python add_artist.py --remove all
-    
     # Add artist + expand to 5 similar artists via Last.fm
     python add_artist.py "Radiohead" --expand
     python add_artist.py "Radiohead" --expand 10  # expand to 10 similar
@@ -360,80 +351,6 @@ def interactive_mode():
             print("Discarded.")
 
 
-def list_artists() -> None:
-    """List all artists in added_artists.parquet."""
-    if not OUTPUT_PARQUET.exists():
-        print(f"No {OUTPUT_PARQUET} file found")
-        return
-    
-    df = pl.read_parquet(OUTPUT_PARQUET)
-    if len(df) == 0:
-        print("No artists in added_artists.parquet")
-        return
-    
-    grouped = df.group_by('artist_name').agg(
-        pl.col('track_id').count().alias('tracks'),
-        pl.col('genre').first().alias('genre')
-    ).sort('tracks', descending=True)
-    
-    print(f"\nArtists in {OUTPUT_PARQUET} ({len(grouped)} artists, {len(df)} tracks):\n")
-    for row in grouped.iter_rows(named=True):
-        print(f"  {row['artist_name']}: {row['tracks']} tracks ({row['genre']})")
-
-
-def remove_artists(artists_arg: str) -> None:
-    """Remove artist(s) from added_artists.parquet.
-    
-    Args:
-        artists_arg: Comma-separated artist names, or 'all' to clear
-    """
-    if not OUTPUT_PARQUET.exists():
-        print(f"No {OUTPUT_PARQUET} file found")
-        return
-    
-    df = pl.read_parquet(OUTPUT_PARQUET)
-    if len(df) == 0:
-        print("File is already empty")
-        return
-    
-    if artists_arg.strip().lower() == 'all':
-        confirm = input(f"Remove ALL {len(df)} tracks from {OUTPUT_PARQUET}? [y/N]: ").strip().lower()
-        if confirm in ('y', 'yes'):
-            OUTPUT_PARQUET.unlink()
-            print(f"✓ Deleted {OUTPUT_PARQUET}")
-        else:
-            print("Cancelled")
-        return
-    
-    artists_to_remove = [a.strip() for a in artists_arg.split(',') if a.strip()]
-    if not artists_to_remove:
-        print("No artists specified")
-        return
-    
-    print(f"\nRemoving from {OUTPUT_PARQUET}:")
-    total_removed = 0
-    
-    for artist in artists_to_remove:
-        mask = df['artist_name'] == artist
-        count = mask.sum()
-        if count == 0:
-            print(f"  {artist}: Not found")
-        else:
-            df = df.filter(~mask)
-            print(f"  {artist}: Removed {count} tracks")
-            total_removed += count
-    
-    if total_removed > 0:
-        if len(df) == 0:
-            OUTPUT_PARQUET.unlink()
-            print(f"\n✓ Removed {total_removed} tracks (file deleted, was empty)")
-        else:
-            save_parquet(df)
-            print(f"\n✓ Removed {total_removed} tracks, {len(df)} remaining")
-    else:
-        print("\nNo changes made")
-
-
 def expand_from_artists(
     seed_artists: list,
     existing_track_ids: set,
@@ -520,80 +437,6 @@ def expand_from_artists(
     return df_combined
 
 
-def update_genres(genre_updates: str) -> None:
-    """Update genres for artists in added_artists.parquet.
-    
-    Args:
-        genre_updates: Format "Artist=genre,Artist2=genre2"
-    """
-    if not OUTPUT_PARQUET.exists():
-        print(f"Error: {OUTPUT_PARQUET} not found")
-        sys.exit(1)
-    
-    # Load data
-    df = pl.read_parquet(OUTPUT_PARQUET)
-    
-    # Get valid genres
-    valid_genres = sorted(set(AUDIODB_GENRE_MAP.values()))
-    
-    # Parse updates
-    updates = {}
-    for part in genre_updates.split(','):
-        if '=' not in part:
-            print(f"Warning: Invalid format '{part}', expected 'Artist=genre'")
-            continue
-        artist, genre = part.split('=', 1)
-        artist = artist.strip()
-        genre = genre.strip().lower()
-        
-        # Validate genre
-        if genre not in valid_genres:
-            # Try partial match
-            matches = [g for g in valid_genres if genre in g]
-            if len(matches) == 1:
-                genre = matches[0]
-                print(f"  {artist}: '{genre}' → '{matches[0]}'")
-            elif matches:
-                print(f"  {artist}: Ambiguous genre '{genre}', matches: {', '.join(matches)}")
-                continue
-            else:
-                print(f"  {artist}: Unknown genre '{genre}', skipping")
-                continue
-        
-        updates[artist] = genre
-    
-    if not updates:
-        print("No valid updates to apply")
-        return
-    
-    # Apply updates
-    print(f"\nUpdating {len(updates)} artist(s) in {OUTPUT_PARQUET}:")
-    updated_count = 0
-    
-    for artist, genre in updates.items():
-        mask = df['artist_name'] == artist
-        count = mask.sum()
-        
-        if count == 0:
-            print(f"  {artist}: Not found")
-        else:
-            old_genre = df.filter(mask)["genre"][0]
-            df = df.with_columns(
-                pl.when(pl.col("artist_name") == artist)
-                .then(pl.lit(genre))
-                .otherwise(pl.col("genre"))
-                .alias("genre")
-            )
-            print(f"  {artist}: {old_genre} → {genre} ({count} tracks)")
-            updated_count += count
-    
-    if updated_count > 0:
-        save_parquet(df)
-        print(f"\n✓ Updated {updated_count} tracks")
-    else:
-        print("\nNo changes made")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Add artists/albums to dataset via ReccoBeats API")
     parser.add_argument("artists", nargs="?", help="Artist name(s), comma-separated (searches via Deezer)")
@@ -603,9 +446,6 @@ def main():
     group.add_argument("--url", help="Spotify URL (auto-detects track or album)")
     group.add_argument("--file", help="File with Spotify URLs/IDs (one per line)")
     group.add_argument("--names", help="Artist name(s), comma-separated (alternative to positional)")
-    group.add_argument("--update-genre", help="Update genres: 'Artist=genre,Artist2=genre2'")
-    group.add_argument("--remove", help="Remove artist(s): 'Artist1,Artist2' or 'all'")
-    group.add_argument("--list", action="store_true", help="List artists in added_artists.parquet")
     
     parser.add_argument("--limit", type=int, default=DEFAULT_TRACKS_PER_ARTIST, help="Max tracks per artist (ignored for albums)")
     parser.add_argument("--genre", default=None, help="Genre name (auto-detected if not provided)")
@@ -617,21 +457,6 @@ def main():
     
     # Combine positional and --names args
     artist_names = args.artists or args.names
-    
-    # Genre update mode
-    if args.update_genre:
-        update_genres(args.update_genre)
-        return
-    
-    # Remove mode
-    if args.remove:
-        remove_artists(args.remove)
-        return
-    
-    # List mode
-    if args.list:
-        list_artists()
-        return
     
     # Interactive mode if no input specified
     if not args.track and not args.album and not args.url and not args.file and not artist_names:

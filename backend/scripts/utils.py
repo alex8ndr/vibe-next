@@ -45,7 +45,7 @@ DEFAULT_BACKFILL_LIMIT = 50   # Artists to check for backfill
 DEFAULT_EXPAND_LIMIT = 20     # Artists to discover via expansion
 DEFAULT_TRENDING_LIMIT = 50   # Chart entries to check
 
-from track_dedup import deduplicate_tracks_polars, normalize_artist_name
+from track_dedup import deduplicate_tracks_polars, normalize_artist_name, normalize_track_name
 from schema import RAW_SCHEMA, RAW_COLUMN_ORDER, coerce_to_schema, normalize_for_merge
 
 # API endpoints
@@ -1417,6 +1417,7 @@ def backfill_artist_quota(
     existing_track_ids: Set[str],
     target_track_count: int = DEFAULT_TRACKS_PER_ARTIST,
     diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
+    prioritize_songs: Optional[List[str]] = None,
     verbose: bool = False,
 ) -> Tuple[pl.DataFrame, int]:
     """Backfill an artist to quota using the CHEAP top tracks endpoint.
@@ -1436,6 +1437,7 @@ def backfill_artist_quota(
         existing_track_ids: Set of track IDs already in dataset
         target_track_count: Target number of unique tracks for artist
         diversity_weight: Weight for diversity vs popularity in sampling
+        prioritize_songs: Optional list of song names to prioritize
         verbose: Print progress
         
     Returns:
@@ -1479,20 +1481,54 @@ def backfill_artist_quota(
             print(f"    All top tracks already in dataset")
         return df_added, 0
     
+    # Deduplicate by normalized track name, keeping highest popularity
+    seen = {}
+    for t in new_tracks:
+        key = normalize_track_name(t.get("trackTitle", ""))
+        pop = t.get("popularity", 0) or 0
+        if key not in seen or pop > seen[key].get("popularity", 0):
+            seen[key] = t
+    new_tracks = list(seen.values())
+    
     # Get audio features for sampling
     spotify_ids = [t.get("href", "").split("/")[-1] for t in new_tracks if t.get("href")]
     features = client.get_audio_features(spotify_ids)
     
-    # Sample using weighted_track_sample (popularity + diversity)
-    sampled = weighted_track_sample(
-        new_tracks,
-        features,
-        target_count=needed,
-        diversity_weight=diversity_weight,
-    )
+    # Handle prioritized songs
+    prioritized_tracks = []
+    remaining_tracks = new_tracks.copy()
+    
+    if prioritize_songs:
+        song_norms = [normalize_track_name(s.strip()) for s in prioritize_songs]
+        
+        for track in new_tracks:
+            track_norm = normalize_track_name(track.get("trackTitle", ""))
+            if track_norm in song_norms:
+                prioritized_tracks.append(track)
+                remaining_tracks.remove(track)
+                if verbose:
+                    print(f"    ✓ Found requested song: {track.get('trackTitle')}")
+        
+        not_found = [s for s in prioritize_songs if normalize_track_name(s.strip()) not in 
+                     [normalize_track_name(t.get("trackTitle", "")) for t in prioritized_tracks]]
+        if not_found and verbose:
+            print(f"    Not found (or already in dataset): {', '.join(not_found)}")
+    
+    # Sample remaining tracks using weighted_track_sample (popularity + diversity)
+    slots_needed = needed - len(prioritized_tracks)
+    if slots_needed > 0 and remaining_tracks:
+        sampled = weighted_track_sample(
+            remaining_tracks,
+            features,
+            target_count=slots_needed,
+            diversity_weight=diversity_weight,
+        )
+        final_tracks = prioritized_tracks + sampled
+    else:
+        final_tracks = prioritized_tracks[:needed]
     
     # Build rows and deduplicate
-    df_new = build_rows(artist_name, sampled, features, genre, verbose)
+    df_new = build_rows(artist_name, final_tracks, features, genre, verbose)
     df_new = deduplicate_tracks_polars(df_new)
     
     # Remove tracks already in main dataset

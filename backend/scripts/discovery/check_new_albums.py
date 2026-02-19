@@ -63,7 +63,7 @@ SKIP_ALBUM_RE = re.compile('|'.join(SKIP_ALBUM_PATTERNS), re.IGNORECASE)
 # Add parent directory to path for shared modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from track_dedup import deduplicate_tracks_polars
+from track_dedup import deduplicate_tracks_polars, normalize_track_name
 from utils import (
     ReccoBeatsClient,
     search_artist,
@@ -340,6 +340,7 @@ def add_missing_albums(
     keep_all: bool = False,
     tracks_per_album: int = 5,
     diversity_weight: float = DEFAULT_DIVERSITY_WEIGHT,
+    prioritize_songs: Optional[List[str]] = None,
 ) -> pl.DataFrame:
     """Add tracks from missing albums to the dataset.
     
@@ -347,6 +348,7 @@ def add_missing_albums(
         keep_all: If True, add ALL tracks from each album. If False, sample a representative subset.
         tracks_per_album: Target tracks per album when sampling (default 5).
         diversity_weight: Weight for diversity vs popularity in sampling (0-1).
+        prioritize_songs: List of song names to prioritize (matched by normalized name).
     """
     from schema import normalize_for_merge
 
@@ -383,15 +385,31 @@ def add_missing_albums(
         
         # Sample tracks using weighted_track_sample (popularity + diversity)
         if not keep_all and len(new_tracks) > tracks_per_album:
-            sampled = weighted_track_sample(
-                new_tracks,
-                features,
-                target_count=tracks_per_album,
-                diversity_weight=diversity_weight,
-            )
+            # Prioritize specific songs if requested
+            priority_tracks = []
+            remaining_tracks = new_tracks
+            if prioritize_songs:
+                priority_names = {normalize_track_name(s) for s in prioritize_songs}
+                priority_tracks = [t for t in new_tracks if normalize_track_name(t.get("trackTitle", "")) in priority_names]
+                remaining_tracks = [t for t in new_tracks if t not in priority_tracks]
+                if priority_tracks and verbose:
+                    print(f"    Prioritized {len(priority_tracks)} requested songs")
+            
+            # Sample remaining slots
+            slots_remaining = max(0, tracks_per_album - len(priority_tracks))
+            if slots_remaining > 0 and remaining_tracks:
+                sampled = weighted_track_sample(
+                    remaining_tracks,
+                    features,
+                    target_count=slots_remaining,
+                    diversity_weight=diversity_weight,
+                )
+            else:
+                sampled = []
+            
+            new_tracks = priority_tracks + sampled
             if verbose:
-                print(f"    Sampled {len(sampled)}/{len(new_tracks)} tracks (diversity={diversity_weight})")
-            new_tracks = sampled
+                print(f"    Sampled {len(new_tracks)}/{len(new_tracks)} tracks (diversity={diversity_weight})")
         
         df_rows = build_rows(artist_name, new_tracks, features, genre, verbose)
         
@@ -438,6 +456,7 @@ def process_artist(
     skip_variants: bool = True,
     include_singles: bool = False,
     keep_all: bool = False,
+    prioritize_songs: Optional[List[str]] = None,
 ) -> Tuple[pl.DataFrame, int, int]:
     """Process a single artist. Returns (updated_df_added, albums_checked, albums_missing)."""
     client = ReccoBeatsClient()
@@ -498,6 +517,7 @@ def process_artist(
             df_main=df_main,
             verbose=verbose,
             keep_all=keep_all,
+            prioritize_songs=prioritize_songs,
         )
     
     total_missing = sum(a['missing_tracks'] for a in missing_albums)
@@ -517,6 +537,7 @@ def main():
     parser.add_argument("--include-singles", action="store_true", help="Include singles when adding tracks")
     parser.add_argument("--keep-all", action="store_true", help="Add ALL tracks from albums (skip sampling)")
     parser.add_argument("--quota", type=int, default=25, help="Target total tracks per artist (default: 25)")
+    parser.add_argument("--songs", help="Specific song names to prioritize (comma-separated)")
     parser.add_argument("--genre", help="Override genre (otherwise auto-detected)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -562,6 +583,7 @@ def main():
     total_missing = 0
     
     skip_variants = not args.include_variants
+    prioritize_songs = [s.strip() for s in args.songs.split(",")] if args.songs else None
     
     for artist_input, is_url in artists_to_check:
         df_added, checked, missing = process_artist(
@@ -571,6 +593,7 @@ def main():
             skip_variants=skip_variants,
             include_singles=args.include_singles,
             keep_all=args.keep_all,
+            prioritize_songs=prioritize_songs,
         )
         total_checked += checked
         total_missing += missing

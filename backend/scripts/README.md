@@ -11,7 +11,9 @@ scripts/
 │   ├── filter_data.py
 │   └── process_data.py
 ├── discovery/        # Artist/album discovery
-│   ├── add_artist.py
+│   ├── add_artist.py       # Add new artists
+│   ├── check_added.py      # Manage added_artists dataset
+│   ├── grow_artist.py      # Add more tracks to existing artists
 │   ├── expand_artists.py
 │   ├── check_new_albums.py
 │   ├── check_trending.py
@@ -84,6 +86,44 @@ python add_artist.py --names "Radiohead, Coldplay"
 python add_artist.py --names "Radiohead" --expand 5
 ```
 
+### `discovery/check_added.py`
+Manage the added_artists.parquet dataset (list, delete, reclassify).
+
+```bash
+# List all added artists
+python check_added.py --list
+python check_added.py --list --tracks  # Also show track names
+
+# List tracks for a specific artist
+python check_added.py --list-tracks "Radiohead"
+
+# Delete artists from added_artists (not main dataset)
+python check_added.py --delete "Radiohead,Coldplay"
+python check_added.py --delete all
+
+# Change artist genre
+python check_added.py --reclassify "Radiohead=alt-rock"
+python check_added.py --reclassify "Radiohead=api"  # Re-fetch from TheAudioDB
+```
+
+### `discovery/grow_artist.py`
+Add more tracks to existing artists using simple top-tracks logic.
+
+```bash
+# Add 20 more tracks (default)
+python grow_artist.py "Radiohead"
+python grow_artist.py "Radiohead" --count 30
+
+# From track URL
+python grow_artist.py --track "https://open.spotify.com/track/xxx"
+
+# Ensure specific songs are included
+python grow_artist.py "Radiohead" --songs "Creep, Paranoid Android"
+
+# Actually save changes
+python grow_artist.py "Radiohead" --update
+```
+
 ### `discovery/check_new_albums.py`
 Check an artist for albums not in the dataset. Can add missing albums.
 
@@ -97,6 +137,9 @@ python check_new_albums.py "Taylor Swift" --all
 
 # Actually add missing albums to dataset
 python check_new_albums.py "Taylor Swift" --update
+
+# Prioritize specific songs when adding
+python check_new_albums.py "Taylor Swift" --update --songs "Shake It Off, Blank Space"
 ```
 
 ### `discovery/check_trending.py`
