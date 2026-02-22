@@ -16,6 +16,7 @@
         mobileSidebarOpen,
         devSettings,
         LIMITS,
+        DEFAULT_SETTINGS,
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
@@ -62,6 +63,7 @@
     const inputGenreProfile = $derived($recommendationsMeta?.input_genre_profile);
     const searchVectorAudio = $derived($recommendationsMeta?.search_vector_audio);
     const searchVectorGenre = $derived($recommendationsMeta?.search_vector_genre);
+    const totalTracks = $derived(Object.values($recommendations).reduce((sum, tracks) => sum + tracks.length, 0));
     
     // Helper to format genre profile for display
     function formatGenreProfile(genres: Array<{genre: string, pct: number}>): string {
@@ -109,16 +111,7 @@
 
     function resetSettings() {
         if (window.confirm('Reset customize settings to defaults?')) {
-            settings.set({
-                variety: 2,
-                genreWeight: 2,
-                maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
-                tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
-                showBackground: true,
-                vibeMood: 0,
-                vibeSound: 0,
-                popularity: 0,
-            });
+            settings.set(DEFAULT_SETTINGS);
         }
     }
 
@@ -370,7 +363,7 @@
 
     <section class="main-results">
         <div class="results-header">
-            <h2>{Object.keys($recommendations).length} artists for you</h2>
+            <h2>{Object.keys($recommendations).length} artists, {totalTracks} songs</h2>
             {#if $devSettings.debugMode && inputGenreProfile && inputGenreProfile.length > 0}
                 <div class="debug-input-profile">
                     <span class="debug-label">Input profile:</span>

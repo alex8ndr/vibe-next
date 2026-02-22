@@ -57,16 +57,8 @@
 			: "light";
 	}
 
-	function cycleTheme() {
-		if ($themePreference === "system") {
-			// Switch to opposite of current actual appearance
-			const actual = getActualTheme();
-			themePreference.set(actual === "dark" ? "light" : "dark");
-		} else if ($themePreference === "light") {
-			themePreference.set("dark");
-		} else {
-			themePreference.set("system");
-		}
+	function setTheme(pref: "light" | "dark" | "system") {
+		themePreference.set(pref);
 	}
 
 	function handleOutsideClick(e: MouseEvent) {
@@ -82,13 +74,7 @@
 		}
 	}
 
-	const themeIcon = $derived(
-		$themePreference === "light"
-			? "☀️"
-			: $themePreference === "dark"
-				? "🌙"
-				: "⚙️",
-	);
+
 </script>
 
 <svelte:window on:click={handleOutsideClick} />
@@ -143,13 +129,40 @@
 		</a>
 
 		<div class="header-actions">
-			<button
-				class="icon-btn"
-				onclick={cycleTheme}
-				title="Theme: {$themePreference}"
-			>
-				{themeIcon}
-			</button>
+			<div class="theme-toggle" title="Theme">
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "light"}
+					onclick={() => setTheme("light")}
+					aria-label="Light theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="5"/>
+						<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+					</svg>
+				</button>
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "system"}
+					onclick={() => setTheme("system")}
+					aria-label="System theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+						<path d="M8 21h8M12 17v4"/>
+					</svg>
+				</button>
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "dark"}
+					onclick={() => setTheme("dark")}
+					aria-label="Dark theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+					</svg>
+				</button>
+			</div>
 
 			<!-- Settings button hidden for now
 			<button
@@ -283,6 +296,46 @@
 	.icon-btn:hover {
 		color: var(--text);
 		background: var(--bg-alt);
+	}
+
+	/* Theme toggle segmented control */
+	.theme-toggle {
+		display: flex;
+		background: var(--bg-alt);
+		border-radius: 6px;
+		padding: 2px;
+		gap: 2px;
+	}
+
+	.theme-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 24px;
+		padding: 3px;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--text-3);
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.theme-btn:hover {
+		color: var(--text);
+		background: var(--surface);
+	}
+
+	.theme-btn.active {
+		background: var(--surface);
+		color: var(--gold);
+		box-shadow: 0 1px 2px var(--shadow);
+	}
+
+	.theme-btn svg {
+		width: 14px;
+		height: 14px;
 	}
 
 	/* 

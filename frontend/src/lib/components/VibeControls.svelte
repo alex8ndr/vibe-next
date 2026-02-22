@@ -2,9 +2,9 @@
     import { settings, LIMITS } from "$lib/stores";
 
     function getVarietyLabel(v: number) {
-        if (v <= 1) return "None";
-        if (v === 2) return "Low";
-        if (v === 3) return "Medium";
+        if (v === 0) return "None";
+        if (v === 1) return "Low";
+        if (v === 2) return "Medium";
         return "High";
     }
 
@@ -67,7 +67,7 @@
             <span>Variety</span>
             <span class="setting-value">{getVarietyLabel($settings.variety)}</span>
         </div>
-        <input type="range" min="1" max="4" bind:value={$settings.variety} />
+        <input type="range" min="0" max="3" bind:value={$settings.variety} />
     </div>
     <div class="setting-mini">
         <div class="setting-label-row">

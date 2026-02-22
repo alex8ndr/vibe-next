@@ -89,12 +89,12 @@ function createPersistedStore<T>(key: string, initial: T) {
 export const LIMITS = {
     MAX_INPUT_ARTISTS: 5,
     MAX_INPUT_SONGS_PER_ARTIST: 5,
-    MAX_RESULT_ARTISTS: { min: 3, max: 12, default: 6 },
-    MAX_TRACKS_PER_ARTIST: { min: 2, max: 6, default: 4 }
+    MAX_RESULT_ARTISTS: { min: 3, max: 12, default: 9 },
+    MAX_TRACKS_PER_ARTIST: { min: 2, max: 6, default: 3 }
 } as const;
 
-export const settings = createPersistedStore('vibe-settings', {
-    variety: 2,
+export const DEFAULT_SETTINGS = {
+    variety: 0,
     genreWeight: 2,
     maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
     tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
@@ -103,7 +103,9 @@ export const settings = createPersistedStore('vibe-settings', {
     vibeMood: 0,   // Chill (-1) to Energetic (+1)
     vibeSound: 0,  // Acoustic (-1) to Electronic (+1)
     popularity: 0, // Hidden Gems (-1) to Mainstream (+1)
-});
+};
+
+export const settings = createPersistedStore('vibe-settings', DEFAULT_SETTINGS);
 
 // Theme: 'light', 'dark', or 'system'
 export const themePreference = createPersistedStore<'light' | 'dark' | 'system'>('vibe-theme', 'system');

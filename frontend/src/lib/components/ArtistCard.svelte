@@ -66,6 +66,7 @@
     let showActions = $state(false);
     let isActuallyPlaying = $state(false);
     let pendingPlay: { trackId: string; trackName: string } | null = null;
+    let loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     function getHue(name: string): number {
         let hash = 0;
@@ -119,6 +120,11 @@
                         // Clear loading state when playback starts for this card's current track
                         if (!e.data.isPaused && $loadingTrackId === currentTrackId) {
                             loadingTrackId.set(null);
+                            // Clear the timeout since playback started
+                            if (loadingTimeoutId) {
+                                clearTimeout(loadingTimeoutId);
+                                loadingTimeoutId = null;
+                            }
                         }
                         
                         // Sync nowPlaying when user clicks directly on embed's play/pause button
@@ -165,6 +171,7 @@
                 if (controller) {
                     controller.pause();
                     // Reload current track to avoid Spotify login nag screen (keeps same track)
+                    // This is safe to do even if we're about to play - the new load will just override it
                     if (currentTrackId) {
                         controller.loadUri(`spotify:track:${currentTrackId}`);
                     }
@@ -173,6 +180,11 @@
                 // Clear loading state if it was for this card
                 if ($loadingTrackId === currentTrackId) {
                     loadingTrackId.set(null);
+                }
+                // Clear any pending loading timeout
+                if (loadingTimeoutId) {
+                    clearTimeout(loadingTimeoutId);
+                    loadingTimeoutId = null;
                 }
             }
         };
@@ -185,13 +197,19 @@
     });
 
     function play(trackId: string, trackName: string) {
+        // Check global playback lock - prevent starting new track while one is loading
+        if ($loadingTrackId && $loadingTrackId !== trackId) {
+            return; // Another track is loading, ignore this click
+        }
+
         // If controller isn't ready yet, queue the play request
         if (!controller || !isReady) {
             pendingPlay = { trackId, trackName };
             loadingTrackId.set(trackId);
             nowPlaying.set({ artist, trackId, trackName });
             
-            setTimeout(() => {
+            // Set a 10s timeout to clear loading state if playback never starts
+            loadingTimeoutId = setTimeout(() => {
                 if (pendingPlay && pendingPlay.trackId === trackId) {
                     pendingPlay = null;
                     loadingTrackId.set(null);
@@ -199,7 +217,7 @@
                         nowPlaying.set(null);
                     }
                 }
-            }, 8000);
+            }, 10000);
             return;
         }
 
@@ -251,6 +269,13 @@
 
         // Set loading state before starting to load
         loadingTrackId.set(trackId);
+        
+        // Set a 10s timeout to clear loading state if playback never starts
+        loadingTimeoutId = setTimeout(() => {
+            if ($loadingTrackId === trackId) {
+                loadingTrackId.set(null);
+            }
+        }, 10000);
         
         // Load and play new track (small delay helps with embed race conditions)
         currentTrackId = trackId;

@@ -48,17 +48,17 @@ VIBE_DIMENSIONS = {
 # How strongly vibe sliders affect the search (in feature units, 0-1 scale)
 VIBE_SLIDER_STRENGTH = 0.8
 
-# How many top tracks to consider for diversity sampling (2x max seeds is plenty)
+# How many top tracks to consider for diversity sampling 
 DIVERSITY_CANDIDATE_MULTIPLIER = 3
 
 # Number of tracks to recommend per artist
-TRACKS_PER_ARTIST = 4
+TRACKS_PER_ARTIST = 3
 
 # Genre focus slider (0-4: None/Low/Medium/High/Max)
 GENRE_FOCUS = 2
 
-# Variety/diversity level (1-4: None/Low/Medium/High)
-VARIETY = 2
+# Variety/diversity level (0-3: None/Low/Medium/High)
+VARIETY = 0
 
 # Max artists to return
 MAX_ARTISTS = 6
@@ -579,9 +579,9 @@ def generate_recommendations(
     # Clamp n to dataset size and fix argpartition (kth is 0-indexed, so use n-1)
     n = min(SAMPLE_SIZE, len(d_total))
     k = n - 1  # argpartition kth parameter is 0-indexed
-    if diversity > 1:
-        # Add noise scaled by diversity level
-        noise_scale = VARIETY_NOISE_SCALE * (diversity - 1)
+    if diversity > 0:
+        # Add noise scaled by diversity level (0=None, 1=Low, 2=Medium, 3=High)
+        noise_scale = VARIETY_NOISE_SCALE * diversity
         noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_total.shape).astype(np.float32)
         d_noisy = d_total.astype(np.float32) + noise
         # Use argpartition for O(n) instead of O(n log n) argsort

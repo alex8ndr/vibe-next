@@ -9,6 +9,7 @@
         favoriteTracks,
         sidebarPlaying,
         LIMITS,
+        DEFAULT_SETTINGS,
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
@@ -232,7 +233,7 @@
             <aside class="landing-vibe-panel">
                 <div class="vibe-header">
                     <h4>Customize Your Vibe</h4>
-                    <button class="icon-btn custom-reset-btn" onclick={() => settings.set({ ...$settings, vibeMood: 0, vibeSound: 0, popularity: 0 })} title="Reset to defaults">
+                    <button class="icon-btn custom-reset-btn" onclick={() => settings.set(DEFAULT_SETTINGS)} title="Reset to defaults">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg
                         >
