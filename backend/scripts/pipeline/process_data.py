@@ -4,6 +4,7 @@ Process raw Spotify data into a cleaned, encoded parquet file.
 
 Pure Polars implementation - optimized for 800MB RAM VPS.
 No Pandas conversion = ~2-3x lower peak memory.
+Merging of additional data is handled by filter_data.py.
 
 Usage:
     # Default paths from paths.py
@@ -11,9 +12,6 @@ Usage:
     
     # Custom paths
     python process_data.py -i filtered.parquet -o encoded.parquet
-    
-    # With additional tracks to merge
-    python process_data.py --merge added_artists.parquet
 
 Memory profile:
     - Previous (Polars→Pandas→Polars): ~500-600MB peak
@@ -32,10 +30,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paths import (
     FILTERED_DATASET,
-    FILTERED_CSV_ZIP,
     ENCODED_DATASET,
     get_filtered_dataset,
-    get_added_artists,
 )
 from io_utils import (
     read_input_file,
@@ -149,12 +145,6 @@ def parse_args() -> argparse.Namespace:
         help="Path to output parquet file. Default: data_encoded.parquet",
     )
     parser.add_argument(
-        "--merge",
-        type=Path,
-        default=None,
-        help="Path to additional data to merge (e.g., added_artists.parquet)",
-    )
-    parser.add_argument(
         "--max-songs",
         type=int,
         default=50,
@@ -181,9 +171,8 @@ def log(msg: str, verbose: bool) -> None:
 
 def load_and_merge_data(
     input_path: Path,
-    merge_path: Path | None,
     verbose: bool,
-) -> pl.LazyFrame:
+) -> tuple[pl.LazyFrame, int]:
     """
     Load data using Polars LazyFrame for memory efficiency.
     
@@ -198,19 +187,6 @@ def load_and_merge_data(
     # Remove pandas index artifact if present
     if "Unnamed: 0" in df.columns:
         df = df.drop("Unnamed: 0")
-    
-    # Merge additional data if provided
-    if merge_path and merge_path.exists():
-        log(f"Merging additional data from {merge_path}...", verbose)
-        df_merge = read_input_file(merge_path, normalize_schema=True)
-        
-        if "Unnamed: 0" in df_merge.columns:
-            df_merge = df_merge.drop("Unnamed: 0")
-        
-        # Concatenate and deduplicate
-        df = pl.concat([df, df_merge], how="diagonal")
-        df = df.unique(subset=["track_id"], keep="first")
-        log(f"After merge: {len(df):,} songs", verbose)
     
     n_initial = len(df)
     log(f"Loaded {n_initial:,} songs", verbose)
@@ -229,7 +205,6 @@ def load_and_merge_data(
 def process_data(
     input_path: Path,
     output_path: Path,
-    merge_path: Path | None,
     max_songs: int,
     smear_strength: float,
     verbose: bool,
@@ -237,7 +212,7 @@ def process_data(
     """Main processing pipeline - Pure Polars implementation."""
     
     # Load data as LazyFrame
-    lf, n_initial = load_and_merge_data(input_path, merge_path, verbose)
+    lf, n_initial = load_and_merge_data(input_path, verbose)
     
     # Define columns
     num_cols = [
@@ -292,10 +267,15 @@ def process_data(
     # Deduplicate tracks per artist (Pure Polars implementation)
     n_before_dedup = len(df)
     df = deduplicate_tracks_polars(df)
-    log(f"Deduplicated tracks: {n_before_dedup - len(df):,} removed, {len(df):,} remaining", verbose)
+    n_dedup_removed = n_before_dedup - len(df)
+    log(f"Name-based dedup: {n_dedup_removed:,} removed, {len(df):,} remaining", verbose)
+    if verbose:
+        n_artists_before = n_before_dedup  # approx, tracks not artists
+        log(f"  ({n_dedup_removed / n_before_dedup * 100:.1f}% of pre-dedup tracks were duplicates)", verbose)
     
     # Cap songs per artist using window function (Pure Polars)
     # This replaces: df.groupby("artist_name").cumcount() < max_songs
+    n_before_cap = len(df)
     df = (
         df
         .sort("popularity", descending=True)
@@ -308,10 +288,13 @@ def process_data(
         .filter(pl.col("_rank") <= max_songs)
         .drop("_rank")
     )
+    n_cap_removed = n_before_cap - len(df)
     
-    removed = n_initial - len(df)
-    log(f"Capped to {max_songs} songs per artist", verbose)
-    log(f"Removed {removed:,} songs total, {len(df):,} remaining", verbose)
+    log(f"Artist cap ({max_songs}/artist): {n_cap_removed:,} removed, {len(df):,} remaining", verbose)
+    if verbose:
+        log(f"  Breakdown: name-dedup={n_dedup_removed:,} + artist-cap={n_cap_removed:,} = {n_dedup_removed + n_cap_removed:,} total removed from {n_initial:,}", verbose)
+        n_artists_final = df["artist_name"].n_unique()
+        log(f"  Artists: {n_artists_final:,} unique artists in final output", verbose)
 
     # Core Metadata columns
     meta_cols = ["artist_name", "track_name", "track_id", "genre"]
@@ -487,17 +470,9 @@ def main() -> None:
     # Resolve output path
     output_path = args.output or ENCODED_DATASET
     
-    # Resolve merge path (auto-detect if not specified)
-    merge_path = args.merge
-    if merge_path is None:
-        merge_path = get_added_artists()
-        if merge_path:
-            print(f"Auto-detected added_artists: {merge_path}")
-    
     process_data(
         input_path=input_path,
         output_path=output_path,
-        merge_path=merge_path,
         max_songs=args.max_songs,
         smear_strength=args.smear_strength,
         verbose=args.verbose,

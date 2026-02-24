@@ -105,7 +105,7 @@ AUDIODB_GENRE_MAP = {
     # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
-    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop',
+    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop', 'bedroom pop': 'indie-pop', 'alternative dance': 'indie-pop',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
     'progressive rock': 'math-rock', 'prog rock': 'math-rock', 'art rock': 'psych-rock',
     'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
@@ -147,52 +147,81 @@ AUDIODB_GENRE_MAP = {
     'soul': 'soul', 'neo soul': 'soul', 'neo-soul': 'soul',
     'funk': 'funk', 'gospel': 'gospel',
     
-    # === Electronic ===
-    'electronic': 'electronic', 'electronica': 'electronic',
-    'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
-    'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
-    'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass',
-    'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'chill',
-    'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
-    'electro': 'electro', 'disco': 'disco', 'nu disco': 'disco',
-    'idm': 'electronic', 'glitch': 'electronic', 'breakbeat': 'breakbeat',
+  # === Electronic ===
+  'electronic': 'electronic', 'electronica': 'electronic',
+  'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
+  'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
+  'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass',
+  'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'chill',
+  'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
+  'electro': 'electro', 'disco': 'disco', 'nu disco': 'disco',
+  'idm': 'electronic', 'glitch': 'electronic', 'breakbeat': 'breakbeat',
+  'future bass': 'dubstep', 'melodic bass': 'dubstep',
+  'riddim': 'dubstep', 'jungle': 'drum-and-bass',
+  'big room': 'edm', 'frenchcore': 'hardstyle',
+  'lo-fi beats': 'chill', 'chillhop': 'trip-hop',
+  'escape room': 'chill', 'background music': 'ambient',
     
-    # === Acoustic / Folk / Country ===
-    'folk': 'folk', 'acoustic': 'acoustic', 'singer-songwriter': 'singer-songwriter',
-    'singer songwriter': 'singer-songwriter',
-    'country': 'country', 'americana': 'country', 'bluegrass': 'folk',
-    'folk rock': 'folk',
+  # === Acoustic / Folk / Country ===
+  'folk': 'folk', 'acoustic': 'acoustic', 'singer-songwriter': 'singer-songwriter',
+  'singer songwriter': 'singer-songwriter',
+  'country': 'country', 'americana': 'country', 'bluegrass': 'folk',
+  'folk rock': 'folk',
+  'celtic': 'folk', 'newgrass': 'folk',
+  'stomp and holler': 'folk',
+  'southern gothic': 'country', 'red dirt': 'country',
     
-    # === Jazz / Blues ===
-    'jazz': 'jazz', 'blues': 'blues', 'swing': 'jazz', 'bebop': 'jazz',
-    'blues rock': 'blues', 'jazz fusion': 'jazz-fusion',
+  # === Jazz / Blues ===
+  'jazz': 'jazz', 'blues': 'blues', 'swing': 'jazz', 'bebop': 'jazz',
+  'blues rock': 'blues', 'jazz fusion': 'jazz-fusion',
+  'big band': 'jazz', 'ragtime': 'jazz',
+  'adult standards': 'jazz',
     
-    # === Latin ===
-    'latin': 'salsa', 'salsa': 'salsa', 'reggaeton': 'dancehall', 'latin pop': 'salsa',
-    'bossa nova': 'samba', 'samba': 'samba', 'tango': 'tango',
-    'latin rock': 'salsa', 'bachata': 'salsa',
+  # === Latin ===
+  'latin': 'salsa', 'salsa': 'salsa', 'reggaeton': 'dancehall', 'latin pop': 'salsa',
+  'bossa nova': 'samba', 'samba': 'samba', 'tango': 'tango',
+  'latin rock': 'salsa', 'bachata': 'salsa',
+  'tropical': 'salsa', 'rumba': 'salsa',
+  'corrido': 'sertanejo', 'regional mexican': 'sertanejo',
+  'nuevo regional mexicano': 'sertanejo',
     
-    # === Reggae ===
-    'reggae': 'reggae', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',
-    'roots reggae': 'reggae',
+  # === Reggae ===
+  'reggae': 'reggae', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',
+  'roots reggae': 'reggae',
+  'ragga': 'dancehall',
     
-    # === Classical ===
-    'classical': 'classical', 'opera': 'opera', 'orchestral': 'classical',
-    'soundtrack': 'pop-film', 'film score': 'pop-film', 'musical': 'show-tunes',
-    'piano': 'piano', 'instrumental': 'acoustic',
+  # === Classical ===
+  'classical': 'classical', 'opera': 'opera', 'orchestral': 'classical',
+  'soundtrack': 'pop-film', 'film score': 'pop-film', 'musical': 'show-tunes',
+  'piano': 'piano', 'instrumental': 'acoustic',
+  'choral': 'classical', 'hymns': 'gospel',
+  'show tunes': 'show-tunes', 'broadway': 'show-tunes',
     
-    # === World / Regional ===
-    'world': 'indian', 'indian': 'indian', 'bollywood': 'pop-film',
-    'world music': 'indian', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
+  # === World / Regional ===
+  'world': 'indian', 'indian': 'indian', 'bollywood': 'pop-film',
+  'world music': 'indian', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
+  'filmi': 'pop-film', 'nova mpb': 'samba',
+  'francoton': 'french', 'azontobeats': 'afrobeat',
+  'opm': 'pop', 'j-division': 'j-pop', 'otacore': 'j-pop',
     
-    # === Christian / Worship ===
-    'christian': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',
-    'worship': 'ccm', 'contemporary christian': 'ccm', 'christian metal': 'christian-metal',
-    'praise': 'ccm',
+  # === Christian / Worship ===
+  'christian': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',
+  'worship': 'ccm', 'contemporary christian': 'ccm', 'christian metal': 'christian-metal',
+  'praise': 'ccm',
     
-    # === Math Rock / Progressive ===
-    'math rock': 'math-rock', 'mathrock': 'math-rock',
-    'progressive': 'math-rock', 'experimental': 'math-rock', 'avant-garde': 'math-rock',
+  # === Math Rock / Progressive ===
+  'math rock': 'math-rock', 'mathrock': 'math-rock',
+  'progressive': 'math-rock', 'experimental': 'math-rock', 'avant-garde': 'math-rock',
+  'mathcore': 'metalcore',
+
+  # === Misc / Mood / Era ===
+  'darkwave': 'goth', 'cold wave': 'goth',
+  'ebm': 'industrial',
+  'aor': 'rock', 'doo-wop': 'rock-n-roll',
+  'psychobilly': 'punk-rock',
+  "children's music": 'pop', 'christmas': 'pop',
+  'urban contemporary': 'soul',
+  'alt z': 'indie-pop', 'mellow gold': 'rock',
 }
 
 

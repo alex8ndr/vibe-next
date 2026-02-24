@@ -14,7 +14,13 @@ Usage:
     
     # Skip add step, just run filter + process
     python run_pipeline.py --process-only
-    
+
+    # Merge all available external datasets during filtering
+    python run_pipeline.py --process-only --include-external
+
+    # Merge a specific external dataset during filtering
+    python run_pipeline.py --process-only --external yamac
+
     # Incremental update only (fastest, lowest memory)
     python run_pipeline.py --incremental
     
@@ -37,6 +43,7 @@ from paths import (
     FILTERED_DATASET, FILTERED_CSV_ZIP,
     ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP,
     ENCODED_DATASET,
+    EXTERNAL_TRACK_DATASETS,
     get_input_dataset,
 )
 
@@ -77,6 +84,45 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without saving")
     parser.add_argument("--skip-filter", action="store_true", help="Skip filter_data.py step")
     parser.add_argument("--skip-process", action="store_true", help="Skip process_data.py step")
+    parser.add_argument(
+        "--override-genres",
+        action="store_true",
+        help="Override existing genres with external data (filter step only)",
+    )
+    parser.add_argument(
+        "--override-genres-only",
+        action="store_true",
+        help="Use only external genre matches and drop everything else (filter step only)",
+    )
+    parser.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help="Skip external artist genre enrichment (filter step only)",
+    )
+    parser.add_argument(
+        "--min-songs",
+        type=int,
+        default=None,
+        help="Minimum songs per artist (filter step only)",
+    )
+    parser.add_argument(
+        "--keep-remixes",
+        action="store_true",
+        help="Keep remix tracks (filter step only)",
+    )
+    parser.add_argument(
+        "--include-external",
+        action="store_true",
+        help="Merge all available external datasets from data/external",
+    )
+    parser.add_argument(
+        "--external",
+        action="append",
+        help=(
+            "Merge specific external dataset(s) by name. "
+            "Available: " + ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys()))
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -145,8 +191,46 @@ def main():
                 "-i", str(input_file),
                 "-o", str(FILTERED_DATASET),
             ]
+            # Auto-merge added_artists; external datasets opt-in via flags.
+            merge_files = []
+            if ADDED_ARTISTS.exists():
+                merge_files.append(str(ADDED_ARTISTS))
+            elif ADDED_ARTISTS_CSV_ZIP.exists():
+                merge_files.append(str(ADDED_ARTISTS_CSV_ZIP))
+
+            external_paths = []
+            if args.include_external:
+                external_paths = [p for p in EXTERNAL_TRACK_DATASETS.values() if p.exists()]
+            elif args.external:
+                for name in args.external:
+                    if name not in EXTERNAL_TRACK_DATASETS:
+                        print(f"Unknown external dataset: {name}")
+                        print("Available:", ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys())))
+                        sys.exit(1)
+                    path = EXTERNAL_TRACK_DATASETS[name]
+                    if path.exists():
+                        external_paths.append(path)
+                    else:
+                        print(f"External dataset not found: {path}")
+
+            merge_files.extend([str(p) for p in external_paths])
+
+            if merge_files:
+                filter_args.append("--merge")
+                filter_args.extend(merge_files)
+
             if args.verbose:
                 filter_args.append("--verbose")
+            if args.override_genres:
+                filter_args.append("--override-genres")
+            if args.override_genres_only:
+                filter_args.append("--override-genres-only")
+            if args.no_enrich:
+                filter_args.append("--no-enrich")
+            if args.min_songs is not None:
+                filter_args.extend(["--min-songs", str(args.min_songs)])
+            if args.keep_remixes:
+                filter_args.append("--keep-remixes")
             
             ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
             if ret != 0:
@@ -159,12 +243,6 @@ def main():
                 "-i", str(FILTERED_DATASET),
                 "-o", str(ENCODED_DATASET),
             ]
-            # Auto-merge added_artists if it exists
-            if ADDED_ARTISTS.exists():
-                process_args.extend(["--merge", str(ADDED_ARTISTS)])
-            elif ADDED_ARTISTS_CSV_ZIP.exists():
-                process_args.extend(["--merge", str(ADDED_ARTISTS_CSV_ZIP)])
-                
             if args.verbose:
                 process_args.append("--verbose")
             
@@ -173,7 +251,7 @@ def main():
                 print(f"\nprocess_data.py failed with exit code {ret}")
                 sys.exit(ret)
     
-    print("\n✓ Pipeline complete!")
+    print("\nPipeline complete!")
 
 
 if __name__ == "__main__":

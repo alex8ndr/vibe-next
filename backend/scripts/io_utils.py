@@ -152,14 +152,14 @@ def atomic_write_parquet(
         
         # Atomic rename (POSIX: rename() is atomic; Windows: replace() is atomic)
         if verbose:
-            print(f"  Atomic rename: {temp_path.name} → {target_path.name}")
+            print(f"  Atomic rename: {temp_path.name} -> {target_path.name}")
         
         # os.replace is atomic on both POSIX and Windows
         os.replace(temp_path, target_path)
         
         if verbose:
             size_mb = target_path.stat().st_size / (1024 * 1024)
-            print(f"  ✓ Wrote {target_path.name} ({size_mb:.1f} MB)")
+            print(f"  Wrote {target_path.name} ({size_mb:.1f} MB)")
 
 
 def cleanup_temp_files(data_dir: Path, verbose: bool = False) -> int:

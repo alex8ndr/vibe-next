@@ -226,7 +226,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'french-hip-hop':   {'hip_hop': 0.1, 'french': 0.1},
     'german-hip-hop':   {'hip_hop': 0.1, 'german': 0.1},
-    'latin-urban':      {'hip_hop': 0.2, 'latin_tropical': 0.1, 'pop': 0.1}, # Reggaeton/Trap
+    'latin-urban':      {'hip_hop': 0.1, 'latin_tropical': 0.1, 'pop': 0.1}, # Reggaeton/Trap
     
     'j-pop':            {'japanese': 0.1, 'pop': 0.1}, 
     'j-rock':           {'japanese': 0.1, 'rock': 0.1},

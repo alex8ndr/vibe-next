@@ -43,3 +43,4 @@ backend/data/.music_data_cache.pkl
 
 # Pipeline intermediates (regenerable from data.csv.zip)
 backend/data/data_filtered.parquet
+backend/data/external/

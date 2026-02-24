@@ -27,10 +27,9 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paths import (
-    DATA_DIR, 
     get_input_dataset, 
+    get_added_artists,
     FILTERED_DATASET,
-    FILTERED_CSV_ZIP,
 )
 from io_utils import (
     read_input_file, 
@@ -38,6 +37,9 @@ from io_utils import (
     validate_filtered_dataset,
 )
 from artist_reassignments import get_reassigned_artists, get_artist_genre
+from schema import normalize_for_merge
+from genre_families import GENRE_DEFINITIONS
+from genre_mapping import build_artist_genre_map, apply_artist_genre_map, enrich_genres
 
 # Artists to exclude entirely (not reassign)
 EXCLUDED_ARTISTS: set[str] = set()
@@ -81,6 +83,30 @@ def parse_args() -> argparse.Namespace:
         help="Minimum songs an artist must have to be included",
     )
     parser.add_argument(
+        "--merge",
+        type=Path,
+        nargs="*",
+        default=None,
+        help="Additional parquet files to merge before filtering (e.g., external datasets)",
+    )
+    parser.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help="Skip genre enrichment from external artist data",
+    )
+    parser.add_argument(
+        "--override-genres",
+        action="store_true",
+        default=False,
+        help="Override existing genres with external data (not just fill nulls)",
+    )
+    parser.add_argument(
+        "--override-genres-only",
+        action="store_true",
+        default=False,
+        help="Replace genres only if an external match exists and drop the rest",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be filtered without writing output",
@@ -100,6 +126,10 @@ def filter_data(
     min_songs: int = 1,
     dry_run: bool = False,
     verbose: bool = False,
+    merge_paths: list[Path] | None = None,
+    enrich: bool = True,
+    override: bool = False,
+    override_only: bool = False,
 ) -> dict:
     """
     Filter dataset using Polars for memory efficiency.
@@ -109,12 +139,41 @@ def filter_data(
     
     print(f"Loading {input_path}...")
     df = read_input_file(input_path)
-    original_count = len(df)
-    original_artists = df['artist_name'].n_unique() if 'artist_name' in df.columns else 0
     
     if verbose:
         mem_mb = df.estimated_size() / (1024 * 1024)
-        print(f"  Loaded {original_count:,} rows ({mem_mb:.1f} MB in memory)")
+        print(f"  Loaded {len(df):,} rows ({mem_mb:.1f} MB in memory)")
+    
+    # Merge additional datasets before filtering
+    if merge_paths:
+        df_primary = normalize_for_merge(df)
+        n_primary = len(df_primary)
+        dfs_to_merge = [df_primary]
+        source_counts = {"primary": n_primary}
+        for mp in merge_paths:
+            if mp.exists():
+                print(f"Merging {mp}...")
+                df_ext = read_input_file(mp, normalize_schema=True)
+                df_ext = normalize_for_merge(df_ext)
+                source_counts[mp.name] = len(df_ext)
+                dfs_to_merge.append(df_ext)
+                if verbose:
+                    print(f"  {len(df_ext):,} rows from {mp.name}")
+            else:
+                print(f"Warning: merge file not found: {mp}")
+        if len(dfs_to_merge) > 1:
+            n_total_pre_dedup = sum(len(d) for d in dfs_to_merge)
+            df = pl.concat(dfs_to_merge, how="diagonal")
+            # Deduplicate on track_id, keeping primary dataset entries (first)
+            df = df.unique(subset=["track_id"], keep="first")
+            n_trackid_dedup = n_total_pre_dedup - len(df)
+            print(f"After merge + track_id dedup: {len(df):,} tracks ({n_trackid_dedup:,} exact track_id duplicates removed)")
+            if verbose:
+                for src, cnt in source_counts.items():
+                    print(f"  Source {src}: {cnt:,} input tracks")
+    
+    original_count = len(df)
+    original_artists = df['artist_name'].n_unique() if 'artist_name' in df.columns else 0
     
     stats = {
         'original_tracks': original_count,
@@ -144,7 +203,7 @@ def filter_data(
     
     # Filter 1: Excluded artists (but not those with reassignments)
     if 'artist_name' in df.columns and effective_exclusions:
-        excluded_mask = df['artist_name'].is_in(list(effective_exclusions))
+        excluded_mask = df['artist_name'].is_in(list(effective_exclusions)).fill_null(False)
         stats['removed']['excluded_artists'] = excluded_mask.sum()
         if verbose and stats['removed']['excluded_artists'] > 0:
             print(f"  Excluded artists: {stats['removed']['excluded_artists']:,} tracks")
@@ -154,7 +213,8 @@ def filter_data(
     
     # Filter 2: Excluded genres
     if 'genre' in df.columns:
-        genre_mask = df['genre'].is_in(list(EXCLUDED_GENRES))
+        # Treat null genres as not excluded (avoid dropping nulls before enrichment)
+        genre_mask = df['genre'].is_in(list(EXCLUDED_GENRES)).fill_null(False)
         stats['removed']['excluded_genres'] = genre_mask.sum()
         if verbose and stats['removed']['excluded_genres'] > 0:
             for g in EXCLUDED_GENRES:
@@ -168,7 +228,7 @@ def filter_data(
     # Filter 3: Remixes (unless --keep-remixes)
     if not keep_remixes and 'track_name' in df.columns:
         # Polars regex filter - case insensitive
-        remix_mask = df['track_name'].cast(pl.Utf8).str.to_lowercase().str.contains(r'\bremix\b')
+        remix_mask = df['track_name'].cast(pl.Utf8).str.to_lowercase().str.contains(r'\bremix\b').fill_null(False)
         stats['removed']['remixes'] = remix_mask.sum()
         if verbose:
             print(f"  Remixes: {stats['removed']['remixes']:,} tracks")
@@ -183,6 +243,9 @@ def filter_data(
             combined_filter = combined_filter & f
         df = df.filter(combined_filter)
     
+    if override_only:
+        override = True
+
     # Apply genre reassignments AFTER content filtering
     if reassigned and 'genre' in df.columns and 'artist_name' in df.columns:
         reassign_mask = df['artist_name'].is_in(list(reassigned))
@@ -204,7 +267,52 @@ def filter_data(
             if verbose:
                 print(f"  Reassigned genres for {n_reassigned:,} tracks")
     
-    # Filter 4: Minimum songs per artist
+    # Genre enrichment from external artist data
+    if enrich and 'genre' in df.columns:
+        null_before_enrich = df['genre'].null_count()
+        if override_only:
+            name_to_genre = build_artist_genre_map(
+                df,
+                override=True,
+                locked_artists=reassigned,
+            )
+            if name_to_genre:
+                df = apply_artist_genre_map(
+                    df,
+                    name_to_genre,
+                    override=True,
+                    keep_ext_genre=True,
+                )
+                df = df.filter(pl.col("_ext_genre").is_not_null()).drop("_ext_genre")
+            else:
+                df = df.filter(pl.lit(False))
+        else:
+            df = enrich_genres(
+                df,
+                verbose=verbose,
+                override=override,
+                locked_artists=reassigned,
+            )
+        null_after_enrich = df['genre'].null_count()
+        stats['genres_enriched'] = null_before_enrich - null_after_enrich
+        if override_only:
+            stats['removed']['override_only'] = original_count - len(df)
+    else:
+        stats['genres_enriched'] = 0
+
+    # Filter 4: Drop unmapped genres when override mode is enabled
+    if override and 'genre' in df.columns:
+        valid_genres = list(GENRE_DEFINITIONS.keys())
+        unmapped_mask = pl.col("genre").is_null() | ~pl.col("genre").is_in(valid_genres)
+        unmapped_count = df.filter(unmapped_mask).height
+        stats['removed']['unmapped_genres'] = unmapped_count
+        if verbose and unmapped_count > 0:
+            print(f"  Unmapped genres (override mode): {unmapped_count:,} tracks")
+        df = df.filter(~unmapped_mask)
+    else:
+        stats['removed']['unmapped_genres'] = 0
+
+    # Filter 5: Minimum songs per artist
     if min_songs > 1 and 'artist_name' in df.columns:
         before_min = len(df)
         
@@ -258,6 +366,14 @@ def main() -> None:
     # Resolve output path
     output_path = args.output or FILTERED_DATASET
     
+    # Resolve merge paths (auto-detect added_artists if not specified)
+    merge_paths = args.merge
+    if merge_paths is None:
+        added = get_added_artists()
+        if added:
+            merge_paths = [added]
+            print(f"Auto-detected added_artists: {added}")
+    
     stats = filter_data(
         input_path=input_path,
         output_path=output_path,
@@ -265,16 +381,27 @@ def main() -> None:
         min_songs=args.min_songs,
         dry_run=args.dry_run,
         verbose=args.verbose,
+        merge_paths=merge_paths,
+        enrich=not args.no_enrich,
+        override=args.override_genres,
+        override_only=args.override_genres_only,
     )
     
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Filtering Summary:")
     print(f"  Original: {stats['original_tracks']:,} tracks, {stats['original_artists']:,} artists")
+    if merge_paths:
+        print(f"  Merged:   {len(merge_paths)} additional file(s)")
     print(f"  Removed:")
+    print(f"    - Null fields:      {stats['removed']['null_required_fields']:,}")
     print(f"    - Excluded artists: {stats['removed']['excluded_artists']:,}")
     print(f"    - Excluded genres:  {stats['removed']['excluded_genres']:,}")
     print(f"    - Remixes:          {stats['removed']['remixes']:,}")
+    print(f"    - Unmapped genres:  {stats['removed']['unmapped_genres']:,}")
     print(f"    - Min songs filter: {stats['removed']['min_songs']:,}")
+    if 'override_only' in stats['removed']:
+        print(f"    - Override-only:    {stats['removed']['override_only']:,}")
     print(f"    - Total:            {stats['total_removed']:,}")
+    print(f"  Genre enrichment:     {stats['genres_enriched']:,} tracks enriched")
     print(f"  Final: {stats['final_tracks']:,} tracks, {stats['final_artists']:,} artists")
     
     if not args.dry_run:

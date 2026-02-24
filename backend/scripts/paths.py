@@ -43,6 +43,32 @@ FILTERED_CSV_ZIP = DATA_DIR / "data_filtered.csv.zip"
 ADDED_ARTISTS_CSV_ZIP = DATA_DIR / "added_artists.csv.zip"
 
 # =============================================================================
+# External Datasets (for merging and genre enrichment)
+# =============================================================================
+
+EXTERNAL_DIR = DATA_DIR / "external"
+
+# Preprocessed external tracks (output of preprocess_external_datasets.py)
+YAMAC_TRACKS = EXTERNAL_DIR / "yamac_tracks.parquet"
+ANANT_TRACKS = EXTERNAL_DIR / "anant_tracks.parquet"
+ARCHIVE_3_TRACKS = EXTERNAL_DIR / "archive_3.parquet"
+BRUCE_TRACKS = EXTERNAL_DIR / "bruce_spotify.parquet"
+SERKAN_TRACKS = EXTERNAL_DIR / "serkan_tracks.parquet"
+
+# Registry of external track datasets by name for CLI selection
+EXTERNAL_TRACK_DATASETS = {
+    "yamac": YAMAC_TRACKS,
+    "anant": ANANT_TRACKS,
+    "archive_3": ARCHIVE_3_TRACKS,
+    "bruce": BRUCE_TRACKS,
+    "serkan": SERKAN_TRACKS,
+}
+
+# Artist genre data (for enrichment)
+SERKAN_ARTISTS_CSV = EXTERNAL_DIR / "serkan-550k-spotify" / "artists (1).csv"
+YAMAC_ARTISTS_CSV = EXTERNAL_DIR / "yamac-spotify-1920-2020" / "artists.csv"
+
+# =============================================================================
 # Metadata & Manifest
 # =============================================================================
 
@@ -119,6 +145,13 @@ def print_paths():
     print(f"  (Legacy CSV)")
     print(f"  RAW_CSV_ZIP:      {RAW_CSV_ZIP} {'✓' if RAW_CSV_ZIP.exists() else '✗'}")
     print(f"  FILTERED_CSV_ZIP: {FILTERED_CSV_ZIP} {'✓' if FILTERED_CSV_ZIP.exists() else '✗'}")
+    print(f"  (External)")
+    print(f"  YAMAC_TRACKS:     {YAMAC_TRACKS} {'✓' if YAMAC_TRACKS.exists() else '✗'}")
+    print(f"  ANANT_TRACKS:     {ANANT_TRACKS} {'✓' if ANANT_TRACKS.exists() else '✗'}")
+    print(f"  ARCHIVE_3_TRACKS: {ARCHIVE_3_TRACKS} {'✓' if ARCHIVE_3_TRACKS.exists() else '✗'}")
+    print(f"  BRUCE_TRACKS:     {BRUCE_TRACKS} {'✓' if BRUCE_TRACKS.exists() else '✗'}")
+    print(f"  SERKAN_ARTISTS:   {SERKAN_ARTISTS_CSV} {'✓' if SERKAN_ARTISTS_CSV.exists() else '✗'}")
+    print(f"  YAMAC_ARTISTS:    {YAMAC_ARTISTS_CSV} {'✓' if YAMAC_ARTISTS_CSV.exists() else '✗'}")
 
 
 if __name__ == "__main__":
