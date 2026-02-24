@@ -134,6 +134,12 @@ AUDIODB_GENRE_MAP = {
     'synthpop': 'electro', 'synth pop': 'electro',
     'teen pop': 'pop', 'bubblegum pop': 'pop', 'power pop': 'power-pop',
     'art pop': 'pop', 'chamber pop': 'pop',
+    'baroque pop': 'indie-pop', 'jangle pop': 'indie-pop', 'twee pop': 'indie-pop',
+    'noise pop': 'alt-rock', 'synthwave pop': 'electro',
+    'folk-pop': 'folk', 'folk pop': 'folk',
+    'neo mellow': 'indie-pop', 'shimmer pop': 'pop',
+    'indie poptimism': 'indie-pop', 'indie dance': 'indie-pop',
+    'vapor soul': 'soul',
     
     # === K-Pop / Asian ===
     'k-pop': 'k-pop', 'kpop': 'k-pop', 'j-pop': 'j-pop', 'jpop': 'j-pop',
@@ -161,6 +167,8 @@ AUDIODB_GENRE_MAP = {
   'big room': 'edm', 'frenchcore': 'hardstyle',
   'lo-fi beats': 'chill', 'chillhop': 'trip-hop',
   'escape room': 'chill', 'background music': 'ambient',
+  'big beat': 'electronic', 'new rave': 'alt-rock',
+  'bassline': 'electronic',
     
   # === Acoustic / Folk / Country ===
   'folk': 'folk', 'acoustic': 'acoustic', 'singer-songwriter': 'singer-songwriter',
@@ -178,12 +186,14 @@ AUDIODB_GENRE_MAP = {
   'adult standards': 'jazz',
     
   # === Latin ===
-  'latin': 'salsa', 'salsa': 'salsa', 'reggaeton': 'dancehall', 'latin pop': 'salsa',
+  'latin': 'latin-urban', 'salsa': 'salsa', 'reggaeton': 'latin-urban', 'latin pop': 'pop',
   'bossa nova': 'samba', 'samba': 'samba', 'tango': 'tango',
-  'latin rock': 'salsa', 'bachata': 'salsa',
+  'bachata': 'salsa',
   'tropical': 'salsa', 'rumba': 'salsa',
   'corrido': 'sertanejo', 'regional mexican': 'sertanejo',
   'nuevo regional mexicano': 'sertanejo',
+  'latin trap': 'latin-urban', 'trap latino': 'latin-urban',
+  'reggaeton colombiano': 'latin-urban', 'reggaeton flow': 'latin-urban',
     
   # === Reggae ===
   'reggae': 'reggae', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',

@@ -130,6 +130,7 @@ def filter_data(
     enrich: bool = True,
     override: bool = False,
     override_only: bool = False,
+    added_artists_path: Path | None = None,
 ) -> dict:
     """
     Filter dataset using Polars for memory efficiency.
@@ -137,6 +138,14 @@ def filter_data(
     Returns stats dictionary with filtering summary.
     """
     
+    # Identify added_artists so they can be protected from override-only filtering
+    added_artist_names: set[str] = set()
+    if added_artists_path and added_artists_path.exists():
+        df_added_tmp = read_input_file(added_artists_path, normalize_schema=True)
+        if "artist_name" in df_added_tmp.columns:
+            added_artist_names = set(df_added_tmp["artist_name"].drop_nulls().unique().to_list())
+        del df_added_tmp
+
     print(f"Loading {input_path}...")
     df = read_input_file(input_path)
     
@@ -271,10 +280,12 @@ def filter_data(
     if enrich and 'genre' in df.columns:
         null_before_enrich = df['genre'].null_count()
         if override_only:
+            # Protect added_artists from being filtered out
+            locked = reassigned | added_artist_names
             name_to_genre = build_artist_genre_map(
                 df,
                 override=True,
-                locked_artists=reassigned,
+                locked_artists=locked,
             )
             if name_to_genre:
                 df = apply_artist_genre_map(
@@ -283,9 +294,17 @@ def filter_data(
                     override=True,
                     keep_ext_genre=True,
                 )
-                df = df.filter(pl.col("_ext_genre").is_not_null()).drop("_ext_genre")
+                # Keep rows with external match OR from added_artists
+                keep_mask = pl.col("_ext_genre").is_not_null()
+                if added_artist_names:
+                    keep_mask = keep_mask | pl.col("artist_name").is_in(list(added_artist_names))
+                df = df.filter(keep_mask).drop("_ext_genre")
             else:
-                df = df.filter(pl.lit(False))
+                # No external matches — still keep added_artists
+                if added_artist_names:
+                    df = df.filter(pl.col("artist_name").is_in(list(added_artist_names)))
+                else:
+                    df = df.filter(pl.lit(False))
         else:
             df = enrich_genres(
                 df,
@@ -368,11 +387,20 @@ def main() -> None:
     
     # Resolve merge paths (auto-detect added_artists if not specified)
     merge_paths = args.merge
+    added_artists_path = None
     if merge_paths is None:
         added = get_added_artists()
         if added:
             merge_paths = [added]
+            added_artists_path = added
             print(f"Auto-detected added_artists: {added}")
+    else:
+        # Check if any merge path looks like added_artists
+        from paths import ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP
+        for mp in merge_paths:
+            if mp.resolve() in (ADDED_ARTISTS.resolve(), ADDED_ARTISTS_CSV_ZIP.resolve()):
+                added_artists_path = mp
+                break
     
     stats = filter_data(
         input_path=input_path,
@@ -385,6 +413,7 @@ def main() -> None:
         enrich=not args.no_enrich,
         override=args.override_genres,
         override_only=args.override_genres_only,
+        added_artists_path=added_artists_path,
     )
     
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Filtering Summary:")

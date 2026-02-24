@@ -56,13 +56,14 @@ BRUCE_TRACKS = EXTERNAL_DIR / "bruce_spotify.parquet"
 SERKAN_TRACKS = EXTERNAL_DIR / "serkan_tracks.parquet"
 
 # Registry of external track datasets by name for CLI selection
-EXTERNAL_TRACK_DATASETS = {
-    "yamac": YAMAC_TRACKS,
-    "anant": ANANT_TRACKS,
-    "archive_3": ARCHIVE_3_TRACKS,
-    "bruce": BRUCE_TRACKS,
-    "serkan": SERKAN_TRACKS,
-}
+
+def get_external_track_datasets() -> dict[str, Path]:
+    """Scan EXTERNAL_DIR for all .parquet files and return {stem: path} dict."""
+    if not EXTERNAL_DIR.is_dir():
+        return {}
+    return {p.stem: p for p in sorted(EXTERNAL_DIR.glob("*.parquet"))}
+
+EXTERNAL_TRACK_DATASETS = get_external_track_datasets()
 
 # Artist genre data (for enrichment)
 SERKAN_ARTISTS_CSV = EXTERNAL_DIR / "serkan-550k-spotify" / "artists (1).csv"
@@ -145,11 +146,10 @@ def print_paths():
     print(f"  (Legacy CSV)")
     print(f"  RAW_CSV_ZIP:      {RAW_CSV_ZIP} {'✓' if RAW_CSV_ZIP.exists() else '✗'}")
     print(f"  FILTERED_CSV_ZIP: {FILTERED_CSV_ZIP} {'✓' if FILTERED_CSV_ZIP.exists() else '✗'}")
-    print(f"  (External)")
-    print(f"  YAMAC_TRACKS:     {YAMAC_TRACKS} {'✓' if YAMAC_TRACKS.exists() else '✗'}")
-    print(f"  ANANT_TRACKS:     {ANANT_TRACKS} {'✓' if ANANT_TRACKS.exists() else '✗'}")
-    print(f"  ARCHIVE_3_TRACKS: {ARCHIVE_3_TRACKS} {'✓' if ARCHIVE_3_TRACKS.exists() else '✗'}")
-    print(f"  BRUCE_TRACKS:     {BRUCE_TRACKS} {'✓' if BRUCE_TRACKS.exists() else '✗'}")
+    print(f"  (External track datasets)")
+    for name, path in get_external_track_datasets().items():
+        print(f"  {name:20s} {path} {'✓' if path.exists() else '✗'}")
+    print(f"  (External artist CSVs)")
     print(f"  SERKAN_ARTISTS:   {SERKAN_ARTISTS_CSV} {'✓' if SERKAN_ARTISTS_CSV.exists() else '✗'}")
     print(f"  YAMAC_ARTISTS:    {YAMAC_ARTISTS_CSV} {'✓' if YAMAC_ARTISTS_CSV.exists() else '✗'}")
 

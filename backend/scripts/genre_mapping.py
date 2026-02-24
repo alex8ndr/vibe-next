@@ -37,55 +37,176 @@ SERKAN_MAIN_GENRE_MAP = {
 
 # Valid output genres (keys of GENRE_DEFINITIONS)
 _VALID_GENRES = set(GENRE_DEFINITIONS.keys())
-_SUBSTRING_MIN_LEN = 4
+_SUBSTRING_MIN_LEN = 3
+# Sentinel: non-English locale detected but no dedicated output genre → filter out
+_BLOCK = object()
+
+# Compound locale tags → dedicated locale genres.
+# None values = block (non-English standalone genres containing English substrings).
 _LOCALE_OVERRIDES = {
+    # French
     "french hip hop": "french-hip-hop",
     "french rap": "french-hip-hop",
+    # German
     "german hip hop": "german-hip-hop",
     "german rap": "german-hip-hop",
+    # Japanese / Korean
     "japanese pop": "j-pop",
     "japanese rock": "j-rock",
     "korean pop": "k-pop",
+    # Chinese / Taiwanese
+    "chinese indie": "cantopop",
+    "chinese rock": "cantopop",
+    "chinese r&b": "cantopop",
+    "chinese alternative": "cantopop",
+    "taiwan indie": "cantopop",
+    "taiwan pop": "cantopop",
+    "taiwan rock": "cantopop",
+    "mandarin pop": "cantopop",
+    "mandarin rock": "cantopop",
+    # Latin (compound tags → dedicated locale genres)
+    "latin urban": "latin-urban",
+    "latin trap": "latin-urban",
+    "latin hip hop": "latin-urban",
+    "rock en espanol": "spanish",
+    "rock en español": "spanish",
+    "rock independant francais": "french",
+    "reggaeton colombiano": "latin-urban",
+    "reggaeton flow": "latin-urban",
+    # Brazilian / Portuguese
+    "brazilian pop": "samba",
+    "brazilian rock": "samba",
+    "brazilian indie": "samba",
+    "mpb": "samba",
+    # Block: non-English standalone genres that contain English substrings
+    "rock nacional": None,
 }
+
+# Locales WITH dedicated output genres — only these get positive routing.
 _LOCALE_KEYWORDS = {
+    # Original locale keywords
     "french": "french",
     "german": "german",
     "spanish": "spanish",
     "swedish": "swedish",
     "indian": "indian",
+    # Asian / Brazilian — added during genre system build-out
+    "chinese": "cantopop",
+    "taiwanese": "cantopop",
+    "taiwan": "cantopop",
+    "mandarin": "cantopop",
+    "korean": "k-pop",
+    "japanese": "j-pop",
+    "brazilian": "samba",
 }
+
+# Non-English locale prefixes to BLOCK from generic genres for now.
+# English-speaking locales (irish, scottish, welsh, australian, canadian, etc.) absent.
+# Any tag containing one of these prefixes is blocked regardless of what follows for now
+_NON_ENGLISH_PREFIXES = frozenset({
+    # Europe (non-English speaking)
+    "dutch", "belgian", "flemish",
+    "italian", "portuguese", "greek", "icelandic",
+    "norwegian", "danish", "finnish", "estonian", "latvian", "lithuanian",
+    "czech", "slovak", "hungarian", "polish", "romanian",
+    "serbian", "croatian", "bosnian", "slovenian", "bulgarian", "yugoslav",
+    "ukrainian", "belarusian", "russian",
+    "turkish", "georgian", "armenian",
+    # Latin America
+    "latin", "mexican", "argentine", "argentino", "argentina", "argentinian",
+    "colombian", "peruvian", "chilean", "venezuelan",
+    "ecuadorian", "bolivian", "uruguayan", "paraguayan",
+    "cuban", "puerto rican", "dominican",
+    # Caribbean
+    "jamaican",
+    # Asia (without dedicated genres)
+    "indonesian", "thai", "vietnamese", "filipino",
+    "malaysian", "malay", "singaporean",
+    # South Asia (without dedicated genres — indian HAS one)
+    "desi", "pakistani", "nepali", "sri lankan", "bengali", "tamil", "telugu", "punjabi",
+    # Middle East / Africa
+    "persian", "arab", "arabic", "lebanese", "palestinian", "syrian",
+    "israeli", "egyptian", "moroccan",
+    "nigerian", "south african", "african", "afro",
+})
+
+# Generic genre tokens — guards _LOCALE_KEYWORDS from non-music tags
+# (e.g. "french cinema" should NOT route to the "french" genre).
+# NOT used for _NON_ENGLISH_PREFIXES — those block unconditionally.
 _LOCALE_GENERIC_TOKENS = (
-    "pop",
-    "rock",
-    "hip hop",
-    "rap",
-    "metal",
-    "house",
-    "electronic",
-    "edm",
-    "dance",
-    "jazz",
-    "blues",
-    "folk",
-    "country",
-    "punk",
-    "alternative",
-    "indie",
+    "pop", "rock", "hip hop", "rap", "metal", "house", "electronic",
+    "edm", "dance", "jazz", "blues", "folk", "country", "punk",
+    "alternative", "indie", "soul", "r&b", "reggae", "funk",
+    "ska", "techno", "trance", "classical", "disco",
 )
 
-def _token_in_tag(tag: str, token: str) -> bool:
-    return re.search(rf"\b{re.escape(token)}\b", tag) is not None
+# ---------------------------------------------------------------------------
+# Pre-compiled regex patterns — avoids per-call re.compile / re.search loops
+# ---------------------------------------------------------------------------
+_NON_ENGLISH_RE = re.compile(
+    r"\b(?:" + "|".join(
+        re.escape(p) for p in sorted(_NON_ENGLISH_PREFIXES, key=len, reverse=True)
+    ) + r")\b"
+)
 
-def _map_locale_genre(tag: str) -> str | None:
+_GENERIC_TOKEN_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(t) for t in _LOCALE_GENERIC_TOKENS) + r")\b"
+)
+
+_LOCALE_KEYWORD_RES: dict[str, re.Pattern] = {
+    locale: re.compile(rf"\b{re.escape(locale)}\b")
+    for locale in _LOCALE_KEYWORDS
+}
+
+_AUDIODB_SUBSTRING_RES: list[tuple[re.Pattern, str]] = [
+    (re.compile(rf"\b{re.escape(key)}\b"), genre)
+    for key, genre in AUDIODB_GENRE_MAP.items()
+    if len(key) >= _SUBSTRING_MIN_LEN
+]
+
+
+def _map_locale_genre(tag: str):
+    """Check if tag is a locale-prefixed genre.
+
+    Returns:
+        genre string  – use this dedicated locale genre
+        _BLOCK        – non-English locale detected, no dedicated genre → filter out
+        None          – no locale pattern matched, continue to AUDIODB_GENRE_MAP
+    """
     for key, genre in _LOCALE_OVERRIDES.items():
         if key in tag:
-            return genre
+            return genre if genre is not None else _BLOCK
 
-    if any(_token_in_tag(tag, token) for token in _LOCALE_GENERIC_TOKENS):
+    # Locale keywords (positive routing) — only with a genre token guard
+    # to avoid "french cinema" → french
+    if _GENERIC_TOKEN_RE.search(tag):
         for locale, genre in _LOCALE_KEYWORDS.items():
-            if _token_in_tag(tag, locale):
+            if _LOCALE_KEYWORD_RES[locale].search(tag):
                 return genre
 
+    # Non-English prefixes — single compiled regex, no per-prefix loop
+    if _NON_ENGLISH_RE.search(tag):
+        return _BLOCK
+
+    return None
+
+
+# Locale output genres — dedicated locale genres always allowed even for blocked artists
+_LOCALE_OUTPUT_GENRES = (
+    set(_LOCALE_KEYWORDS.values())
+    | {v for v in _LOCALE_OVERRIDES.values() if v is not None}
+)
+
+
+def _map_standard_genre(tag: str) -> str | None:
+    """Map a tag through _VALID_GENRES and AUDIODB_GENRE_MAP (no locale logic)."""
+    if tag in _VALID_GENRES:
+        return tag
+    if tag in AUDIODB_GENRE_MAP:
+        return AUDIODB_GENRE_MAP[tag]
+    for pattern, genre in _AUDIODB_SUBSTRING_RES:
+        if pattern.search(tag):
+            return genre
     return None
 
 
@@ -95,27 +216,49 @@ def map_raw_genre(raw_genre: str) -> str | None:
     if not tag:
         return None
 
-    # Direct match in vocabulary
     if tag in _VALID_GENRES:
         return tag
 
-    # Exact match in AUDIODB_GENRE_MAP
-    if tag in AUDIODB_GENRE_MAP:
-        return AUDIODB_GENRE_MAP[tag]
+    locale_result = _map_locale_genre(tag)
+    if locale_result is _BLOCK:
+        return None
+    if locale_result is not None:
+        return locale_result
 
-    # Locale-aware overrides (prefer language/region tags over broad genres)
-    locale_genre = _map_locale_genre(tag)
-    if locale_genre:
-        return locale_genre
+    return _map_standard_genre(tag)
 
-    # Substring match: map key contained in raw tag (avoid ultra-short keys like "pop")
-    for key, genre in AUDIODB_GENRE_MAP.items():
-        if len(key) < _SUBSTRING_MIN_LEN:
+
+def map_artist_tags(tags: list[str]):
+    """Map a list of artist tags to a single genre, with per-artist blocking.
+
+    Once any tag triggers _BLOCK (non-English locale detected), subsequent tags
+    are only allowed to match dedicated locale genres — generic genres are skipped.
+
+    Returns:
+        genre string  – matched genre
+        _BLOCK        – all tags blocked, no dedicated locale genre found
+        None          – no tags matched at all
+    """
+    blocked = False
+    for raw_tag in tags:
+        tag = raw_tag.lower().strip()
+        if not tag:
             continue
-        if key in tag:
+
+        locale_result = _map_locale_genre(tag)
+        if locale_result is _BLOCK:
+            blocked = True
+            continue
+        if locale_result is not None:
+            return locale_result
+
+        genre = _map_standard_genre(tag)
+        if genre:
+            if blocked and genre not in _LOCALE_OUTPUT_GENRES:
+                continue
             return genre
 
-    return None
+    return _BLOCK if blocked else None
 
 
 def _parse_genres_list(raw: str | None) -> list[str]:
@@ -155,11 +298,9 @@ def load_artist_genre_lookup() -> dict[str, str]:
             if norm_name in lookup:
                 continue
 
-            for tag in _parse_genres_list(row.get("genres")):
-                genre = map_raw_genre(tag)
-                if genre:
-                    lookup[norm_name] = genre
-                    break
+            genre = map_artist_tags(_parse_genres_list(row.get("genres")))
+            if genre and genre is not _BLOCK:
+                lookup[norm_name] = genre
     else:
         print(f"Yamac artists CSV not found: {YAMAC_ARTISTS_CSV}")
 
@@ -174,14 +315,13 @@ def load_artist_genre_lookup() -> dict[str, str]:
             if norm_name in lookup:
                 continue
 
-            # Try raw sub-genres first
-            genre = None
-            for tag in _parse_genres_list(row.get("genres")):
-                genre = map_raw_genre(tag)
-                if genre:
-                    break
+            # Try raw sub-genres first (with per-artist blocking)
+            genre = map_artist_tags(_parse_genres_list(row.get("genres")))
 
-            # Fall back to main_genre
+            # Fall back to main_genre — but NOT if tags were blocked
+            # (Tipe-X fix: blocked locale tags + main_genre "Rock" → skip)
+            if genre is _BLOCK:
+                continue
             if not genre:
                 main = row.get("main_genre")
                 if main and isinstance(main, str):

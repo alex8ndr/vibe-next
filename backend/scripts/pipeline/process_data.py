@@ -161,6 +161,11 @@ def parse_args() -> argparse.Namespace:
         default=0.6,
         help="Strength of inter-artist genre smearing (0.0 to 1.0)",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Dev mode: use fast compression (zstd level 1 instead of 22)",
+    )
     return parser.parse_args()
 
 
@@ -208,6 +213,7 @@ def process_data(
     max_songs: int,
     smear_strength: float,
     verbose: bool,
+    dev: bool = False,
 ) -> None:
     """Main processing pipeline - Pure Polars implementation."""
     
@@ -426,12 +432,15 @@ def process_data(
             print(f"  {dtype}")
 
     # Atomic write with validation
+    compression_level = 2 if dev else 22
+    if dev:
+        print("[DEV MODE] Using fast compression (zstd level 1)")
     log(f"Writing to {output_path}...", verbose)
     atomic_write_parquet(
         df,
         output_path,
         compression="zstd",
-        compression_level=22,
+        compression_level=compression_level,
         validate=validate_encoded_dataset,
         verbose=verbose,
     )
@@ -476,6 +485,7 @@ def main() -> None:
         max_songs=args.max_songs,
         smear_strength=args.smear_strength,
         verbose=args.verbose,
+        dev=args.dev,
     )
 
 

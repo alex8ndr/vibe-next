@@ -44,6 +44,7 @@ from paths import (
     ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP,
     ENCODED_DATASET,
     EXTERNAL_TRACK_DATASETS,
+    get_external_track_datasets,
     get_input_dataset,
 )
 
@@ -123,6 +124,7 @@ def main():
             "Available: " + ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys()))
         ),
     )
+    parser.add_argument("--dev", action="store_true", help="Dev mode: fast compression for quicker processing")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -199,15 +201,16 @@ def main():
                 merge_files.append(str(ADDED_ARTISTS_CSV_ZIP))
 
             external_paths = []
+            available = get_external_track_datasets()
             if args.include_external:
-                external_paths = [p for p in EXTERNAL_TRACK_DATASETS.values() if p.exists()]
+                external_paths = [p for p in available.values() if p.exists()]
             elif args.external:
                 for name in args.external:
-                    if name not in EXTERNAL_TRACK_DATASETS:
+                    if name not in available:
                         print(f"Unknown external dataset: {name}")
-                        print("Available:", ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys())))
+                        print("Available:", ", ".join(sorted(available.keys())))
                         sys.exit(1)
-                    path = EXTERNAL_TRACK_DATASETS[name]
+                    path = available[name]
                     if path.exists():
                         external_paths.append(path)
                     else:
@@ -245,6 +248,8 @@ def main():
             ]
             if args.verbose:
                 process_args.append("--verbose")
+            if args.dev:
+                process_args.append("--dev")
             
             ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
             if ret != 0:
