@@ -65,9 +65,15 @@ def get_external_track_datasets() -> dict[str, Path]:
 
 EXTERNAL_TRACK_DATASETS = get_external_track_datasets()
 
-# Artist genre data (for enrichment)
+# Artist genre data — raw source CSVs (used by preprocess_genre_sources.py)
 SERKAN_ARTISTS_CSV = EXTERNAL_DIR / "serkan-550k-spotify" / "artists (1).csv"
 YAMAC_ARTISTS_CSV = EXTERNAL_DIR / "yamac-spotify-1920-2020" / "artists.csv"
+
+# Preprocessed artist genre parquets (standardized schema, used at runtime)
+GENRE_DIR = EXTERNAL_DIR / "genre"
+SERKAN_GENRE = GENRE_DIR / "serkan.parquet"
+YAMAC_GENRE = GENRE_DIR / "yamac.parquet"
+VECTORQL_GENRE = GENRE_DIR / "vectorql.parquet"
 
 # =============================================================================
 # Metadata & Manifest
@@ -152,6 +158,10 @@ def print_paths():
     print(f"  (External artist CSVs)")
     print(f"  SERKAN_ARTISTS:   {SERKAN_ARTISTS_CSV} {'✓' if SERKAN_ARTISTS_CSV.exists() else '✗'}")
     print(f"  YAMAC_ARTISTS:    {YAMAC_ARTISTS_CSV} {'✓' if YAMAC_ARTISTS_CSV.exists() else '✗'}")
+    print(f"  (Preprocessed genre sources)")
+    print(f"  SERKAN_GENRE:     {SERKAN_GENRE} {'✓' if SERKAN_GENRE.exists() else '✗'}")
+    print(f"  YAMAC_GENRE:      {YAMAC_GENRE} {'✓' if YAMAC_GENRE.exists() else '✗'}")
+    print(f"  VECTORQL_GENRE:   {VECTORQL_GENRE} {'✓' if VECTORQL_GENRE.exists() else '✗'}")
 
 
 if __name__ == "__main__":

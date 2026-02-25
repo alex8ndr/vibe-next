@@ -17,7 +17,7 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).parent))
 
 from genre_families import GENRE_DEFINITIONS
-from paths import SERKAN_ARTISTS_CSV, YAMAC_ARTISTS_CSV
+from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE
 from track_dedup import normalize_artist_name
 from utils import AUDIODB_GENRE_MAP
 
@@ -229,10 +229,13 @@ def map_raw_genre(raw_genre: str) -> str | None:
 
 
 def map_artist_tags(tags: list[str]):
-    """Map a list of artist tags to a single genre, with per-artist blocking.
+    """Map a list of artist tags to a single genre via majority voting.
 
+    Locale tags return immediately (they're special).
     Once any tag triggers _BLOCK (non-English locale detected), subsequent tags
-    are only allowed to match dedicated locale genres — generic genres are skipped.
+    are only allowed to vote for dedicated locale genres — generic genres are skipped.
+    Among non-locale tags, all votes are collected and the genre with the most
+    votes wins (ties broken arbitrarily).
 
     Returns:
         genre string  – matched genre
@@ -240,6 +243,8 @@ def map_artist_tags(tags: list[str]):
         None          – no tags matched at all
     """
     blocked = False
+    votes: dict[str, int] = {}
+
     for raw_tag in tags:
         tag = raw_tag.lower().strip()
         if not tag:
@@ -256,7 +261,10 @@ def map_artist_tags(tags: list[str]):
         if genre:
             if blocked and genre not in _LOCALE_OUTPUT_GENRES:
                 continue
-            return genre
+            votes[genre] = votes.get(genre, 0) + 1
+
+    if votes:
+        return max(votes, key=votes.get)
 
     return _BLOCK if blocked else None
 
@@ -281,58 +289,48 @@ def _parse_genres_list(raw: str | None) -> list[str]:
 
 def load_artist_genre_lookup() -> dict[str, str]:
     """
-    Load external artist CSVs and build a normalized_artist_name → genre lookup.
+    Load preprocessed artist genre parquets and build a normalized_artist_name → genre lookup.
 
-    Yamac entries take priority over Serkan for the same artist name.
+    When the same normalized name appears across sources, the entry with
+    highest popularity wins.
     """
-    lookup: dict[str, str] = {}
+    # (genre, popularity) — keeps highest-popularity entry per normalized name
+    lookup: dict[str, tuple[str, int]] = {}
 
-    # --- Yamac (priority source) ---
-    if YAMAC_ARTISTS_CSV.exists():
-        df = pl.read_csv(YAMAC_ARTISTS_CSV, infer_schema_length=1000)
+    for path in [SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE]:
+        if not path.exists():
+            print(f"Genre source not found: {path}")
+            continue
+
+        df = pl.read_parquet(path)
         for row in df.iter_rows(named=True):
             name = row.get("name")
             if not name:
                 continue
             norm_name = normalize_artist_name(str(name))
-            if norm_name in lookup:
-                continue
 
-            genre = map_artist_tags(_parse_genres_list(row.get("genres")))
-            if genre and genre is not _BLOCK:
-                lookup[norm_name] = genre
-    else:
-        print(f"Yamac artists CSV not found: {YAMAC_ARTISTS_CSV}")
+            tags = row.get("genres") or []
+            pop = row.get("popularity") or 0
 
-    # --- Serkan (fallback source) ---
-    if SERKAN_ARTISTS_CSV.exists():
-        df = pl.read_csv(SERKAN_ARTISTS_CSV, infer_schema_length=1000)
-        for row in df.iter_rows(named=True):
-            name = row.get("name")
-            if not name:
-                continue
-            norm_name = normalize_artist_name(str(name))
-            if norm_name in lookup:
-                continue
+            genre = map_artist_tags(tags)
 
-            # Try raw sub-genres first (with per-artist blocking)
-            genre = map_artist_tags(_parse_genres_list(row.get("genres")))
-
-            # Fall back to main_genre — but NOT if tags were blocked
-            # (Tipe-X fix: blocked locale tags + main_genre "Rock" → skip)
+            # Fallback: Serkan main_genre → our vocabulary (but NOT if blocked)
             if genre is _BLOCK:
                 continue
             if not genre:
-                main = row.get("main_genre")
-                if main and isinstance(main, str):
-                    genre = SERKAN_MAIN_GENRE_MAP.get(main.strip())
+                fallback = row.get("fallback")
+                if fallback and isinstance(fallback, str):
+                    genre = SERKAN_MAIN_GENRE_MAP.get(fallback.strip())
 
-            if genre:
-                lookup[norm_name] = genre
-    else:
-        print(f"Serkan artists CSV not found: {SERKAN_ARTISTS_CSV}")
+            if not genre:
+                continue
 
-    return lookup
+            # Popularity-based dedup: keep highest popularity
+            existing = lookup.get(norm_name)
+            if existing is None or pop > existing[1]:
+                lookup[norm_name] = (genre, pop)
+
+    return {name: genre for name, (genre, _) in lookup.items()}
 
 
 def build_artist_genre_map(

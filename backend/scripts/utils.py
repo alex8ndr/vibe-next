@@ -105,7 +105,7 @@ AUDIODB_GENRE_MAP = {
     # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
-    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop', 'bedroom pop': 'indie-pop', 'alternative dance': 'indie-pop',
+    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop', 'bedroom pop': 'indie-pop', 'alternative dance': 'electronic',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
     'progressive rock': 'math-rock', 'prog rock': 'math-rock', 'art rock': 'psych-rock',
     'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
@@ -130,7 +130,7 @@ AUDIODB_GENRE_MAP = {
     'post-hardcore': 'post-hardcore', 'emo': 'emo', 'screamo': 'emo', 'skate punk': 'punk',
     
     # === Pop ===
-    'pop': 'pop', 'dance pop': 'dance', 'electropop': 'electro', 'synth-pop': 'electro',
+    'pop': 'pop', 'dance pop': 'dance', 'electropop': 'indie-pop', 'synth-pop': 'electro',
     'synthpop': 'electro', 'synth pop': 'electro',
     'teen pop': 'pop', 'bubblegum pop': 'pop', 'power pop': 'power-pop',
     'art pop': 'pop', 'chamber pop': 'pop',

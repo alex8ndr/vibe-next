@@ -294,15 +294,18 @@ def filter_data(
                     override=True,
                     keep_ext_genre=True,
                 )
-                # Keep rows with external match OR from added_artists
+                # Keep rows with external match OR from added/reassigned artists
                 keep_mask = pl.col("_ext_genre").is_not_null()
                 if added_artist_names:
                     keep_mask = keep_mask | pl.col("artist_name").is_in(list(added_artist_names))
+                if reassigned:
+                    keep_mask = keep_mask | pl.col("artist_name").is_in(list(reassigned))
                 df = df.filter(keep_mask).drop("_ext_genre")
             else:
-                # No external matches — still keep added_artists
-                if added_artist_names:
-                    df = df.filter(pl.col("artist_name").is_in(list(added_artist_names)))
+                # No external matches — still keep added/reassigned artists
+                keep_names = added_artist_names | reassigned
+                if keep_names:
+                    df = df.filter(pl.col("artist_name").is_in(list(keep_names)))
                 else:
                     df = df.filter(pl.lit(False))
         else:
