@@ -70,6 +70,12 @@ export async function fetchRecommendations(request: RecommendRequest): Promise<R
     return res.json();
 }
 
+export async function fetchStats(): Promise<{ track_count: number; artist_count: number }> {
+    const res = await fetch(`${API_BASE}/stats`);
+    if (!res.ok) throw new Error('Failed to fetch stats');
+    return res.json();
+}
+
 export async function fetchArtistTracks(artistName: string): Promise<Track[]> {
     const res = await fetch(`${API_BASE}/artists/${encodeURIComponent(artistName)}/tracks`);
     if (!res.ok) throw new Error('Failed to fetch tracks');

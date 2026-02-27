@@ -22,6 +22,7 @@
         artistTracks,
         loadingProgress,
         error,
+        datasetStats = null,
         onsearch, // event prop
         onplay,   // event prop for playing tracks
     } = $props<{
@@ -30,9 +31,16 @@
         artistTracks: Record<string, Track[]>;
         loadingProgress: number;
         error: string | null;
+        datasetStats?: { track_count: number; artist_count: number } | null;
         onsearch: () => void;
         onplay: (track: FavoriteTrack) => void;
     }>();
+
+    function formatStat(n: number): string {
+        if (n >= 1_000_000) return `${Math.floor(n / 100_000) / 10}M+`;
+        if (n >= 1_000) return `${Math.floor(n / 1_000)}K+`;
+        return `${n}`;
+    }
 
     // Local state
     let showLandingPanel = $state(false);
@@ -243,5 +251,34 @@
                 <VibeControls />
             </aside>
         {/if}
+
     </div>
+    {#if datasetStats}
+        <div class="dataset-stats">
+            <span>🎵 {formatStat(datasetStats.track_count)} songs</span>
+            <span class="stats-sep">·</span>
+            <span>🎤 {formatStat(datasetStats.artist_count)} artists</span>
+        </div>
+    {/if}
 </div>
+
+<style>
+    .dataset-stats {
+        position: absolute;
+        bottom: 1.5rem;
+        left: 0;
+        right: 0;
+        font-size: 0.75rem;
+        color: var(--text-3);
+        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        opacity: 0.7;
+    }
+
+    .stats-sep {
+        opacity: 0.5;
+    }
+</style>

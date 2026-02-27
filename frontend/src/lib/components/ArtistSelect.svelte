@@ -21,6 +21,7 @@
     let searchResults = $state<string[]>([]);
     let isSearching = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let searchSeq = 0;
 
     const filtered = $derived.by(() => {
         if (query.trim()) {
@@ -43,14 +44,22 @@
             return;
         }
         isSearching = true;
+        const seq = ++searchSeq;
         debounceTimer = setTimeout(async () => {
             try {
-                searchResults = await fetchArtists(q, 100);
+                const results = await fetchArtists(q, 100);
+                if (seq === searchSeq) {
+                    searchResults = results;
+                }
             } catch (e) {
                 console.error("Artist search failed:", e);
-                searchResults = [];
+                if (seq === searchSeq) {
+                    searchResults = [];
+                }
             }
-            isSearching = false;
+            if (seq === searchSeq) {
+                isSearching = false;
+            }
         }, 150);
 
         return () => {

@@ -7,6 +7,7 @@
         fetchArtists,
         fetchRecommendations,
         fetchArtistTracks,
+        fetchStats,
     } from "$lib/api";
     import {
         artistsList,
@@ -41,6 +42,7 @@
     let sidebarController: any = null;
     let sidebarReady = $state(false);
     let sidebarActuallyPlaying = $state(false);
+    let datasetStats = $state<{ track_count: number; artist_count: number } | null>(null);
 
     onMount(async () => {
         (window as any).onSpotifyIframeApiReady = (IFrameAPI: any) => {
@@ -54,8 +56,12 @@
         document.head.appendChild(script);
 
         try {
-            const artists = await fetchArtists("", 5000);
+            const [artists, stats] = await Promise.all([
+                fetchArtists("", 5000),
+                fetchStats().catch(() => null),
+            ]);
             artistsList.set(artists);
+            datasetStats = stats;
         } catch {
             error = "Could not connect to server";
         }
@@ -269,6 +275,7 @@
         {artistTracks}
         {loadingProgress}
         {error}
+        {datasetStats}
         onsearch={search}
         onplay={playTrack}
     />

@@ -278,7 +278,16 @@ async def get_artists(q: str = "", limit: int = 1000) -> list[str]:
     
     if q:
         q_lower = q.lower()
-        artists = [a for a in artists if q_lower in a.lower()]
+        exact, starts, substring = [], [], []
+        for a in artists:
+            a_lower = a.lower()
+            if a_lower == q_lower:
+                exact.append(a)
+            elif a_lower.startswith(q_lower):
+                starts.append(a)
+            elif q_lower in a_lower:
+                substring.append(a)
+        artists = exact + starts + substring
     
     return artists[:limit]
 
@@ -353,6 +362,17 @@ async def recommend(
         background_tasks.add_task(log_search_async, log_data)
     
     return RecommendResponse(recommendations=recs, meta=meta)
+
+
+@app.get("/stats")
+async def get_stats():
+    """Return dataset stats (track count, artist count). No auth needed."""
+    if not music_data:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+    return {
+        "track_count": len(music_data.df),
+        "artist_count": len(music_data.artists_list),
+    }
 
 
 @app.get("/artists/{artist_name:path}/tracks")

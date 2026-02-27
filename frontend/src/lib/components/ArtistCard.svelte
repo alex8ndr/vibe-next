@@ -67,6 +67,7 @@
     let isActuallyPlaying = $state(false);
     let pendingPlay: { trackId: string; trackName: string } | null = null;
     let loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let playGeneration = 0;
 
     function getHue(name: string): number {
         let hash = 0;
@@ -161,6 +162,7 @@
 
         const resetHandler = (e: CustomEvent) => {
             if (e.detail === artist) {
+                playGeneration++;
                 // If we have a pending play request, cancel it to prevent race condition
                 if (pendingPlay) {
                     pendingPlay = null;
@@ -197,9 +199,13 @@
     });
 
     function play(trackId: string, trackName: string) {
-        // Check global playback lock - prevent starting new track while one is loading
+        // If another track is loading, cancel it and proceed with the new one
         if ($loadingTrackId && $loadingTrackId !== trackId) {
-            return; // Another track is loading, ignore this click
+            loadingTrackId.set(null);
+        }
+        if (loadingTimeoutId) {
+            clearTimeout(loadingTimeoutId);
+            loadingTimeoutId = null;
         }
 
         // If controller isn't ready yet, queue the play request
@@ -279,8 +285,11 @@
         
         // Load and play new track (small delay helps with embed race conditions)
         currentTrackId = trackId;
+        const gen = ++playGeneration;
         controller.loadUri(`spotify:track:${trackId}`);
-        setTimeout(() => controller.play(), 50);
+        setTimeout(() => {
+            if (playGeneration === gen) controller.play();
+        }, 50);
         nowPlaying.set({ artist, trackId, trackName });
         trackPlayTrack(trackId, trackName, artist);
     }

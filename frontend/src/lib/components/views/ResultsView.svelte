@@ -284,7 +284,7 @@
                                         </button>
                                     {/each}
                                     {#if getFilteredTracks(artist, globalSongSearch).length === 0 && globalSongSearch}
-                                        <span class="muted">No matches</span>
+                                        <span class="muted">No matches for search</span>
                                     {/if}
                                 </div>
 
