@@ -8,6 +8,7 @@ import os
 import hashlib
 import pickle
 from time import time
+from time import perf_counter
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,12 +41,15 @@ music_data: MusicData | None = None
 def _load_cached_data() -> MusicData:
     """Load data from cache if valid and enabled, otherwise reload from parquet."""
     global music_data
+    t0 = perf_counter()
+    print(f"[startup] Data load start: {DATA_PATH}")
     
     if not DATA_PATH.exists():
         raise RuntimeError(f"Data file not found: {DATA_PATH}")
     
     # Check cache if enabled
     if ENABLE_DATA_CACHE and CACHE_PATH.exists():
+        print(f"[startup] Cache enabled, checking {CACHE_PATH}")
         cache_mtime = CACHE_PATH.stat().st_mtime
         data_mtime = DATA_PATH.stat().st_mtime
         
@@ -53,14 +57,16 @@ def _load_cached_data() -> MusicData:
             try:
                 with open(CACHE_PATH, 'rb') as f:
                     music_data = pickle.load(f)
-                print(f"Restored {len(music_data.df):,} tracks from cache")
+                elapsed = perf_counter() - t0
+                print(f"[startup] Restored {len(music_data.df):,} tracks from cache in {elapsed:.2f}s")
                 return music_data
             except Exception as e:
-                print(f"Cache load failed: {e}, reloading from parquet...")
+                print(f"[startup] Cache load failed: {e}, reloading from parquet...")
     
     # Load fresh data
     source = ParquetDataSource(DATA_PATH)
     music_data = MusicData(source)
+    print("[startup] Building in-memory structures from parquet...")
     music_data.load()
     
     # Save to cache if enabled
@@ -68,11 +74,14 @@ def _load_cached_data() -> MusicData:
         try:
             with open(CACHE_PATH, 'wb') as f:
                 pickle.dump(music_data, f)
-            print(f"Cached {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists")
+            print(f"[startup] Cached {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists")
         except Exception as e:
-            print(f"Warning: Failed to write cache: {e}")
+            print(f"[startup] Warning: Failed to write cache: {e}")
     else:
-        print(f"Loaded {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists (caching disabled)")
+        print(f"[startup] Loaded {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists (caching disabled)")
+
+    elapsed = perf_counter() - t0
+    print(f"[startup] Data load finished in {elapsed:.2f}s")
     
     return music_data
 
@@ -81,11 +90,13 @@ def _load_cached_data() -> MusicData:
 async def lifespan(app: FastAPI):
     """Load data once at startup, cleanup on shutdown."""
     global music_data
-    
+    print("[startup] Entering FastAPI lifespan startup")
     _load_cached_data()
+    print("[startup] Startup complete, API ready")
     
     yield
     
+    print("[startup] Shutting down, clearing in-memory data")
     music_data = None
 
 

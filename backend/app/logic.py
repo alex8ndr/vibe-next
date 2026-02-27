@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 from pathlib import Path
 from typing import Protocol
+from time import perf_counter
 
 FEATURE_WEIGHTS = {
     'popularity': 0.4,
@@ -67,7 +68,7 @@ MAX_ARTISTS = 6
 VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
 
 # Sample size for Gumbel noise distribution
-SAMPLE_SIZE = 1000
+SAMPLE_SIZE = 5000
 
 
 class DataSource(Protocol):
@@ -103,7 +104,10 @@ class MusicData:
         self.artist_genre_profile: dict[str, list[tuple[str, float]]] = {}
     
     def load(self) -> None:
+        t0 = perf_counter()
+        print("[startup] Loading encoded parquet...")
         df = self.source.load()
+        print(f"[startup] Loaded parquet rows: {len(df):,}")
         
         required = ['artist_name', 'track_name', 'track_id']
         for col in required:
@@ -119,6 +123,7 @@ class MusicData:
         
         self.genre_cols = [c for c in df.columns if c.startswith('genre_')]
         self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in df.columns]
+        print(f"[startup] Building audio matrix ({len(self.audio_cols)} cols)...")
         
         # Audio Matrix (Weighted for Euclidean)
         audio_data = df.select(self.audio_cols).to_numpy().astype(np.float32)
@@ -134,6 +139,7 @@ class MusicData:
         # Precompute genre norms once (avoid recomputation per request)
         self.genre_norms = np.linalg.norm(self.matrix_genre, axis=1)
         self.genre_norms[self.genre_norms == 0] = 1.0  # Prevent division by zero
+        print(f"[startup] Matrices ready (audio + genre)")
         
         # Sort artists by popularity
         artist_popularity = (
@@ -142,12 +148,14 @@ class MusicData:
             .sort('popularity', descending=True)
         )
         self.artists_list = artist_popularity['artist_name'].to_list()
+        print(f"[startup] Indexed {len(self.artists_list):,} artists by popularity")
         
         # Build track_id lookups for O(1) access
         track_ids = df['track_id'].to_list()
         artist_names = df['artist_name'].to_list()
         self.track_id_to_idx = {tid: i for i, tid in enumerate(track_ids)}
         self.track_id_to_artist = {tid: artist for tid, artist in zip(track_ids, artist_names)}
+        print(f"[startup] Built track lookup maps ({len(self.track_id_to_idx):,} track_ids)")
         
         # Precompute artist-level popularity (avg track popularity per artist)
         self._build_artist_popularity(df)
@@ -162,6 +170,8 @@ class MusicData:
                 keep_cols.append(col)
         
         self.df = df.select(keep_cols)
+        elapsed = perf_counter() - t0
+        print(f"[startup] MusicData load complete in {elapsed:.2f}s")
     
     def _build_artist_popularity(self, df: pl.DataFrame) -> None:
         """Build per-track artist popularity and track count arrays for popularity slider."""
@@ -203,34 +213,33 @@ class MusicData:
         """Build per-artist genre distribution from actual track genres (not encoded vectors)."""
         if 'genre' not in df.columns:
             return
-        
-        # Filter out null genres and group by artist
+
         genre_df = df.filter(pl.col('genre').is_not_null())
-        
-        # Count genre occurrences per artist
-        for artist in genre_df['artist_name'].unique().to_list():
-            artist_genres = genre_df.filter(pl.col('artist_name') == artist)
-            
-            # Count each genre
-            genre_counts = {}
-            for genre in artist_genres['genre'].to_list():
-                if genre:
-                    genre_counts[genre] = genre_counts.get(genre, 0) + 1
-            
-            if not genre_counts:
-                continue
-            
-            # Calculate percentages
-            total = sum(genre_counts.values())
-            genre_pcts = []
-            for genre, count in genre_counts.items():
-                pct = (count / total) * 100
-                if pct > 1:  # Only include genres with >1%
-                    genre_pcts.append((genre, round(pct, 1)))
-            
-            # Sort by percentage and keep top 3
-            genre_pcts.sort(key=lambda x: x[1], reverse=True)
-            self.artist_genre_profile[artist] = genre_pcts[:3]
+        if genre_df.is_empty():
+            return
+
+        counts = (
+            genre_df.group_by(['artist_name', 'genre'])
+            .agg(pl.len().alias('count'))
+        )
+        totals = (
+            counts.group_by('artist_name')
+            .agg(pl.col('count').sum().alias('total'))
+        )
+        enriched = (
+            counts.join(totals, on='artist_name', how='left')
+            .with_columns((pl.col('count') * 100.0 / pl.col('total')).round(1).alias('pct'))
+            .filter(pl.col('pct') > 1.0)
+            .sort(['artist_name', 'pct'], descending=[False, True])
+        )
+
+        self.artist_genre_profile.clear()
+        for row in enriched.iter_rows(named=True):
+            artist = row['artist_name']
+            item = (row['genre'], float(row['pct']))
+            bucket = self.artist_genre_profile.setdefault(artist, [])
+            if len(bucket) < 3:
+                bucket.append(item)
     
 
 
@@ -597,7 +606,11 @@ def generate_recommendations(
 
     # Zipfian scoring: rewards top matches significantly more than lower ones
     # Score = 1000 / (Rank + K)
-    scores = 1000.0 / (np.arange(1, n + 1) + 25.0)
+    # scores = 1000.0 / (np.arange(1, n + 1) + 25.0)
+
+    smoothing_factor = SAMPLE_SIZE * 0.025
+    scores = 1000.0 / (np.arange(1, n + 1) + smoothing_factor)
+
     similar_df = similar_df.with_columns(pl.Series("score", scores))
     
     # Exclude input artists and any explicitly excluded artists
