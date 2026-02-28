@@ -54,6 +54,7 @@ ANANT_TRACKS = EXTERNAL_DIR / "anant_tracks.parquet"
 ARCHIVE_3_TRACKS = EXTERNAL_DIR / "archive_3.parquet"
 BRUCE_TRACKS = EXTERNAL_DIR / "bruce_spotify.parquet"
 SERKAN_TRACKS = EXTERNAL_DIR / "serkan_tracks.parquet"
+GILDAS_TRACKS = EXTERNAL_DIR / "gildas_mapped_cap50_min2.parquet"
 
 # Registry of external track datasets by name for CLI selection
 

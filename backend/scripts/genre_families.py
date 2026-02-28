@@ -98,6 +98,8 @@ GENRE_DEFINITIONS = {
     'hip-hop':          {'hip_hop': 1.0},
     'trip-hop':         {'chill_ambient': 0.6, 'electronic_house': 0.5, 'hip_hop': 0.2}, # Downtempo
     'soul':             {'rnb_soul': 1.0, 'jazz_blues': 0.4, 'pop': 0.2},
+    'drill':            {'hip_hop': 0.8, 'bass_music': 0.3, 'electronic_techno': 0.2},
+    'grime':            {'hip_hop': 0.5, 'bass_music': 0.5, 'electronic_techno': 0.3},
     # =========================================================================
     # ELECTRONIC (House, Techno, Bass)
     # =========================================================================
@@ -124,6 +126,7 @@ GENRE_DEFINITIONS = {
     'dubstep':          {'bass_music': 1.0, 'electronic_house': 0.3},
     'drum-and-bass':    {'bass_music': 1.0, 'electronic_techno': 0.3},
     'breakbeat':        {'bass_music': 0.8, 'electronic_house': 0.4},
+    'synthwave':        {'electronic_techno': 0.5, 'electronic_house': 0.4, 'chill_ambient': 0.3},
 
     # =========================================================================
     # CHILL & AMBIENT
@@ -184,6 +187,7 @@ GENRE_DEFINITIONS = {
     'spanish':          {'world_regional': 0.3, 'latin_tropical': 0.2, 'rock': 0.1, 'pop': 0.1}, # Spanish pop rock
     'swedish':          {'world_regional': 0.3, 'pop': 0.1, 'rock': 0.1}, # Pop and Rock
     'romance':          {'world_regional': 0.3, 'classical_cinematic': 0.2, 'acoustic_folk': 0.2}, # Russian Romance
+    'flamenco':         {'acoustic_folk': 0.6, 'world_regional': 0.5, 'classical_cinematic': 0.3},
 
     # =========================================================================
     # CHRISTIAN 

@@ -79,7 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-songs",
         type=int,
-        default=1,
+        default=2,
         help="Minimum songs an artist must have to be included",
     )
     parser.add_argument(

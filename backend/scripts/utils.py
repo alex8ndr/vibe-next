@@ -232,6 +232,33 @@ AUDIODB_GENRE_MAP = {
   "children's music": 'pop', 'christmas': 'pop',
   'urban contemporary': 'soul',
   'alt z': 'indie-pop', 'mellow gold': 'rock',
+
+  # === Previously unmapped tags ===
+  'chamber music': 'classical', 'rockabilly': 'rock-n-roll',
+  'bhajan': 'indian', 'devotional': 'indian', 'kirtan': 'indian',
+  'schlager': 'party',
+  'anime': 'j-pop', 'anime score': 'j-pop',
+  'boom bap': 'hardcore-hip-hop', 'east coast hip hop': 'hardcore-hip-hop',
+  'lo-fi': 'chill', 'lofi': 'chill',
+  'chanson': 'french',
+  'neoclassical': 'classical', 'contemporary classical': 'classical',
+  'bolero': 'salsa',
+  'eurodance': 'dance', 'bubblegum dance': 'dance',
+  'cantautor': 'singer-songwriter', 'cantautore': 'singer-songwriter',
+  'coverchill': 'chill', 'chill lounge': 'chill',
+  'musicals': 'show-tunes', 'musical theatre': 'show-tunes', 'musical theater': 'show-tunes',
+  'soca': 'dancehall', 'calypso': 'dancehall',
+  'dembow': 'latin-urban', 'perreo': 'latin-urban',
+  'polka': 'folk',
+  'vocaloid': 'j-pop', 'utaite': 'j-pop',
+  'hyperpop': 'electro', 'pc music': 'electro',
+  'amapiano': 'deep-house',
+  'drill': 'drill', 'uk drill': 'drill', 'brooklyn drill': 'drill', 'chicago drill': 'drill',
+  'grime': 'grime', 'uk garage': 'grime',
+  'synthwave': 'synthwave', 'retrowave': 'synthwave', 'outrun': 'synthwave',
+  'vaporwave': 'chill',
+  'flamenco': 'flamenco', 'nuevo flamenco': 'flamenco', 'flamenco fusion': 'flamenco',
+  'traditional': 'folk', 'traditional music': 'folk',
 }
 
 
