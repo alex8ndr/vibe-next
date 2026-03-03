@@ -39,6 +39,7 @@ Usage:
 import argparse
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent
@@ -48,14 +49,14 @@ PIPELINE_DIR = SCRIPTS_DIR / "pipeline"
 # Import paths for proper path resolution
 sys.path.insert(0, str(SCRIPTS_DIR))
 from paths import (
-    RAW_DATASET, RAW_CSV_ZIP,
-    FILTERED_DATASET, FILTERED_CSV_ZIP,
+    FILTERED_DATASET,
     ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP,
     ENCODED_DATASET,
     EXTERNAL_TRACK_DATASETS,
     get_external_track_datasets,
     get_input_dataset,
     get_all_track_datasets,
+    get_added_artists,
 )
 
 
@@ -182,6 +183,11 @@ def main():
         default=0.6,
         help="Strength of inter-artist genre smearing 0.0-1.0 (process step only)",
     )
+    parser.add_argument(
+        "--subprocess",
+        action="store_true",
+        help="Use subprocess mode: write intermediate files to disk (legacy behavior)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -237,7 +243,25 @@ def main():
             sys.exit(ret)
     else:
         # Full reprocess mode
-        # Determine input file and merge files based on dataset selection mode
+        
+        # Deprecation warnings for old external flags
+        if args.include_external:
+            warnings.warn(
+                "--include-external is deprecated, use --all-datasets instead",
+                DeprecationWarning, stacklevel=2,
+            )
+        if args.external:
+            warnings.warn(
+                "--external is deprecated, use --datasets instead",
+                DeprecationWarning, stacklevel=2,
+            )
+        if args.exclude_external:
+            warnings.warn(
+                "--exclude-external is deprecated, use --all-datasets --exclude-datasets instead",
+                DeprecationWarning, stacklevel=2,
+            )
+        
+        # Determine input file and merge paths based on dataset selection mode
         if args.datasets or args.all_datasets:
             # Unified dataset selection
             available = get_all_track_datasets()
@@ -263,7 +287,7 @@ def main():
 
             print(f"Datasets: {', '.join(selected_names)}")
             input_file = selected_paths[0]
-            unified_merge = [str(p) for p in selected_paths[1:]]
+            merge_paths = selected_paths[1:]
         else:
             # Default behavior (backward compatible)
             try:
@@ -271,90 +295,121 @@ def main():
             except FileNotFoundError:
                 print("Error: No input dataset found. Run convert_to_parquet.py first.")
                 sys.exit(1)
-            unified_merge = None
-        
-        # Step 2a: Filter data
-        if not args.skip_filter:
-            filter_args = [
-                "-i", str(input_file),
-                "-o", str(FILTERED_DATASET),
-            ]
+            
+            # Auto-merge added_artists + optional external
+            merge_paths = []
+            added = get_added_artists()
+            if added:
+                merge_paths.append(added)
 
-            if unified_merge is not None:
-                # Unified mode: merge files already determined
-                merge_files = unified_merge
+            available_ext = get_external_track_datasets()
+            if args.include_external:
+                exclude_names = set(args.exclude_external or [])
+                merge_paths.extend(
+                    p for name, p in available_ext.items()
+                    if p.exists() and name not in exclude_names
+                )
+            elif args.external:
+                for name in args.external:
+                    if name not in available_ext:
+                        print(f"Unknown external dataset: {name}")
+                        print("Available:", ", ".join(sorted(available_ext.keys())))
+                        sys.exit(1)
+                    path = available_ext[name]
+                    if path.exists():
+                        merge_paths.append(path)
+                    else:
+                        print(f"External dataset not found: {path}")
+        
+        added_artists_path = get_added_artists()
+        
+        if args.subprocess:
+            # Legacy subprocess mode: writes intermediate data_filtered.parquet
+            if not args.skip_filter:
+                filter_args = ["-i", str(input_file), "-o", str(FILTERED_DATASET)]
+                if merge_paths:
+                    filter_args.append("--merge")
+                    filter_args.extend(str(p) for p in merge_paths)
+                if args.verbose:
+                    filter_args.append("--verbose")
+                if args.override_genres:
+                    filter_args.append("--override-genres")
+                if args.override_genres_only:
+                    filter_args.append("--override-genres-only")
+                if args.no_enrich:
+                    filter_args.append("--no-enrich")
+                if args.min_songs is not None:
+                    filter_args.extend(["--min-songs", str(args.min_songs)])
+                if args.keep_remixes:
+                    filter_args.append("--keep-remixes")
+                if args.max_international_pct is not None:
+                    filter_args.extend(["--max-international-pct", str(args.max_international_pct)])
+                
+                ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
+                if ret != 0:
+                    print(f"\nfilter_data.py failed with exit code {ret}")
+                    sys.exit(ret)
+            
+            if not args.skip_process:
+                process_args = ["-i", str(FILTERED_DATASET), "-o", str(ENCODED_DATASET)]
+                if args.verbose:
+                    process_args.append("--verbose")
+                if args.dev:
+                    process_args.append("--dev")
+                if args.max_artists > 0:
+                    process_args.extend(["--max-artists", str(args.max_artists)])
+                if args.max_songs != 50:
+                    process_args.extend(["--max-songs", str(args.max_songs)])
+                if args.smear_strength != 0.6:
+                    process_args.extend(["--smear-strength", str(args.smear_strength)])
+                
+                ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
+                if ret != 0:
+                    print(f"\nprocess_data.py failed with exit code {ret}")
+                    sys.exit(ret)
+        else:
+            # Default in-memory mode: no intermediate files written to disk
+            sys.path.insert(0, str(PIPELINE_DIR))
+            from filter_data import filter_data as _run_filter
+            from process_data import process_data as _run_process
+            
+            if not args.skip_filter:
+                print("\nRunning filter_data (in-memory)...")
+                print("=" * 60)
+                stats, filtered_df = _run_filter(
+                    input_path=input_file,
+                    output_path=None,
+                    keep_remixes=args.keep_remixes,
+                    min_songs=args.min_songs if args.min_songs is not None else 2,
+                    verbose=args.verbose,
+                    merge_paths=merge_paths or None,
+                    enrich=not args.no_enrich,
+                    override=args.override_genres,
+                    override_only=args.override_genres_only,
+                    added_artists_path=added_artists_path,
+                    max_international_pct=args.max_international_pct,
+                )
+                print("=" * 60)
+                print(f"Filtered: {stats['original_tracks']:,} -> {stats['final_tracks']:,} tracks")
             else:
-                # Legacy mode: auto-merge added_artists + optional external
-                merge_files = []
-                if ADDED_ARTISTS.exists():
-                    merge_files.append(str(ADDED_ARTISTS))
-                elif ADDED_ARTISTS_CSV_ZIP.exists():
-                    merge_files.append(str(ADDED_ARTISTS_CSV_ZIP))
-
-                external_paths = []
-                available = get_external_track_datasets()
-                if args.include_external:
-                    exclude_names = set(args.exclude_external or [])
-                    external_paths = [p for name, p in available.items() if p.exists() and name not in exclude_names]
-                elif args.external:
-                    for name in args.external:
-                        if name not in available:
-                            print(f"Unknown external dataset: {name}")
-                            print("Available:", ", ".join(sorted(available.keys())))
-                            sys.exit(1)
-                        path = available[name]
-                        if path.exists():
-                            external_paths.append(path)
-                        else:
-                            print(f"External dataset not found: {path}")
-
-                merge_files.extend([str(p) for p in external_paths])
-
-            if merge_files:
-                filter_args.append("--merge")
-                filter_args.extend(merge_files)
-
-            if args.verbose:
-                filter_args.append("--verbose")
-            if args.override_genres:
-                filter_args.append("--override-genres")
-            if args.override_genres_only:
-                filter_args.append("--override-genres-only")
-            if args.no_enrich:
-                filter_args.append("--no-enrich")
-            if args.min_songs is not None:
-                filter_args.extend(["--min-songs", str(args.min_songs)])
-            if args.keep_remixes:
-                filter_args.append("--keep-remixes")
-            if args.max_international_pct is not None:
-                filter_args.extend(["--max-international-pct", str(args.max_international_pct)])
+                from io_utils import read_input_file
+                filtered_df = read_input_file(FILTERED_DATASET)
+                print(f"Loaded existing filtered data: {len(filtered_df):,} tracks")
             
-            ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
-            if ret != 0:
-                print(f"\nfilter_data.py failed with exit code {ret}")
-                sys.exit(ret)
-        
-        # Step 2b: Process data
-        if not args.skip_process:
-            process_args = [
-                "-i", str(FILTERED_DATASET),
-                "-o", str(ENCODED_DATASET),
-            ]
-            if args.verbose:
-                process_args.append("--verbose")
-            if args.dev:
-                process_args.append("--dev")
-            if args.max_artists > 0:
-                process_args.extend(["--max-artists", str(args.max_artists)])
-            if args.max_songs != 50:
-                process_args.extend(["--max-songs", str(args.max_songs)])
-            if args.smear_strength != 0.6:
-                process_args.extend(["--smear-strength", str(args.smear_strength)])
-            
-            ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
-            if ret != 0:
-                print(f"\nprocess_data.py failed with exit code {ret}")
-                sys.exit(ret)
+            if not args.skip_process:
+                print("\nRunning process_data (in-memory)...")
+                print("=" * 60)
+                _run_process(
+                    input_path=None,
+                    output_path=ENCODED_DATASET,
+                    max_songs=args.max_songs,
+                    max_artists=args.max_artists,
+                    smear_strength=args.smear_strength,
+                    verbose=args.verbose,
+                    dev=args.dev,
+                    input_df=filtered_df,
+                )
+                print("=" * 60)
     
     print("\nPipeline complete!")
 

@@ -48,7 +48,6 @@ from io_utils import (
 )
 from genre_families import GENRE_DEFINITIONS
 from track_dedup import deduplicate_tracks_polars
-from b2_sync import is_b2_enabled, pull_before_pipeline, push_after_pipeline
 
 
 def compute_genre_embeddings_polars(unique_genres: list[str]) -> pl.DataFrame:
@@ -431,27 +430,9 @@ def main():
         "-v", "--verbose", action="store_true",
         help="Verbose output",
     )
-    parser.add_argument(
-        "--sync", action="store_true",
-        help="Sync with B2 before/after update (requires VIBE_B2_ENABLED=1)",
-    )
-    parser.add_argument(
-        "--no-sync", action="store_true",
-        help="Skip B2 sync even if enabled",
-    )
-    
     args = parser.parse_args()
     
-    # Determine if we should sync with B2
-    do_sync = (args.sync or is_b2_enabled()) and not args.no_sync and not args.dry_run
-    
     try:
-        # Pull from B2 FIRST so fresh VPS can bootstrap from remote data
-        if do_sync:
-            if not pull_before_pipeline(verbose=args.verbose):
-                print("Warning: B2 pull failed, continuing with local data")
-        
-        # Now check for source files (after B2 pull)
         source_path = args.source or get_added_artists()
         if source_path is None:
             print("Error: No source file found. Specify --source or create added_artists.parquet")
@@ -478,11 +459,6 @@ def main():
         
         if not args.dry_run and stats['added'] > 0:
             print(f"\n✓ Updated {target_path}")
-            
-            # Push to B2 after successful update (if enabled)
-            if do_sync:
-                if not push_after_pipeline(verbose=args.verbose):
-                    print("Warning: B2 push failed, local changes saved")
             
     except FileNotFoundError as e:
         print(f"Error: {e}")

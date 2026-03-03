@@ -132,7 +132,7 @@ def parse_args() -> argparse.Namespace:
 
 def filter_data(
     input_path: Path,
-    output_path: Path,
+    output_path: Path | None = None,
     keep_remixes: bool = False,
     min_songs: int = 1,
     dry_run: bool = False,
@@ -143,11 +143,12 @@ def filter_data(
     override_only: bool = False,
     added_artists_path: Path | None = None,
     max_international_pct: float | None = None,
-) -> dict:
+) -> tuple[dict, pl.DataFrame]:
     """
     Filter dataset using Polars for memory efficiency.
     
-    Returns stats dictionary with filtering summary.
+    Returns (stats, filtered_df) tuple.
+    If output_path is None, skips writing to disk.
     """
     
     # Identify added_artists so they can be protected from override-only filtering
@@ -404,7 +405,7 @@ def filter_data(
     stats['final_artists'] = df['artist_name'].n_unique() if 'artist_name' in df.columns else 0
     stats['total_removed'] = original_count - len(df)
     
-    if not dry_run:
+    if not dry_run and output_path is not None:
         print(f"Saving to {output_path}...")
         atomic_write_parquet(
             df, 
@@ -413,7 +414,7 @@ def filter_data(
             verbose=verbose,
         )
     
-    return stats
+    return stats, df
 
 
 def main() -> None:
@@ -454,7 +455,7 @@ def main() -> None:
                 added_artists_path = mp
                 break
     
-    stats = filter_data(
+    stats, _df = filter_data(
         input_path=input_path,
         output_path=output_path,
         keep_remixes=args.keep_remixes,

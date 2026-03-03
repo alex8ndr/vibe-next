@@ -214,18 +214,26 @@ def load_and_merge_data(
 
 
 def process_data(
-    input_path: Path,
+    input_path: Path | None,
     output_path: Path,
     max_songs: int,
     max_artists: int,
     smear_strength: float,
     verbose: bool,
     dev: bool = False,
+    input_df: pl.DataFrame | None = None,
 ) -> None:
-    """Main processing pipeline - Pure Polars implementation."""
+    """Main processing pipeline - Pure Polars implementation.
     
-    # Load data as LazyFrame
-    lf, n_initial = load_and_merge_data(input_path, verbose)
+    If input_df is provided, uses it directly instead of reading from disk.
+    """
+    
+    if input_df is not None:
+        n_initial = len(input_df)
+        log(f"Using in-memory DataFrame: {n_initial:,} songs", verbose)
+        lf = input_df.lazy()
+    else:
+        lf, n_initial = load_and_merge_data(input_path, verbose)
     
     # Define columns
     num_cols = [

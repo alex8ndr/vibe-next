@@ -48,14 +48,6 @@ ADDED_ARTISTS_CSV_ZIP = DATA_DIR / "added_artists.csv.zip"
 
 EXTERNAL_DIR = DATA_DIR / "external"
 
-# Preprocessed external tracks (output of preprocess_external_datasets.py)
-YAMAC_TRACKS = EXTERNAL_DIR / "yamac_tracks.parquet"
-ANANT_TRACKS = EXTERNAL_DIR / "anant_tracks.parquet"
-ARCHIVE_3_TRACKS = EXTERNAL_DIR / "archive_3.parquet"
-BRUCE_TRACKS = EXTERNAL_DIR / "bruce_spotify.parquet"
-SERKAN_TRACKS = EXTERNAL_DIR / "serkan_tracks.parquet"
-GILDAS_TRACKS = EXTERNAL_DIR / "gildas_mapped_cap50_min2.parquet"
-
 # Registry of external track datasets by name for CLI selection
 
 def get_external_track_datasets() -> dict[str, Path]:
@@ -120,19 +112,6 @@ def get_temp_path(target: Path) -> Path:
 # =============================================================================
 # Helpers
 # =============================================================================
-
-def ensure_parquet_exists(legacy_csv: Path, parquet_path: Path) -> Path:
-    """Return parquet path, converting from CSV if needed."""
-    if parquet_path.exists():
-        return parquet_path
-    
-    if legacy_csv.exists():
-        print(f"Note: {parquet_path.name} not found. Run convert_to_parquet.py first.")
-        print(f"      Falling back to CSV: {legacy_csv.name}")
-        return legacy_csv
-    
-    raise FileNotFoundError(f"Neither {parquet_path} nor {legacy_csv} found")
-
 
 def get_input_dataset() -> Path:
     """Get the best available input dataset (prefers parquet)."""

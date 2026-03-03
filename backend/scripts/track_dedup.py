@@ -285,15 +285,21 @@ def deduplicate_tracks_polars(df: pl.DataFrame, track_col: str = "track_name", a
     else:
         subset = ["_norm_track"]
     
-    # Sort by popularity descending (so best version is first)
+    # Sort by track name length ascending (prefer originals = shorter names),
+    # then popularity descending as tiebreaker.
+    df = df.with_columns(pl.col(track_col).str.len_chars().alias("_name_len"))
+    sort_cols = ["_name_len"]
+    sort_desc = [False]
     if "popularity" in df.columns:
-        df = df.sort("popularity", descending=True)
+        sort_cols.append("popularity")
+        sort_desc.append(True)
+    df = df.sort(sort_cols, descending=sort_desc)
     
     # Deduplicate: keep first occurrence of each (artist, normalized_name)
     df = df.unique(subset=subset, keep="first")
     
     # Clean up temp columns
-    drop_cols = ["_norm_track"]
+    drop_cols = ["_norm_track", "_name_len"]
     if "_norm_artist" in df.columns:
         drop_cols.append("_norm_artist")
     
