@@ -57,9 +57,10 @@ GENRE_DEFINITIONS = {
     'rock-n-roll':      {'rock': 0.5, 'jazz_blues': 0.4, 'pop': 0.2, 'acoustic_folk': 0.2},  # Oldies
     'garage':           {'alternative': 0.3, 'rock': 0.3, 'punk': 0.3, 'acoustic_folk': 0.3}, # Indie/acoustic rock
     
-    'alt-rock':         {'alternative': 1.0, 'rock': 0.4, 'electronic_house': 0.1}, # Modern Radio Alternative
+    'alt-rock':         {'alternative': 0.8, 'rock': 0.5, 'electronic_house': 0.1}, # Modern Radio Alternative
     'indie-pop':        {'alternative': 0.7, 'pop': 0.5, 'acoustic_folk': 0.2},
-    'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.4, 'progressive': 0.2},  # Trippy!
+    'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.2, 'progressive': 0.2},  # Trippy!
+    'post-rock':        {'alternative': 0.5, 'chill_ambient': 0.5, 'rock': 0.3, 'progressive': 0.2},  # Atmospheric/cinematic (Mogwai, EITS)
     
     # =========================================================================
     # METAL & PUNK
@@ -75,11 +76,13 @@ GENRE_DEFINITIONS = {
     'punk':             {'punk': 0.8, 'emo_pop_punk': 0.5, 'rock': 0.3}, # Pop-punk
     'punk-rock':        {'punk': 0.5, 'rock': 0.5, 'alternative': 0.2}, # Post-punk
     
-    'prog-metal':       {'progressive': 0.8, 'metal': 0.4, 'rock': 0.3},
+    'prog-metal':       {'progressive': 0.8, 'metal': 0.5, 'rock': 0.3},
     'math-rock':        {'progressive': 0.7, 'alternative': 0.3, 'metal': 0.3, 'jazz_blues': 0.2},
+    'progressive-rock': {'progressive': 0.7, 'rock': 0.5, 'classical_cinematic': 0.2},  # Classic prog (Yes, Porcupine Tree)
+    'experimental':     {'alternative': 0.3, 'progressive': 0.3, 'electronic_techno': 0.3, 'chill_ambient': 0.3},  # Avant-garde/experimental (broad connector)
     
-    'emo':              {'emo_pop_punk': 0.8, 'hip_hop': 0.4, 'punk': 0.3}, # Emo rap
-    'power-pop':        {'emo_pop_punk': 0.7, 'rock': 0.5, 'pop': 0.3},
+    'emo':              {'emo_pop_punk': 0.8, 'punk': 0.3},
+    'power-pop':        {'emo_pop_punk': 0.5, 'pop': 0.5, 'rock': 0.3},
     'emo-pop-punk':     {'emo_pop_punk': 0.8, 'punk': 0.4, 'pop': 0.3},
     
     # =========================================================================
@@ -87,10 +90,12 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'pop':              {'pop': 1.0},
     'dance':            {'pop': 0.6, 'electronic_house': 0.6},
-    'party':            {'pop': 0.2, 'electronic_house': 0.2, 'world_regional': 0.2}, # German Schlager
+    'synthpop':         {'pop': 0.5, 'electronic_house': 0.5, 'alternative': 0.5},  # Depeche Mode, Pet Shop Boys
+    'hyperpop':         {'pop': 0.3, 'electronic_techno': 0.3, 'alternative': 0.3, 'progressive': 0.3},  # 100 gecs, SOPHIE
+    'schlager':          {'german': 0.5, 'pop': 0.3, 'world_regional': 0.2}, # German Schlager
     
     'k-pop':            {'k_pop': 1.0, 'pop': 0.4, 'hip_hop': 0.2},
-    'cantopop':         {'k_pop': 0.5, 'pop': 0.2, 'world_regional': 0.3},
+    'cantopop':         {'k_pop': 0.3, 'pop': 0.3, 'world_regional': 0.3},
     
     # =========================================================================
     # HIP-HOP & R&B
@@ -140,10 +145,10 @@ GENRE_DEFINITIONS = {
     # ACOUSTIC, FOLK, COUNTRY
     # =========================================================================
     'acoustic':         {'acoustic_folk': 1.0},
-    'folk':             {'acoustic_folk': 0.8, 'alternative': 0.4},
+    'folk':             {'acoustic_folk': 0.8, 'alternative': 0.2},
     'singer-songwriter': {'acoustic_folk': 0.8, 'pop': 0.3},
     'songwriter':       {'acoustic_folk': 0.9, 'pop': 0.1, 'rock': 0.1},  # Small genre
-    'country':          {'acoustic_folk': 0.5, 'rock': 0.3, 'pop': 0.2},
+    'country':          {'acoustic_folk': 0.5, 'jazz_blues': 0.2, 'pop': 0.1, 'rock': 0.1},
     'guitar':           {'acoustic_folk': 0.5, 'rock': 0.5, 'jazz_blues': 0.2},
     
     # =========================================================================
@@ -181,6 +186,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # WORLD / REGIONAL (lower weights for less smearing)
     # =========================================================================
+    'world':            {'world_regional': 0.8, 'acoustic_folk': 0.3},  # Generic world music catch-all
     'indian':           {'world_regional': 0.3, 'classical_cinematic': 0.1, 'pop': 0.1}, # Indian pop and Bollywood
     'german':           {'world_regional': 0.3, 'german': 0.7, 'classical_cinematic': 0.3, 'metal': 0.2, 'electronic_techno': 0.2},
     'french':           {'world_regional': 0.3, 'french': 0.7, 'hip_hop': 0.2, 'electronic_house': 0.2, 'classical_cinematic': 0.1},
@@ -205,22 +211,22 @@ GENRE_DEFINITIONS = {
     'dub':              {'bass_music': 0.8, 'electronic_house': 0.2, 'reggae_dub': 0.2},
     
     # Mostly Electronic Alterative
-    'electro':          {'pop': 0.6, 'electronic_house': 0.5, 'alternative': 0.4},
+    'electro':          {'electronic_house': 0.6, 'electronic_techno': 0.4, 'alternative': 0.2},  # Actual electro (Kraftwerk, Justice)
 
     # Mostly Brazilian Funk (Funk Carioca) & Party
-    'funk':             {'latin_regional': 0.7, 'hip_hop': 0.5, 'party': 0.5},
+    'funk':             {'latin_regional': 0.7, 'hip_hop': 0.5},
 
     # Added Genre
     'reggae':           {'reggae_dub': 1.0, 'rock': 0.2},
 
     # Groove Metal with some electronic house
-    'groove':           {'metal': 0.8, 'electronic_house': 0.4},
+    'groove':           {'metal': 0.8, 'rock': 0.4},
 
-    # Symphonic and Gothic Metal
-    'goth':             {'metal': 0.7, 'classical_cinematic': 0.4, 'alternative': 0.3},
+    # Darkwave
+    'goth':             {'alternative': 0.4, 'electronic_techno': 0.4, 'chill_ambient': 0.4},
 
-    # Indian Playback
-    'pop-film':         {'world_regional': 1.0, 'classical_cinematic': 0.4, 'pop': 0.3},
+    # Indian Playback + All soundtracks
+    'pop-film':         {'world_regional': 0.4, 'classical_cinematic': 0.4, 'pop': 0.2},
 
     # Sad Sierreño
     'sad':              {'latin_regional': 1.0, 'latin_tropical': 0.3, 'acoustic_folk': 0.2},
@@ -232,8 +238,8 @@ GENRE_DEFINITIONS = {
     'german-hip-hop':   {'hip_hop': 0.1, 'german': 0.1},
     'latin-urban':      {'hip_hop': 0.1, 'latin_tropical': 0.1, 'pop': 0.1}, # Reggaeton/Trap
     
-    'j-pop':            {'japanese': 0.1, 'pop': 0.1}, 
-    'j-rock':           {'japanese': 0.1, 'rock': 0.1},
+    'j-pop':            {'japanese': 0.2, 'pop': 0.1}, 
+    'j-rock':           {'japanese': 0.2, 'rock': 0.1},
 
     'hardcore-hip-hop': {'hip_hop': 0.6, 'rnb_soul': 0.3}, # Aggressive Rap (Wu-Tang, DMX)
     'hardcore-punk':    {'punk': 0.6, 'metal': 0.2},

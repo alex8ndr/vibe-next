@@ -151,6 +151,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum songs per artist (keeps most popular)",
     )
     parser.add_argument(
+        "--max-artists",
+        type=int,
+        default=0,
+        help="Keep only the top N most popular artists (0 = no limit)",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Print detailed processing info",
@@ -211,6 +217,7 @@ def process_data(
     input_path: Path,
     output_path: Path,
     max_songs: int,
+    max_artists: int,
     smear_strength: float,
     verbose: bool,
     dev: bool = False,
@@ -241,10 +248,15 @@ def process_data(
     if fill_exprs:
         df = df.with_columns(fill_exprs)
     
-    # Fill remaining nulls with column means
+    # Fill remaining nulls with column means.
+    # Some external-first datasets can have entire numeric columns null
+    # (e.g., when schema-normalized from sparse sources). In that case,
+    # Polars mean() returns None; fall back to 0.0 to keep processing stable.
     for col in num_cols:
         if col not in ["year", "popularity"]:
             mean_val = df[col].mean()
+            if mean_val is None:
+                mean_val = 0.0
             df = df.with_columns(pl.col(col).fill_null(mean_val))
     
     log(f"Scaling {len(num_cols)} numeric columns", verbose)
@@ -278,7 +290,37 @@ def process_data(
     if verbose:
         n_artists_before = n_before_dedup  # approx, tracks not artists
         log(f"  ({n_dedup_removed / n_before_dedup * 100:.1f}% of pre-dedup tracks were duplicates)", verbose)
-    
+
+    # Canonicalize artist names: pick the most popular spelling per normalized artist
+    from track_dedup import artist_norm_expr
+    df = df.with_columns(artist_norm_expr("artist_name").alias("_norm_artist"))
+    # For each normalized name, pick the spelling with the highest total popularity
+    canonical = (
+        df.group_by(["_norm_artist", "artist_name"])
+        .agg(pl.col("popularity").sum().alias("_total_pop"))
+        .sort("_total_pop", descending=True)
+        .unique(subset=["_norm_artist"], keep="first")
+        .select(["_norm_artist", pl.col("artist_name").alias("_canonical_name")])
+    )
+    df = df.join(canonical, on="_norm_artist", how="left")
+    n_canonicalized = df.filter(pl.col("artist_name") != pl.col("_canonical_name")).height
+    df = df.with_columns(pl.col("_canonical_name").alias("artist_name")).drop(["_norm_artist", "_canonical_name"])
+    if n_canonicalized > 0:
+        log(f"Artist name canonicalization: {n_canonicalized:,} tracks updated to canonical spelling", verbose)
+
+    # Optional: keep only top N most popular artists
+    if max_artists > 0:
+        artist_pop = (
+            df.group_by("artist_name")
+            .agg(pl.col("popularity").max().alias("_artist_max_pop"))
+            .sort("_artist_max_pop", descending=True)
+            .head(max_artists)
+            .select("artist_name")
+        )
+        n_before_artist_limit = len(df)
+        df = df.filter(pl.col("artist_name").is_in(artist_pop["artist_name"]))
+        log(f"Artist limit ({max_artists}): kept {df['artist_name'].n_unique():,} artists, removed {n_before_artist_limit - len(df):,} tracks", verbose)
+
     # Cap songs per artist using window function (Pure Polars)
     # This replaces: df.groupby("artist_name").cumcount() < max_songs
     n_before_cap = len(df)
@@ -483,6 +525,7 @@ def main() -> None:
         input_path=input_path,
         output_path=output_path,
         max_songs=args.max_songs,
+        max_artists=args.max_artists,
         smear_strength=args.smear_strength,
         verbose=args.verbose,
         dev=args.dev,

@@ -52,6 +52,11 @@ EXCLUDED_GENRES = {
 # Pattern for detecting remixes
 REMIX_PATTERN = re.compile(r'\bremix\b', re.IGNORECASE)
 
+# Pattern for detecting TV competition performance tracks
+# Matches "- The Voice Performance", "- The Voice", "– The Voice Performance" etc.
+# Requires a dash separator before "The Voice" to avoid matching genuine songs
+PERFORMANCE_PATTERN = re.compile(r'\s+[-–—]\s+the\s+voice(\s+performance)?\s*$', re.IGNORECASE)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -107,6 +112,12 @@ def parse_args() -> argparse.Namespace:
         help="Replace genres only if an external match exists and drop the rest",
     )
     parser.add_argument(
+        "--max-international-pct",
+        type=float,
+        default=None,
+        help="Maximum percentage of international (non-English) tracks (e.g., 15 for 15%%)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be filtered without writing output",
@@ -131,6 +142,7 @@ def filter_data(
     override: bool = False,
     override_only: bool = False,
     added_artists_path: Path | None = None,
+    max_international_pct: float | None = None,
 ) -> dict:
     """
     Filter dataset using Polars for memory efficiency.
@@ -245,6 +257,18 @@ def filter_data(
     else:
         stats['removed']['remixes'] = 0
     
+    # Filter 3b: TV competition performances (The Voice, etc.)
+    if 'track_name' in df.columns:
+        perf_mask = df['track_name'].cast(pl.Utf8).str.contains(
+            r'(?i)\s+[-–—]\s+the\s+voice(\s+performance)?\s*$'
+        ).fill_null(False)
+        stats['removed']['performances'] = perf_mask.sum()
+        if verbose:
+            print(f"  Performances: {stats['removed']['performances']:,} tracks")
+        filters.append(~perf_mask)
+    else:
+        stats['removed']['performances'] = 0
+    
     # Apply all content filters at once
     if filters:
         combined_filter = filters[0]
@@ -322,6 +346,31 @@ def filter_data(
     else:
         stats['genres_enriched'] = 0
 
+    # Optional: Limit international (locale-genre) tracks by percentage
+    if max_international_pct is not None and 'genre' in df.columns:
+        from genre_mapping import _LOCALE_OUTPUT_GENRES
+        locale_genres = list(_LOCALE_OUTPUT_GENRES)
+        intl_mask = pl.col("genre").is_in(locale_genres)
+        n_intl = df.filter(intl_mask).height
+        n_total = len(df)
+        current_pct = (n_intl / n_total * 100) if n_total > 0 else 0
+        if current_pct > max_international_pct:
+            target_intl = int(n_total * max_international_pct / 100)
+            # Keep the most popular international tracks
+            df_intl = df.filter(intl_mask).sort("popularity", descending=True).head(target_intl)
+            df_domestic = df.filter(~intl_mask)
+            removed_intl = n_intl - target_intl
+            df = pl.concat([df_domestic, df_intl])
+            stats['removed']['international_cap'] = removed_intl
+            if verbose:
+                print(f"  International cap ({max_international_pct}%): removed {removed_intl:,} international tracks ({current_pct:.1f}% -> {max_international_pct}%)")
+        else:
+            stats['removed']['international_cap'] = 0
+            if verbose:
+                print(f"  International tracks: {n_intl:,} ({current_pct:.1f}%) - under {max_international_pct}% cap")
+    else:
+        stats['removed']['international_cap'] = 0
+
     # Filter 4: Drop unmapped genres when override mode is enabled
     if override and 'genre' in df.columns:
         valid_genres = list(GENRE_DEFINITIONS.keys())
@@ -340,9 +389,9 @@ def filter_data(
         
         # Count tracks per artist
         artist_counts = df.group_by('artist_name').agg(pl.len().alias('_count'))
-        keep_artists = artist_counts.filter(pl.col('_count') >= min_songs)['artist_name']
-        
-        df = df.filter(pl.col('artist_name').is_in(keep_artists))
+        keep_artists = artist_counts.filter(pl.col('_count') >= min_songs).select('artist_name')
+
+        df = df.join(keep_artists, on='artist_name', how='semi')
         stats['removed']['min_songs'] = before_min - len(df)
         
         if verbose:
@@ -417,6 +466,7 @@ def main() -> None:
         override=args.override_genres,
         override_only=args.override_genres_only,
         added_artists_path=added_artists_path,
+        max_international_pct=args.max_international_pct,
     )
     
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Filtering Summary:")
@@ -428,10 +478,13 @@ def main() -> None:
     print(f"    - Excluded artists: {stats['removed']['excluded_artists']:,}")
     print(f"    - Excluded genres:  {stats['removed']['excluded_genres']:,}")
     print(f"    - Remixes:          {stats['removed']['remixes']:,}")
+    print(f"    - Performances:     {stats['removed']['performances']:,}")
     print(f"    - Unmapped genres:  {stats['removed']['unmapped_genres']:,}")
     print(f"    - Min songs filter: {stats['removed']['min_songs']:,}")
     if 'override_only' in stats['removed']:
         print(f"    - Override-only:    {stats['removed']['override_only']:,}")
+    if stats['removed'].get('international_cap', 0) > 0:
+        print(f"    - Intl cap:         {stats['removed']['international_cap']:,}")
     print(f"    - Total:            {stats['total_removed']:,}")
     print(f"  Genre enrichment:     {stats['genres_enriched']:,} tracks enriched")
     print(f"  Final: {stats['final_tracks']:,} tracks, {stats['final_artists']:,} artists")

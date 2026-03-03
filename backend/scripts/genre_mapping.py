@@ -1,9 +1,7 @@
 """
-Map external genre vocabularies to the project's genre vocabulary.
+Map external genre tags to the internal Vibe genre vocabulary.
 
-Used for artist-level genre enrichment during the filter_data.py pipeline stage.
-Loads genre data from Serkan (550k Spotify artists) and Yamac (1920-2020) datasets,
-maps raw Spotify sub-genres to our internal vocabulary via AUDIODB_GENRE_MAP.
+Used by filter-time artist genre enrichment.
 """
 
 from __future__ import annotations
@@ -21,20 +19,21 @@ from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE
 from track_dedup import normalize_artist_name
 from utils import AUDIODB_GENRE_MAP
 
-# Valid output genres (keys of GENRE_DEFINITIONS)
+# Valid output genre names
 _VALID_GENRES = set(GENRE_DEFINITIONS.keys())
-_SUBSTRING_MIN_LEN = 3
 
 
-# Sentinel: non-English locale detected but no dedicated output genre → filter out
+# Sentinel: locale detected but no supported locale output genre
 _BLOCK = object()
 
-# Compound locale tags → dedicated locale genres.
-# None values = block (non-English standalone genres containing English substrings).
+# Explicit locale phrase overrides. `None` means block.
 _LOCALE_OVERRIDES = {
     # French
     "french hip hop": "french-hip-hop",
     "french rap": "french-hip-hop",
+    "rap francais": "french-hip-hop",
+    "rap français": "french-hip-hop",
+    "pop urbaine": "french-hip-hop",
     # German
     "german hip hop": "german-hip-hop",
     "german rap": "german-hip-hop",
@@ -52,6 +51,8 @@ _LOCALE_OVERRIDES = {
     "taiwan rock": "cantopop",
     "mandarin pop": "cantopop",
     "mandarin rock": "cantopop",
+    "cantonese traditional": "cantopop",
+    "taiwanese indigenous": "world",
     # Latin (compound tags — override keyword default where needed)
     "latin urban": "latin-urban",
     "latin trap": "latin-urban",
@@ -78,10 +79,14 @@ _LOCALE_OVERRIDES = {
     "rock nacional": None,
 }
 
-# Locales WITH dedicated output genres — only these get positive routing.
+# Locale keywords that map directly to supported output genres.
 _LOCALE_KEYWORDS = {
     # European with dedicated genres
     "french": "french",
+    "francais": "french",
+    "français": "french",
+    "francaise": "french",
+    "française": "french",
     "german": "german",
     "spanish": "spanish",
     "swedish": "swedish",
@@ -90,6 +95,7 @@ _LOCALE_KEYWORDS = {
     "taiwanese": "cantopop",
     "taiwan": "cantopop",
     "mandarin": "cantopop",
+    "cantonese": "cantopop",
     "korean": "k-pop",
     "japanese": "j-pop",
     # Brazilian
@@ -101,6 +107,8 @@ _LOCALE_KEYWORDS = {
     "telugu": "indian",
     "punjabi": "indian",
     "bengali": "indian",
+    "hindi": "indian",
+    "malayalam": "indian",
     "pakistani": "indian",
     "nepali": "indian",
     "sri lankan": "indian",
@@ -131,29 +139,27 @@ _LOCALE_KEYWORDS = {
     "south african": "afrobeat",
 }
 
-# Non-English locale prefixes to BLOCK from generic genres.
-# Only locales WITHOUT a dedicated output genre remain here.
-# Locales with matching genres were moved to _LOCALE_KEYWORDS above.
+# Locale keywords to block when no dedicated output genre exists.
 _NON_ENGLISH_PREFIXES = frozenset({
     # Europe (non-English speaking, no dedicated genre)
     "dutch", "belgian", "flemish",
     "italian", "portuguese", "greek", "icelandic",
+    "italiano", "italiana",
     "norwegian", "danish", "finnish", "estonian", "latvian", "lithuanian",
     "czech", "slovak", "hungarian", "polish", "romanian",
     "serbian", "croatian", "bosnian", "slovenian", "bulgarian", "yugoslav",
     "ukrainian", "belarusian", "russian",
     "turkish", "georgian", "armenian",
     # Asia (without dedicated genres)
-    "indonesian", "thai", "vietnamese", "filipino",
+    "indonesian", "thai", "vietnamese", "filipino", "pinoy",
     "malaysian", "malay", "singaporean",
     # Middle East
     "persian", "arab", "arabic", "lebanese", "palestinian", "syrian",
+    "arabesk",
     "israeli", "egyptian", "moroccan",
 })
 
-# Generic genre tokens — guards _LOCALE_KEYWORDS from non-music tags
-# (e.g. "french cinema" should NOT route to the "french" genre).
-# NOT used for _NON_ENGLISH_PREFIXES — those block unconditionally.
+# Guard for positive locale routing. Example: "french cinema" should not map to `french`.
 _LOCALE_GENERIC_TOKENS = (
     # Core genres
     "pop", "rock", "hip hop", "rap", "metal", "house", "electronic",
@@ -167,12 +173,10 @@ _LOCALE_GENERIC_TOKENS = (
     "post-punk", "progressive", "industrial", "downtempo", "trip hop",
     "afrobeat", "afrobeats", "cumbia", "bachata", "dancehall", "dub",
     "breakbeat", "garage", "lo-fi", "phonk", "boom bap",
-    "samba", "salsa", "swing", "soundtrack", "film",
+    "samba", "salsa", "swing", "soundtrack", "film", "chanson", "variete",
 )
 
-# ---------------------------------------------------------------------------
-# Pre-compiled regex patterns — avoids per-call re.compile / re.search loops
-# ---------------------------------------------------------------------------
+# Pre-compiled locale regexes
 _NON_ENGLISH_RE = re.compile(
     r"\b(?:" + "|".join(
         re.escape(p) for p in sorted(_NON_ENGLISH_PREFIXES, key=len, reverse=True)
@@ -188,40 +192,80 @@ _LOCALE_KEYWORD_RES: dict[str, re.Pattern] = {
     for locale in _LOCALE_KEYWORDS
 }
 
-_AUDIODB_SUBSTRING_RULES: list[tuple[str, re.Pattern, str]] = [
-    (key, re.compile(rf"\b{re.escape(key)}\b"), genre)
-    for key, genre in AUDIODB_GENRE_MAP.items()
-    if len(key) >= _SUBSTRING_MIN_LEN
+# Safe prefixes to strip before exact mapping; longest first.
+_SAFE_PREFIXES: tuple[str, ...] = tuple(sorted([
+    # English-speaking nationalities
+    "australian", "canadian", "british", "american", "uk",
+    "scottish", "irish", "welsh", "new zealand",
+    # Era / style modifiers
+    "modern", "classic", "contemporary", "old school", "old-school",
+    "neo", "nu", "new",
+    # Intensity / texture modifiers (safe to strip for genre routing)
+    "deep", "dark", "melodic", "atmospheric", "raw",
+    "technical", "symphonic", "brutal", "epic",
+], key=len, reverse=True))
+
+# Last-resort substring rules for unambiguous multi-word compounds.
+# Single-word substring rules are intentionally excluded to avoid false matches.
+_COMPOUND_SUBSTRING_RULES: list[tuple[re.Pattern, str]] = [
+    (re.compile(rf"\b{re.escape(k)}\b"), v)
+    for k, v in {
+        "death metal": "death-metal",
+        "black metal": "black-metal",
+        "doom metal": "metal",
+        "stoner metal": "metal",
+        "sludge metal": "metal",
+        "speed metal": "metal",
+        "power metal": "heavy-metal",
+        "groove metal": "groove",
+        "thrash metal": "metal",
+        "folk metal": "heavy-metal",
+        "viking metal": "heavy-metal",
+        "gothic metal": "metal",
+        "symphonic metal": "prog-metal",
+        "progressive metal": "prog-metal",
+        "industrial metal": "industrial-metal",
+        "hard rock": "hard-rock",
+        "blues rock": "blues",
+        "folk rock": "folk",
+        "noise rock": "alt-rock",
+        "garage rock": "garage",
+        "psychedelic rock": "psych-rock",
+        "progressive rock": "progressive-rock",
+        "post-punk": "punk-rock",
+        "post-rock": "post-rock",
+        "drum and bass": "drum-and-bass",
+        "post-hardcore": "post-hardcore",
+    }.items()
 ]
 
 
 def _map_locale_genre(tag: str):
-    """Check if tag is a locale-prefixed genre.
+    """Resolve locale-specific tags.
 
     Returns:
-        genre string  – use this dedicated locale genre
-        _BLOCK        – non-English locale detected, no dedicated genre → filter out
-        None          – no locale pattern matched, continue to AUDIODB_GENRE_MAP
+        genre string  -> dedicated locale genre
+        _BLOCK        -> locale should be excluded
+        None          -> continue standard mapping
     """
     for key, genre in _LOCALE_OVERRIDES.items():
         if key in tag:
             return genre if genre is not None else _BLOCK
 
-    # Locale keywords (positive routing) — only with a genre token guard
-    # to avoid "french cinema" → french
+    # Positive locale routing requires a genre token guard.
     if _GENERIC_TOKEN_RE.search(tag):
         for locale, genre in _LOCALE_KEYWORDS.items():
             if _LOCALE_KEYWORD_RES[locale].search(tag):
                 return genre
 
-    # Non-English prefixes — single compiled regex, no per-prefix loop
+    # Block unsupported locales
     if _NON_ENGLISH_RE.search(tag):
         return _BLOCK
 
     return None
 
 
-# Locale output genres — dedicated locale genres always allowed even for blocked artists
+# Locale genres that remain allowed after locale blocking logic
 _LOCALE_OUTPUT_GENRES = (
     set(_LOCALE_KEYWORDS.values())
     | {v for v in _LOCALE_OVERRIDES.values() if v is not None}
@@ -229,25 +273,28 @@ _LOCALE_OUTPUT_GENRES = (
 
 
 def _map_standard_genre(tag: str) -> str | None:
-    """Map a tag through _VALID_GENRES and AUDIODB_GENRE_MAP (no locale logic)."""
+    """Map using exact match, direct map, safe-prefix strip, then compound fallback."""
     if tag in _VALID_GENRES:
         return tag
     if tag in AUDIODB_GENRE_MAP:
         return AUDIODB_GENRE_MAP[tag]
-    for _, pattern, genre in _AUDIODB_SUBSTRING_RULES:
+    # Safe-prefix strip, then retry exact/direct lookup
+    for prefix in _SAFE_PREFIXES:
+        if tag.startswith(prefix + " "):
+            remainder = tag[len(prefix) + 1:]
+            if remainder in _VALID_GENRES:
+                return remainder
+            if remainder in AUDIODB_GENRE_MAP:
+                return AUDIODB_GENRE_MAP[remainder]
+    # Multi-word compound fallback
+    for pattern, genre in _COMPOUND_SUBSTRING_RULES:
         if pattern.search(tag):
             return genre
     return None
 
 
 def explain_raw_genre(raw_genre: str) -> dict[str, str | None]:
-    """Explain how a single raw genre tag was resolved.
-
-    Returns keys:
-      - tag: normalized input tag
-      - mapped_genre: mapped output genre (or None)
-      - reason: exact-valid | exact-map | locale-route | locale-block | substring:<key> | none
-    """
+    """Return a trace for how one raw genre tag was resolved."""
     tag = (raw_genre or "").lower().strip()
     if not tag:
         return {"tag": tag, "mapped_genre": None, "reason": "none"}
@@ -264,9 +311,19 @@ def explain_raw_genre(raw_genre: str) -> dict[str, str | None]:
     if tag in AUDIODB_GENRE_MAP:
         return {"tag": tag, "mapped_genre": AUDIODB_GENRE_MAP[tag], "reason": "exact-map"}
 
-    for key, pattern, genre in _AUDIODB_SUBSTRING_RULES:
+    # Prefix-strip trace
+    for prefix in _SAFE_PREFIXES:
+        if tag.startswith(prefix + " "):
+            remainder = tag[len(prefix) + 1:]
+            if remainder in _VALID_GENRES:
+                return {"tag": tag, "mapped_genre": remainder, "reason": f"prefix-strip:{prefix}->exact-valid"}
+            if remainder in AUDIODB_GENRE_MAP:
+                return {"tag": tag, "mapped_genre": AUDIODB_GENRE_MAP[remainder], "reason": f"prefix-strip:{prefix}->exact-map"}
+
+    # Compound fallback trace
+    for pattern, genre in _COMPOUND_SUBSTRING_RULES:
         if pattern.search(tag):
-            return {"tag": tag, "mapped_genre": genre, "reason": f"substring:{key}"}
+            return {"tag": tag, "mapped_genre": genre, "reason": f"compound:{pattern.pattern}"}
 
     return {"tag": tag, "mapped_genre": None, "reason": "none"}
 
@@ -289,20 +346,28 @@ def map_raw_genre(raw_genre: str) -> str | None:
     return _map_standard_genre(tag)
 
 
-def map_artist_tags(tags: list[str]):
-    """Map a list of artist tags to a single genre (first match wins).
+def map_artist_tags(tags: list[str], *, _return_locale_flag: bool = False):
+    """Map a list of artist tags to a single genre.
 
-    Locale tags return immediately (they're special).
-    Once any tag triggers _BLOCK (non-English locale detected), subsequent tags
-    are only allowed to match dedicated locale genres — generic genres are skipped.
-    The first successfully mapped non-locale tag determines the genre.
+    Locale-routed genres win when there is a strong locale signal
+    (>= 2 locale tags or no standard alternatives).  A single locale
+    tag among many standard tags is treated as noise (e.g. Phoenix
+    having one French tag at the end of an otherwise English tag list).
 
     Returns:
-        genre string  – matched genre
-        _BLOCK        – all tags blocked, no dedicated locale genre found
-        None          – no tags matched at all
+        When _return_locale_flag is False (default):
+            genre string  -> matched genre
+            _BLOCK        -> all tags blocked, no locale output fallback
+            None          -> no match
+        When _return_locale_flag is True:
+            (genre_or_BLOCK_or_None, is_locale: bool)
     """
     blocked = False
+    first_standard = None
+    first_locale = None
+    locale_count = 0
+    standard_count = 0
+    first_mapped_is_locale = None  # True/False once first mappable tag is seen
 
     for raw_tag in tags:
         tag = raw_tag.lower().strip()
@@ -314,20 +379,49 @@ def map_artist_tags(tags: list[str]):
             blocked = True
             continue
         if locale_result is not None:
-            return locale_result
+            locale_count += 1
+            if first_locale is None:
+                first_locale = locale_result
+            if first_mapped_is_locale is None:
+                first_mapped_is_locale = True
+            continue
 
-        genre = _map_standard_genre(tag)
-        if genre:
-            if blocked and genre not in _LOCALE_OUTPUT_GENRES:
-                continue
-            return genre
+        if first_standard is None or standard_count < locale_count + 5:
+            genre = _map_standard_genre(tag)
+            if genre:
+                if not (blocked and genre not in _LOCALE_OUTPUT_GENRES):
+                    standard_count += 1
+                    if first_standard is None:
+                        first_standard = genre
+                    if first_mapped_is_locale is None:
+                        first_mapped_is_locale = False
 
-    return _BLOCK if blocked else None
+    # Locale wins with strong signal (>= 2 tags), no standard alternative,
+    # or when the very first mappable tag was locale (position signal).
+    if first_locale is not None and (
+        locale_count >= 2 or standard_count == 0 or first_mapped_is_locale
+    ):
+        result, is_locale = first_locale, True
+    elif first_standard is not None:
+        result, is_locale = first_standard, False
+    elif first_locale is not None:
+        result, is_locale = first_locale, True
+    else:
+        result, is_locale = (_BLOCK if blocked else None), False
+
+    if _return_locale_flag:
+        return result, is_locale
+    return result
 
 
 def explain_artist_tags(tags: list[str]) -> dict[str, object]:
     """Return a structured explanation of artist-level tag mapping."""
     blocked = False
+    first_standard = None
+    first_locale = None
+    locale_count = 0
+    standard_count = 0
+    first_mapped_is_locale = None
     details: list[dict[str, object]] = []
 
     for raw_tag in tags:
@@ -341,24 +435,50 @@ def explain_artist_tags(tags: list[str]) -> dict[str, object]:
             details.append({"tag": tag, "status": "blocked-locale", "mapped": None})
             continue
         if locale_result is not None:
+            locale_count += 1
+            if first_locale is None:
+                first_locale = locale_result
+            if first_mapped_is_locale is None:
+                first_mapped_is_locale = True
             details.append({"tag": tag, "status": "locale-route", "mapped": locale_result})
-            return {
-                "result": locale_result,
-                "blocked": blocked,
-                "details": details,
-            }
+            continue
 
         mapped = _map_standard_genre(tag)
         if mapped:
             if blocked and mapped not in _LOCALE_OUTPUT_GENRES:
                 details.append({"tag": tag, "status": "blocked-after-locale", "mapped": mapped})
                 continue
-            details.append({"tag": tag, "status": "first-match", "mapped": mapped})
-            return {"result": mapped, "blocked": blocked, "details": details}
+            standard_count += 1
+            if first_standard is None:
+                first_standard = mapped
+                details.append({"tag": tag, "status": "first-match", "mapped": mapped})
+            else:
+                details.append({"tag": tag, "status": "later-match", "mapped": mapped})
+            if first_mapped_is_locale is None:
+                first_mapped_is_locale = False
         else:
             details.append({"tag": tag, "status": "no-match", "mapped": None})
 
-    return {"result": _BLOCK if blocked else None, "blocked": blocked, "details": details}
+    # Count genre votes across all mapped tags (including locale)
+    votes: dict[str, int] = {}
+    for d in details:
+        m = d.get("mapped")
+        if m and d["status"] not in ("blocked-locale", "blocked-after-locale"):
+            votes[m] = votes.get(m, 0) + 1
+
+    # Determine result using same voting logic as map_artist_tags
+    if first_locale is not None and (
+        locale_count >= 2 or standard_count == 0 or first_mapped_is_locale
+    ):
+        result = first_locale
+    elif first_standard is not None:
+        result = first_standard
+    elif first_locale is not None:
+        result = first_locale
+    else:
+        result = _BLOCK if blocked else None
+
+    return {"result": result, "blocked": blocked, "details": details, "votes": votes}
 
 
 def _parse_genres_list(raw: str | None) -> list[str]:
@@ -385,55 +505,126 @@ def load_artist_genre_lookup(*, return_blocked: bool = False):
 
     When the same normalized name appears across sources, the entry with
     highest popularity wins.
+
+    Blocking is tracked per Spotify artist_id to prevent different artists
+    with the same normalized name from cross-contaminating each other.
     """
+    # Source quality: lower is better (used as tiebreaker after popularity).
+    _source_quality = {YAMAC_GENRE: 0, VECTORQL_GENRE: 1, SERKAN_GENRE: 2}
+
     # Collect candidates per normalized artist from all sources.
-    # Value shape: list[(genre, popularity)]
-    candidates: dict[str, list[tuple[str, int]]] = {}
-    blocked_artists: set[str] = set()
+    # Value shape: list[(genre, popularity, artist_id, source_quality, is_locale)]
+    candidates: dict[str, list[tuple[str, int, str, int, bool]]] = {}
+    blocked_ids: set[str] = set()
+    blocked_pops: dict[str, int] = {}  # norm_name -> max blocked popularity
+    seen_ids_by_name: dict[str, set[str]] = {}
+
+    # Cache tag-tuple mapping results (high reuse across rows)
+    _tag_cache: dict[tuple, tuple] = {}
 
     for path in [SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE]:
         if not path.exists():
             print(f"Genre source not found: {path}")
             continue
 
+        src_q = _source_quality.get(path, 2)
         df = pl.read_parquet(path)
-        for row in df.iter_rows(named=True):
-            name = row.get("name")
+
+        # Extract columns as lists (avoids iter_rows dict creation overhead)
+        names = df["name"].to_list()
+        ids = df["id"].to_list() if "id" in df.columns else [None] * len(df)
+        genres_lists = df["genres"].to_list()
+        pops = df["popularity"].to_list() if "popularity" in df.columns else [0] * len(df)
+        fallbacks = df["fallback"].to_list() if "fallback" in df.columns else [None] * len(df)
+
+        for name, artist_id, tags, pop, fallback in zip(names, ids, genres_lists, pops, fallbacks):
             if not name:
                 continue
             norm_name = normalize_artist_name(str(name))
+            artist_id = artist_id or ""
+            if artist_id:
+                seen_ids_by_name.setdefault(norm_name, set()).add(artist_id)
 
-            tags = row.get("genres") or []
-            pop = row.get("popularity") or 0
+            if not tags:
+                tags = []
+            pop = pop or 0
 
-            genre = map_artist_tags(tags)
+            # Cached tag mapping (returns (genre, is_locale) tuples)
+            tags_key = tuple(tags) if isinstance(tags, list) else (tags,)
+            if tags_key in _tag_cache:
+                genre, is_locale = _tag_cache[tags_key]
+            else:
+                genre, is_locale = map_artist_tags(tags, _return_locale_flag=True)
+                _tag_cache[tags_key] = (genre, is_locale)
 
-            # Fallback: Serkan main_genre → our vocabulary (but NOT if blocked)
+            # Fallback to source main genre (except blocked)
             if genre is _BLOCK:
-                blocked_artists.add(norm_name)
+                if artist_id:
+                    blocked_ids.add(artist_id)
+                blocked_pops[norm_name] = max(blocked_pops.get(norm_name, 0), int(pop or 0))
                 continue
             if not genre:
-                fallback = row.get("fallback")
                 if fallback and isinstance(fallback, str):
                     genre = _map_standard_genre(fallback.strip().lower())
+                    is_locale = False
 
             if not genre:
                 continue
 
-            candidates.setdefault(norm_name, []).append((genre, int(pop or 0)))
+            candidates.setdefault(norm_name, []).append(
+                (genre, int(pop or 0), artist_id, src_q, is_locale)
+            )
 
     lookup: dict[str, str] = {}
+    blocked_artists: set[str] = set()
     for norm_name, rows in candidates.items():
-        # If any source row for this artist triggered locale block,
-        # only allow dedicated locale output genres for this artist.
-        if norm_name in blocked_artists:
-            rows = [r for r in rows if r[0] in _LOCALE_OUTPUT_GENRES]
-            if not rows:
+        # Prefer non-blocked IDs when names collide
+        non_blocked = [(g, p, aid, sq, loc) for g, p, aid, sq, loc in rows
+                       if aid not in blocked_ids]
+        from_blocked = [(g, p, aid, sq, loc) for g, p, aid, sq, loc in rows
+                        if aid in blocked_ids]
+
+        if non_blocked:
+            max_non_blocked_pop = max(p for _, p, *_ in non_blocked)
+            max_blocked_pop = blocked_pops.get(norm_name, 0)
+            # If a blocked entry is much more popular, the non-blocked entries
+            # are likely false matches from different artists with the same name
+            if max_blocked_pop > 0 and max_non_blocked_pop < max_blocked_pop * 0.25:
+                blocked_artists.add(norm_name)
                 continue
 
-        # Pick highest popularity candidate, deterministic tiebreak by genre name.
-        rows = sorted(rows, key=lambda item: (-item[1], item[0]))
-        lookup[norm_name] = rows[0][0]
+            # Detect name collisions: multiple distinct Spotify artist IDs
+            distinct_ids = {aid for _, _, aid, _, _ in non_blocked if aid}
+            name_collision = len(distinct_ids) > 1
+
+            if name_collision:
+                # Different artists with same name — popularity wins,
+                # source quality as tiebreaker, no locale priority
+                non_blocked.sort(key=lambda item: (
+                    -item[1],   # -popularity
+                    item[3],    # source_quality (lower = better)
+                    item[0],    # genre_name
+                ))
+            else:
+                # Same artist — locale-routed entries get priority as tiebreaker
+                non_blocked.sort(key=lambda item: (
+                    0 if item[4] else 1,  # is_locale flag
+                    -item[1],             # -popularity
+                    item[3],              # source_quality
+                    item[0],              # genre_name
+                ))
+            lookup[norm_name] = non_blocked[0][0]
+        elif from_blocked:
+            blocked_artists.add(norm_name)
+            locale_only = [r for r in from_blocked if r[4]]  # is_locale flag
+            if locale_only:
+                locale_only.sort(key=lambda item: (-item[1], item[3], item[0]))
+                lookup[norm_name] = locale_only[0][0]
+
+    # Names with only blocked IDs may never enter candidates; still mark blocked.
+    for norm_name, ids in seen_ids_by_name.items():
+        if ids and ids.issubset(blocked_ids) and norm_name not in lookup:
+            blocked_artists.add(norm_name)
 
     if return_blocked:
         return lookup, blocked_artists
@@ -537,9 +728,7 @@ def enrich_genres(
 
     df = apply_artist_genre_map(df, name_to_genre, override=override)
 
-    # In override mode, actively honor locale-blocked artists by nulling their genres
-    # unless they are locked OR their genre is a dedicated locale output genre
-    # (the lookup already resolves blocked artists to locale genres correctly).
+    # In override mode, null blocked artists unless locked or locale-genre allowed.
     if override and blocked_norms and "artist_name" in df.columns:
         locked = set(locked_artists or [])
         blocked_names = [

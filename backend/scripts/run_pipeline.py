@@ -21,6 +21,15 @@ Usage:
     # Merge a specific external dataset during filtering
     python run_pipeline.py --process-only --external yamac
 
+    # Unified dataset selection: pick specific datasets by name
+    python run_pipeline.py --process-only --datasets data yamac_tracks
+
+    # Use all available datasets (core + external)
+    python run_pipeline.py --process-only --all-datasets
+
+    # Use all except the original dataset
+    python run_pipeline.py --process-only --all-datasets --exclude-datasets data
+
     # Incremental update only (fastest, lowest memory)
     python run_pipeline.py --incremental
     
@@ -46,6 +55,7 @@ from paths import (
     EXTERNAL_TRACK_DATASETS,
     get_external_track_datasets,
     get_input_dataset,
+    get_all_track_datasets,
 )
 
 
@@ -112,6 +122,12 @@ def main():
         help="Keep remix tracks (filter step only)",
     )
     parser.add_argument(
+        "--max-international-pct",
+        type=float,
+        default=None,
+        help="Maximum percentage of international tracks (filter step only)",
+    )
+    parser.add_argument(
         "--include-external",
         action="store_true",
         help="Merge all available external datasets from data/external",
@@ -124,7 +140,48 @@ def main():
             "Available: " + ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys()))
         ),
     )
+    parser.add_argument(
+        "--exclude-external",
+        action="append",
+        help="Exclude specific external dataset(s) by name when using --include-external",
+    )
+    parser.add_argument(
+        "--datasets",
+        nargs="+",
+        help=(
+            "Select specific datasets by name (unified selection). "
+            "Available: " + ", ".join(sorted(get_all_track_datasets().keys()))
+        ),
+    )
+    parser.add_argument(
+        "--all-datasets",
+        action="store_true",
+        help="Include all available datasets (core + external)",
+    )
+    parser.add_argument(
+        "--exclude-datasets",
+        nargs="+",
+        help="Exclude specific datasets by name (use with --all-datasets)",
+    )
     parser.add_argument("--dev", action="store_true", help="Dev mode: fast compression for quicker processing")
+    parser.add_argument(
+        "--max-artists",
+        type=int,
+        default=0,
+        help="Keep only the top N most popular artists (process step only)",
+    )
+    parser.add_argument(
+        "--max-songs",
+        type=int,
+        default=50,
+        help="Maximum songs per artist (process step only)",
+    )
+    parser.add_argument(
+        "--smear-strength",
+        type=float,
+        default=0.6,
+        help="Strength of inter-artist genre smearing 0.0-1.0 (process step only)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -180,12 +237,41 @@ def main():
             sys.exit(ret)
     else:
         # Full reprocess mode
-        # Determine input file (prefer parquet)
-        try:
-            input_file = get_input_dataset()
-        except FileNotFoundError:
-            print("Error: No input dataset found. Run convert_to_parquet.py first.")
-            sys.exit(1)
+        # Determine input file and merge files based on dataset selection mode
+        if args.datasets or args.all_datasets:
+            # Unified dataset selection
+            available = get_all_track_datasets()
+            if args.datasets:
+                selected_names = []
+                selected_paths = []
+                for name in args.datasets:
+                    if name not in available:
+                        print(f"Unknown dataset: {name}")
+                        print("Available:", ", ".join(sorted(available.keys())))
+                        sys.exit(1)
+                    selected_names.append(name)
+                    selected_paths.append(available[name])
+            else:
+                # --all-datasets
+                exclude = set(args.exclude_datasets or [])
+                selected_names = [n for n in available if n not in exclude]
+                selected_paths = [available[n] for n in selected_names]
+
+            if not selected_paths:
+                print("Error: No datasets selected.")
+                sys.exit(1)
+
+            print(f"Datasets: {', '.join(selected_names)}")
+            input_file = selected_paths[0]
+            unified_merge = [str(p) for p in selected_paths[1:]]
+        else:
+            # Default behavior (backward compatible)
+            try:
+                input_file = get_input_dataset()
+            except FileNotFoundError:
+                print("Error: No input dataset found. Run convert_to_parquet.py first.")
+                sys.exit(1)
+            unified_merge = None
         
         # Step 2a: Filter data
         if not args.skip_filter:
@@ -193,30 +279,36 @@ def main():
                 "-i", str(input_file),
                 "-o", str(FILTERED_DATASET),
             ]
-            # Auto-merge added_artists; external datasets opt-in via flags.
-            merge_files = []
-            if ADDED_ARTISTS.exists():
-                merge_files.append(str(ADDED_ARTISTS))
-            elif ADDED_ARTISTS_CSV_ZIP.exists():
-                merge_files.append(str(ADDED_ARTISTS_CSV_ZIP))
 
-            external_paths = []
-            available = get_external_track_datasets()
-            if args.include_external:
-                external_paths = [p for p in available.values() if p.exists()]
-            elif args.external:
-                for name in args.external:
-                    if name not in available:
-                        print(f"Unknown external dataset: {name}")
-                        print("Available:", ", ".join(sorted(available.keys())))
-                        sys.exit(1)
-                    path = available[name]
-                    if path.exists():
-                        external_paths.append(path)
-                    else:
-                        print(f"External dataset not found: {path}")
+            if unified_merge is not None:
+                # Unified mode: merge files already determined
+                merge_files = unified_merge
+            else:
+                # Legacy mode: auto-merge added_artists + optional external
+                merge_files = []
+                if ADDED_ARTISTS.exists():
+                    merge_files.append(str(ADDED_ARTISTS))
+                elif ADDED_ARTISTS_CSV_ZIP.exists():
+                    merge_files.append(str(ADDED_ARTISTS_CSV_ZIP))
 
-            merge_files.extend([str(p) for p in external_paths])
+                external_paths = []
+                available = get_external_track_datasets()
+                if args.include_external:
+                    exclude_names = set(args.exclude_external or [])
+                    external_paths = [p for name, p in available.items() if p.exists() and name not in exclude_names]
+                elif args.external:
+                    for name in args.external:
+                        if name not in available:
+                            print(f"Unknown external dataset: {name}")
+                            print("Available:", ", ".join(sorted(available.keys())))
+                            sys.exit(1)
+                        path = available[name]
+                        if path.exists():
+                            external_paths.append(path)
+                        else:
+                            print(f"External dataset not found: {path}")
+
+                merge_files.extend([str(p) for p in external_paths])
 
             if merge_files:
                 filter_args.append("--merge")
@@ -234,6 +326,8 @@ def main():
                 filter_args.extend(["--min-songs", str(args.min_songs)])
             if args.keep_remixes:
                 filter_args.append("--keep-remixes")
+            if args.max_international_pct is not None:
+                filter_args.extend(["--max-international-pct", str(args.max_international_pct)])
             
             ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
             if ret != 0:
@@ -250,6 +344,12 @@ def main():
                 process_args.append("--verbose")
             if args.dev:
                 process_args.append("--dev")
+            if args.max_artists > 0:
+                process_args.extend(["--max-artists", str(args.max_artists)])
+            if args.max_songs != 50:
+                process_args.extend(["--max-songs", str(args.max_songs)])
+            if args.smear_strength != 0.6:
+                process_args.extend(["--smear-strength", str(args.smear_strength)])
             
             ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
             if ret != 0:
