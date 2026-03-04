@@ -503,53 +503,60 @@ def load_artist_genre_lookup(*, return_blocked: bool = False):
     """
     Load preprocessed artist genre parquets and build a normalized_artist_name → genre lookup.
 
-    When the same normalized name appears across sources, the entry with
-    highest popularity wins.
-
-    Blocking is tracked per Spotify artist_id to prevent different artists
-    with the same normalized name from cross-contaminating each other.
+    Sources are checked sequentially in quality order (Yamac → Vectorql → Serkan).
+    For each source, only the most popular entry per normalized name is considered.
+    Once a name is resolved or blocked by a higher-quality source, lower sources
+    are skipped entirely.
     """
-    # Source quality: lower is better (used as tiebreaker after popularity).
-    _source_quality = {YAMAC_GENRE: 0, VECTORQL_GENRE: 1, SERKAN_GENRE: 2}
-
-    # Collect candidates per normalized artist from all sources.
-    # Value shape: list[(genre, popularity, artist_id, source_quality, is_locale)]
-    candidates: dict[str, list[tuple[str, int, str, int, bool]]] = {}
-    blocked_ids: set[str] = set()
-    blocked_pops: dict[str, int] = {}  # norm_name -> max blocked popularity
-    seen_ids_by_name: dict[str, set[str]] = {}
-
-    # Cache tag-tuple mapping results (high reuse across rows)
     _tag_cache: dict[tuple, tuple] = {}
+    lookup: dict[str, str] = {}
+    blocked_artists: set[str] = set()
 
-    for path in [SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE]:
+    for path in [YAMAC_GENRE, VECTORQL_GENRE, SERKAN_GENRE]:
         if not path.exists():
             print(f"Genre source not found: {path}")
             continue
 
-        src_q = _source_quality.get(path, 2)
         df = pl.read_parquet(path)
 
-        # Extract columns as lists (avoids iter_rows dict creation overhead)
-        names = df["name"].to_list()
-        ids = df["id"].to_list() if "id" in df.columns else [None] * len(df)
-        genres_lists = df["genres"].to_list()
-        pops = df["popularity"].to_list() if "popularity" in df.columns else [0] * len(df)
-        fallbacks = df["fallback"].to_list() if "fallback" in df.columns else [None] * len(df)
+        # Normalize artist names
+        df = df.with_columns(
+            pl.col("name")
+            .cast(pl.Utf8)
+            .map_elements(normalize_artist_name, return_dtype=pl.Utf8)
+            .alias("_norm")
+        )
+        df = df.filter(pl.col("_norm") != "")
 
-        for name, artist_id, tags, pop, fallback in zip(names, ids, genres_lists, pops, fallbacks):
-            if not name:
-                continue
-            norm_name = normalize_artist_name(str(name))
-            artist_id = artist_id or ""
-            if artist_id:
-                seen_ids_by_name.setdefault(norm_name, set()).add(artist_id)
+        # Skip names already resolved or blocked by a higher-quality source
+        skip = set(lookup.keys()) | blocked_artists
+        if skip:
+            df = df.filter(~pl.col("_norm").is_in(list(skip)))
+
+        if df.is_empty():
+            continue
+
+        # Ensure popularity column exists
+        if "popularity" not in df.columns:
+            df = df.with_columns(pl.lit(0).alias("popularity"))
+
+        # Keep only the most popular row per normalized name
+        df = (
+            df.with_columns(pl.col("popularity").fill_null(0).cast(pl.Int64).alias("_pop"))
+            .sort("_pop", descending=True)
+            .unique(subset=["_norm"], keep="first")
+            .drop("_pop")
+        )
+
+        for row in df.iter_rows(named=True):
+            norm_name = row["_norm"]
+            tags = row.get("genres") or []
+            fallback = row.get("fallback")
 
             if not tags:
                 tags = []
-            pop = pop or 0
 
-            # Cached tag mapping (returns (genre, is_locale) tuples)
+            # Cached tag mapping
             tags_key = tuple(tags) if isinstance(tags, list) else (tags,)
             if tags_key in _tag_cache:
                 genre, is_locale = _tag_cache[tags_key]
@@ -557,74 +564,15 @@ def load_artist_genre_lookup(*, return_blocked: bool = False):
                 genre, is_locale = map_artist_tags(tags, _return_locale_flag=True)
                 _tag_cache[tags_key] = (genre, is_locale)
 
-            # Fallback to source main genre (except blocked)
             if genre is _BLOCK:
-                if artist_id:
-                    blocked_ids.add(artist_id)
-                blocked_pops[norm_name] = max(blocked_pops.get(norm_name, 0), int(pop or 0))
-                continue
-            if not genre:
-                if fallback and isinstance(fallback, str):
-                    genre = _map_standard_genre(fallback.strip().lower())
-                    is_locale = False
-
-            if not genre:
-                continue
-
-            candidates.setdefault(norm_name, []).append(
-                (genre, int(pop or 0), artist_id, src_q, is_locale)
-            )
-
-    lookup: dict[str, str] = {}
-    blocked_artists: set[str] = set()
-    for norm_name, rows in candidates.items():
-        # Prefer non-blocked IDs when names collide
-        non_blocked = [(g, p, aid, sq, loc) for g, p, aid, sq, loc in rows
-                       if aid not in blocked_ids]
-        from_blocked = [(g, p, aid, sq, loc) for g, p, aid, sq, loc in rows
-                        if aid in blocked_ids]
-
-        if non_blocked:
-            max_non_blocked_pop = max(p for _, p, *_ in non_blocked)
-            max_blocked_pop = blocked_pops.get(norm_name, 0)
-            # If a blocked entry is much more popular, the non-blocked entries
-            # are likely false matches from different artists with the same name
-            if max_blocked_pop > 0 and max_non_blocked_pop < max_blocked_pop * 0.25:
                 blocked_artists.add(norm_name)
                 continue
 
-            # Detect name collisions: multiple distinct Spotify artist IDs
-            distinct_ids = {aid for _, _, aid, _, _ in non_blocked if aid}
-            name_collision = len(distinct_ids) > 1
+            if not genre and fallback and isinstance(fallback, str):
+                genre = _map_standard_genre(fallback.strip().lower())
 
-            if name_collision:
-                # Different artists with same name — popularity wins,
-                # source quality as tiebreaker, no locale priority
-                non_blocked.sort(key=lambda item: (
-                    -item[1],   # -popularity
-                    item[3],    # source_quality (lower = better)
-                    item[0],    # genre_name
-                ))
-            else:
-                # Same artist — locale-routed entries get priority as tiebreaker
-                non_blocked.sort(key=lambda item: (
-                    0 if item[4] else 1,  # is_locale flag
-                    -item[1],             # -popularity
-                    item[3],              # source_quality
-                    item[0],              # genre_name
-                ))
-            lookup[norm_name] = non_blocked[0][0]
-        elif from_blocked:
-            blocked_artists.add(norm_name)
-            locale_only = [r for r in from_blocked if r[4]]  # is_locale flag
-            if locale_only:
-                locale_only.sort(key=lambda item: (-item[1], item[3], item[0]))
-                lookup[norm_name] = locale_only[0][0]
-
-    # Names with only blocked IDs may never enter candidates; still mark blocked.
-    for norm_name, ids in seen_ids_by_name.items():
-        if ids and ids.issubset(blocked_ids) and norm_name not in lookup:
-            blocked_artists.add(norm_name)
+            if genre:
+                lookup[norm_name] = genre
 
     if return_blocked:
         return lookup, blocked_artists

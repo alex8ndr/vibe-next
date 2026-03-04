@@ -91,6 +91,9 @@ def normalize_track_name(name: str) -> str:
         if delim in name:
             name = name.split(delim)[0]
     
+    # Strip apostrophes for dedup ("you're" == "youre")
+    name = name.replace("'", "")
+    
     return name.strip()
 
 
@@ -175,6 +178,7 @@ def track_norm_expr(col: str = "track_name") -> pl.Expr:
         # Strip variant suffixes: ( [ / - – —
         .str.replace(r'\s*[\(\[/–—].*$', '', literal=False)
         .str.replace(r'\s+-\s+.*$', '', literal=False)
+        .str.replace_all("'", "", literal=True)  # strip apostrophes for dedup
         .str.strip_chars()
     )
 
