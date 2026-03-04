@@ -35,14 +35,6 @@ ENCODED_DATASET = DATA_DIR / "data_encoded.parquet"
 ADDED_ARTISTS = DATA_DIR / "added_artists.parquet"
 
 # =============================================================================
-# Legacy CSV Files (for backward compatibility and conversion)
-# =============================================================================
-
-RAW_CSV_ZIP = DATA_DIR / "data.csv.zip"
-FILTERED_CSV_ZIP = DATA_DIR / "data_filtered.csv.zip"
-ADDED_ARTISTS_CSV_ZIP = DATA_DIR / "added_artists.csv.zip"
-
-# =============================================================================
 # External Datasets (for merging and genre enrichment)
 # =============================================================================
 
@@ -64,17 +56,12 @@ def get_all_track_datasets() -> dict[str, Path]:
 
     Includes core datasets (data, added_artists) and all external parquets.
     Only includes datasets whose files exist on disk.
-    Core datasets use CSV fallback if parquet is unavailable.
     """
     datasets = {}
     if RAW_DATASET.exists():
         datasets["data"] = RAW_DATASET
-    elif RAW_CSV_ZIP.exists():
-        datasets["data"] = RAW_CSV_ZIP
     if ADDED_ARTISTS.exists():
         datasets["added_artists"] = ADDED_ARTISTS
-    elif ADDED_ARTISTS_CSV_ZIP.exists():
-        datasets["added_artists"] = ADDED_ARTISTS_CSV_ZIP
     for name, path in get_external_track_datasets().items():
         if name not in datasets:
             datasets[name] = path
@@ -114,29 +101,23 @@ def get_temp_path(target: Path) -> Path:
 # =============================================================================
 
 def get_input_dataset() -> Path:
-    """Get the best available input dataset (prefers parquet)."""
+    """Get the raw input dataset."""
     if RAW_DATASET.exists():
         return RAW_DATASET
-    if RAW_CSV_ZIP.exists():
-        return RAW_CSV_ZIP
     raise FileNotFoundError(f"No raw dataset found in {DATA_DIR}")
 
 
 def get_filtered_dataset() -> Path:
-    """Get the best available filtered dataset (prefers parquet)."""
+    """Get the filtered dataset."""
     if FILTERED_DATASET.exists():
         return FILTERED_DATASET
-    if FILTERED_CSV_ZIP.exists():
-        return FILTERED_CSV_ZIP
     raise FileNotFoundError(f"No filtered dataset found in {DATA_DIR}")
 
 
 def get_added_artists() -> Path | None:
-    """Get added_artists file if it exists (prefers parquet)."""
+    """Get added_artists file if it exists."""
     if ADDED_ARTISTS.exists():
         return ADDED_ARTISTS
-    if ADDED_ARTISTS_CSV_ZIP.exists():
-        return ADDED_ARTISTS_CSV_ZIP
     return None
 
 
@@ -151,9 +132,6 @@ def print_paths():
     print(f"  FILTERED_DATASET: {FILTERED_DATASET} {'✓' if FILTERED_DATASET.exists() else '✗'}")
     print(f"  ENCODED_DATASET:  {ENCODED_DATASET} {'✓' if ENCODED_DATASET.exists() else '✗'}")
     print(f"  ADDED_ARTISTS:    {ADDED_ARTISTS} {'✓' if ADDED_ARTISTS.exists() else '✗'}")
-    print(f"  (Legacy CSV)")
-    print(f"  RAW_CSV_ZIP:      {RAW_CSV_ZIP} {'✓' if RAW_CSV_ZIP.exists() else '✗'}")
-    print(f"  FILTERED_CSV_ZIP: {FILTERED_CSV_ZIP} {'✓' if FILTERED_CSV_ZIP.exists() else '✗'}")
     print(f"  (External track datasets)")
     for name, path in get_external_track_datasets().items():
         print(f"  {name:20s} {path} {'✓' if path.exists() else '✗'}")

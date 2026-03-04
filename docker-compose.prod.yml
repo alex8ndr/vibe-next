@@ -1,3 +1,7 @@
+# NOT used for deployment — Dokploy deploys each service separately via their
+# own Dockerfiles.  B2 env vars are set directly in Dokploy.
+# This file is kept only as a reference / for local testing.
+
 services:
   backend:
     build: ./backend

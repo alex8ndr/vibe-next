@@ -15,12 +15,6 @@ Usage:
     # Skip add step, just run filter + process
     python run_pipeline.py --process-only
 
-    # Merge all available external datasets during filtering
-    python run_pipeline.py --process-only --include-external
-
-    # Merge a specific external dataset during filtering
-    python run_pipeline.py --process-only --external yamac
-
     # Unified dataset selection: pick specific datasets by name
     python run_pipeline.py --process-only --datasets data yamac_tracks
 
@@ -39,7 +33,6 @@ Usage:
 import argparse
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent
@@ -50,10 +43,7 @@ PIPELINE_DIR = SCRIPTS_DIR / "pipeline"
 sys.path.insert(0, str(SCRIPTS_DIR))
 from paths import (
     FILTERED_DATASET,
-    ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP,
     ENCODED_DATASET,
-    EXTERNAL_TRACK_DATASETS,
-    get_external_track_datasets,
     get_input_dataset,
     get_all_track_datasets,
     get_added_artists,
@@ -127,24 +117,6 @@ def main():
         type=float,
         default=None,
         help="Maximum percentage of international tracks (filter step only)",
-    )
-    parser.add_argument(
-        "--include-external",
-        action="store_true",
-        help="Merge all available external datasets from data/external",
-    )
-    parser.add_argument(
-        "--external",
-        action="append",
-        help=(
-            "Merge specific external dataset(s) by name. "
-            "Available: " + ", ".join(sorted(EXTERNAL_TRACK_DATASETS.keys()))
-        ),
-    )
-    parser.add_argument(
-        "--exclude-external",
-        action="append",
-        help="Exclude specific external dataset(s) by name when using --include-external",
     )
     parser.add_argument(
         "--datasets",
@@ -244,23 +216,6 @@ def main():
     else:
         # Full reprocess mode
         
-        # Deprecation warnings for old external flags
-        if args.include_external:
-            warnings.warn(
-                "--include-external is deprecated, use --all-datasets instead",
-                DeprecationWarning, stacklevel=2,
-            )
-        if args.external:
-            warnings.warn(
-                "--external is deprecated, use --datasets instead",
-                DeprecationWarning, stacklevel=2,
-            )
-        if args.exclude_external:
-            warnings.warn(
-                "--exclude-external is deprecated, use --all-datasets --exclude-datasets instead",
-                DeprecationWarning, stacklevel=2,
-            )
-        
         # Determine input file and merge paths based on dataset selection mode
         if args.datasets or args.all_datasets:
             # Unified dataset selection
@@ -296,30 +251,11 @@ def main():
                 print("Error: No input dataset found. Run convert_to_parquet.py first.")
                 sys.exit(1)
             
-            # Auto-merge added_artists + optional external
+            # Auto-merge added_artists if present
             merge_paths = []
             added = get_added_artists()
             if added:
                 merge_paths.append(added)
-
-            available_ext = get_external_track_datasets()
-            if args.include_external:
-                exclude_names = set(args.exclude_external or [])
-                merge_paths.extend(
-                    p for name, p in available_ext.items()
-                    if p.exists() and name not in exclude_names
-                )
-            elif args.external:
-                for name in args.external:
-                    if name not in available_ext:
-                        print(f"Unknown external dataset: {name}")
-                        print("Available:", ", ".join(sorted(available_ext.keys())))
-                        sys.exit(1)
-                    path = available_ext[name]
-                    if path.exists():
-                        merge_paths.append(path)
-                    else:
-                        print(f"External dataset not found: {path}")
         
         added_artists_path = get_added_artists()
         

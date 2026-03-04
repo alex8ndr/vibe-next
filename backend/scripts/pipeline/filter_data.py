@@ -449,9 +449,9 @@ def main() -> None:
             print(f"Auto-detected added_artists: {added}")
     else:
         # Check if any merge path looks like added_artists
-        from paths import ADDED_ARTISTS, ADDED_ARTISTS_CSV_ZIP
+        from paths import ADDED_ARTISTS
         for mp in merge_paths:
-            if mp.resolve() in (ADDED_ARTISTS.resolve(), ADDED_ARTISTS_CSV_ZIP.resolve()):
+            if mp.resolve() == ADDED_ARTISTS.resolve():
                 added_artists_path = mp
                 break
     

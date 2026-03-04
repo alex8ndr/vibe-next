@@ -64,6 +64,24 @@ def _latest_key(prefix: str, basename: str, ext: str = ".parquet") -> str:
     return f"{prefix}/datasets/{basename}-latest{ext}"
 
 
+def get_remote_timestamp(target_file: Path) -> int | None:
+    """Get B2 upload timestamp (ms since epoch) for the latest version of a file.
+
+    Returns None if the file doesn't exist remotely.  Uses only the list API
+    (no download, negligible bandwidth).
+    """
+    bucket, prefix = _get_bucket()
+    remote_key = _latest_key(prefix, target_file.stem, target_file.suffix)
+
+    for file_version, _folder in bucket.ls(
+        folder_to_list=f"{prefix}/datasets/",
+        latest_only=True,
+    ):
+        if file_version.file_name == remote_key:
+            return file_version.upload_timestamp
+    return None
+
+
 def upload(local_file: Path, *, write_latest: bool) -> None:
     if not local_file.exists():
         raise SystemExit(f"Local file not found: {local_file}")

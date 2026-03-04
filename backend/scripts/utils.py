@@ -92,7 +92,6 @@ SAMPLING_WEIGHTS = {
 }
 
 # TheAudioDB / Last.fm tag → dataset genre mapping
-# NOTE: TheAudioDB often returns "rock/pop" for everything - we handle compound genres
 AUDIODB_GENRE_MAP = {
     # === COMPOUND GENRES (TheAudioDB returns these frequently) ===
     'rock/pop': 'alt-rock',  # Most common TheAudioDB response - maps to modern alternative
@@ -144,7 +143,7 @@ AUDIODB_GENRE_MAP = {
     'post-teen pop': 'pop', 'viral pop': 'pop',
     
     # === K-Pop / Asian ===
-    'k-pop': 'k-pop', 'kpop': 'k-pop', 'k-rap': 'k-pop', 'j-pop': 'j-pop', 'jpop': 'j-pop',
+    'k-pop': 'k-pop', 'kpop': 'k-pop', 'k-rap': 'k-pop', 'j-pop': 'j-pop', 'jpop': 'j-pop', 'j-dance': 'j-pop',
     'j-rock': 'j-rock', 'jrock': 'j-rock', 'visual kei': 'j-rock',
     'c-pop': 'cantopop', 'mandopop': 'cantopop', 'cantopop': 'cantopop',
     
@@ -161,7 +160,7 @@ AUDIODB_GENRE_MAP = {
   'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
   'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
   'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass', 'liquid funk': 'drum-and-bass',
-  'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'chill',
+  'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'indie-pop',
   'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
   'electro': 'electro', 'disco': 'disco', 'nu disco': 'disco',
   'idm': 'electronic', 'glitch': 'electronic', 'breakbeat': 'breakbeat',

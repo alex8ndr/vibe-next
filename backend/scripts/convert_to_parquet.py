@@ -21,8 +21,6 @@ from paths import (
     DATA_DIR, 
     RAW_DATASET, 
     ADDED_ARTISTS,
-    RAW_CSV_ZIP,
-    ADDED_ARTISTS_CSV_ZIP,
 )
 from io_utils import atomic_write_parquet
 
@@ -100,8 +98,8 @@ def main():
     else:
         # Convert all default files
         files_to_convert = [
-            (RAW_CSV_ZIP, RAW_DATASET),
-            (ADDED_ARTISTS_CSV_ZIP, ADDED_ARTISTS),
+            (DATA_DIR / "data.csv.zip", RAW_DATASET),
+            (DATA_DIR / "added_artists.csv.zip", ADDED_ARTISTS),
         ]
         
         converted = 0
