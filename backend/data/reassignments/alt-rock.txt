@@ -1,34 +1,3 @@
-# Reassignments for target genre: alt-rock
-# One artist per line. Comments starting with #/blank lines are ignored.
-# --- From Audit / Cleanups ---
-# --- Added from EDM cleanup ---
-
 AA Sound System
-Arctic Monkeys
-Bastille
-Cage The Elephant
-Chon
-David Byrne
-Deerhoof
-Electric Six
-Florence + The Machine
 Ford Pier
-Foster The People
-Gin Blossoms
-Grouplove
-Hozier
-Imagine Dragons
-Inner Wave
-KONGOS
-Miss Black America
 Screwtape Lewis
-STARSET
-Sufjan Stevens
-The Growlers
-Thee Oh Sees
-Twenty One Pilots
-Ty Segall
-WALK THE MOON
-Wavves
-YUNGBLUD
-zebrahead

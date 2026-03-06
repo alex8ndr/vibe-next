@@ -1,9 +1,0 @@
-# Reassignments for target genre: jazz
-# One artist per line. Comments starting with #/blank lines are ignored.
-
-Bill Evans
-Django Reinhardt
-Duke Ellington
-Ella Fitzgerald
-Oscar Peterson
-Thelonious Monk

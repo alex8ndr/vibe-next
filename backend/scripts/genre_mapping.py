@@ -75,8 +75,18 @@ _LOCALE_OVERRIDES = {
     "indian film": "pop-film",
     "tamil film": "pop-film",
     "desi film": "pop-film",
+    # German (native language forms)
+    "deutschrap": "german-hip-hop",
+    "deutscher rap": "german-hip-hop",
+    "neue deutsche welle": "german",
+    # French (additional forms)
+    "hip hop français": "french-hip-hop",
+    "hip hop francais": "french-hip-hop",
+    # Brazilian
+    "funk carioca": "funk",
     # Block: non-English standalone genres that contain English substrings
     "rock nacional": None,
+    "pop nacional": None,
 }
 
 # Locale keywords that map directly to supported output genres.
@@ -137,6 +147,21 @@ _LOCALE_KEYWORDS = {
     "african": "afrobeat",
     "afro": "afrobeat",
     "south african": "afrobeat",
+    "ghanaian": "afrobeat",
+    "kenyan": "afrobeat",
+    "tanzanian": "afrobeat",
+    "ethiopian": "afrobeat",
+    "congolese": "afrobeat",
+    "senegalese": "afrobeat",
+    # Caribbean
+    "caribbean": "dancehall",
+    "trinidadian": "dancehall",
+    "haitian": "dancehall",
+    # Latin American (additional)
+    "panamanian": "latin-urban",
+    "costa rican": "latin-urban",
+    # German (native language form)
+    "deutsch": "german",
 }
 
 # Locale keywords to block when no dedicated output genre exists.
@@ -150,6 +175,9 @@ _NON_ENGLISH_PREFIXES = frozenset({
     "serbian", "croatian", "bosnian", "slovenian", "bulgarian", "yugoslav",
     "ukrainian", "belarusian", "russian",
     "turkish", "georgian", "armenian",
+    "austrian", "swiss",
+    "catalan", "basque", "galician",
+    "albanian", "afrikaans",
     # Asia (without dedicated genres)
     "indonesian", "thai", "vietnamese", "filipino", "pinoy",
     "malaysian", "malay", "singaporean",
@@ -174,6 +202,7 @@ _LOCALE_GENERIC_TOKENS = (
     "afrobeat", "afrobeats", "cumbia", "bachata", "dancehall", "dub",
     "breakbeat", "garage", "lo-fi", "phonk", "boom bap",
     "samba", "salsa", "swing", "soundtrack", "film", "chanson", "variete",
+    "rnb", "variété",
 )
 
 # Pre-compiled locale regexes
@@ -236,6 +265,28 @@ _COMPOUND_SUBSTRING_RULES: list[tuple[re.Pattern, str]] = [
         "post-rock": "post-rock",
         "drum and bass": "drum-and-bass",
         "post-hardcore": "post-hardcore",
+        "uk grime": "grime",
+        "instrumental grime": "grime",
+        "alternative hip hop": "hip-hop",
+        "experimental hip hop": "hip-hop",
+        "industrial hip hop": "hip-hop",
+        "pop rap": "hip-hop",
+        "southern hip hop": "hip-hop",
+        "atl hip hop": "hip-hop",
+        "miami hip hop": "hip-hop",
+        "dirty south rap": "hip-hop",
+        "country rap": "hip-hop",
+        "country hip hop": "hip-hop",
+        "tech house": "house",
+        "future house": "house",
+        "progressive house": "progressive-house",
+        "electro house": "edm",
+        "progressive electro house": "edm",
+        "minimal techno": "minimal-techno",
+        "modern reggae": "reggae",
+        "virgin islands reggae": "reggae",
+        "neo classical metal": "prog-metal",
+        "gothic symphonic metal": "prog-metal",
     }.items()
 ]
 

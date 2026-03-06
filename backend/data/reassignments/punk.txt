@@ -1,3 +1,0 @@
-# Reassignments for target genre: punk
-# One artist per line. Comments starting with #/blank lines are ignored.
-

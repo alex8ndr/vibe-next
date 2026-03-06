@@ -1,53 +1,5 @@
-# Reassignments for target genre: hip-hop
-# One artist per line. Comments starting with #/blank lines are ignored.
-# --- "Frat Rap" / Indie Pop rap ---
-# --- Experimental / Industrial Hip Hop ---
-# --- Jazz/Soul Hop ---
-# --- Mainstream Hip-Hop (from Dance) ---
-# --- Spanish Hip-Hop ---
-# --- Added from Audit ---
-
-Aer
 Azealia Banks
-Big Sean
-Chris Webby
-clipping.
-Death Grips
-Deca
-Digital Underground
-Dizzee Rascal
-E-Dubble
-Everlast
-Far East Movement
-Flo Rida
-Fort Minor
-Hoodie Allen
-JPEGMAFIA
-Knxwledge
-Lil Rob
-Ludacris
-Mala Rodríguez
-MC Hammer
-Mr. Capone-E
-Nach
-Natos y Waor
+Fabolous
 Nelly
-People Under The Stairs
-Porta
-Rels B
-Ryan Caraveo
-SAINt JHN
-SFDK
-Shwayze
-Slum Village
-So Solid Crew
-Suga Free
-T.I.
-Tech N9ne
 Tierra Whack
-Tom MacDonald
-Travis Scott
 Tyga
-Vanilla Ice
-Wiz Khalifa
-Yung Beef

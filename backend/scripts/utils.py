@@ -151,6 +151,11 @@ AUDIODB_GENRE_MAP = {
     'hip hop': 'hip-hop', 'hip-hop': 'hip-hop', 'hiphop': 'hip-hop',
     'rap': 'hip-hop', 'trap': 'hip-hop', 'g-funk': 'hip-hop', 'emo rap': 'hip-hop',
     'underground hip-hop': 'hip-hop',
+    'pop rap': 'hip-hop', 'hip pop': 'hip-hop',
+    'southern hip hop': 'hip-hop', 'atl hip hop': 'hip-hop', 'miami hip hop': 'hip-hop',
+    'dirty south rap': 'hip-hop', 'gangster rap': 'hardcore-hip-hop',
+    'alternative hip hop': 'hip-hop', 'experimental hip hop': 'hip-hop',
+    'industrial hip hop': 'hip-hop', 'indie pop rap': 'hip-hop', 
     'r&b': 'soul', 'rnb': 'soul', 'rhythm and blues': 'soul',
     'soul': 'soul', 'neo soul': 'soul', 'neo-soul': 'soul',
     'funk': 'funk', 'gospel': 'gospel',
@@ -158,7 +163,11 @@ AUDIODB_GENRE_MAP = {
   # === Electronic ===
   'electronic': 'electronic', 'electronica': 'electronic',
   'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
+  'electro house': 'edm', 'progressive house': 'progressive-house',
+  'progressive electro house': 'edm', 'tech house': 'house',
+  'future house': 'house', 'g-house': 'house',
   'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
+  'minimal techno': 'minimal-techno',
   'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass', 'liquid funk': 'drum-and-bass',
   'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'indie-pop',
   'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
@@ -200,6 +209,7 @@ AUDIODB_GENRE_MAP = {
   # === Reggae ===
   'reggae': 'reggae', 'ska': 'ska', 'dancehall': 'dancehall', 'dub': 'dub',
   'roots reggae': 'reggae', 'lovers rock': 'reggae',
+  'modern reggae': 'reggae', 'virgin islands reggae': 'reggae',
   'ragga': 'dancehall',
     
   # === Classical ===
@@ -221,6 +231,9 @@ AUDIODB_GENRE_MAP = {
   # === Christian / Worship ===
   'christian': 'ccm', 'christian hip hop': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',
   'worship': 'ccm', 'contemporary christian': 'ccm', 'christian metal': 'christian-metal',
+  'brazilian gospel': 'ccm', 'gospel antigas': 'ccm',
+  'brazilian evangelical music': 'ccm', 'adoracao': 'ccm',
+  'groove gospel': 'gospel',
   'praise': 'ccm',
     
   # === Math Rock / Progressive ===
@@ -272,6 +285,13 @@ AUDIODB_GENRE_MAP = {
   'new age': 'new-age',
   'tejano': 'sertanejo', 'mariachi': 'sertanejo',
   'bhangra': 'indian', 'highlife': 'afrobeat',
+  'afropop': 'afrobeat', 'afroswing': 'afrobeat',
+  'soukous': 'afrobeat', 'mbalax': 'afrobeat',
+  'kompa': 'dancehall',
+  'pagode': 'samba',
+  'norteño': 'sertanejo', 'norteno': 'sertanejo',
+  'ranchera': 'sertanejo', 'grupera': 'sertanejo',
+  'musica mexicana': 'sertanejo',
   'lounge': 'chill', 'freestyle': 'dance',
   'fado': 'folk', 'k-ballad': 'k-pop',
 }

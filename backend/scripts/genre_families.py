@@ -7,7 +7,7 @@ Strategy: "Sparse Definitions + Smearing"
 - "Smearing" (neighbor propagation) in process_data.py creates the organic gradients.
   (e.g. Rock <-> Alt-Rock <-> Indie)
 - Inline comments indicate results of dataset genre analysis.
-- Some genres have lower weights to miminize smearing between unrelated genres.
+- Some genres have lower weights to minimize smearing between unrelated genres.
 - ARCHITECTURAL NOTE ON MAGNITUDES:
   1. RATIO (e.g. 0.8:0.4) determines the DIRECTION of the vibe in latent space (post-L2).
   2. MAGNITUDE acts as a "SMEARING VALVE" during the pre-normalization graph phase:
@@ -57,8 +57,8 @@ GENRE_DEFINITIONS = {
     'rock-n-roll':      {'rock': 0.5, 'jazz_blues': 0.4, 'pop': 0.2, 'acoustic_folk': 0.2},  # Oldies
     'garage':           {'alternative': 0.3, 'rock': 0.3, 'punk': 0.3, 'acoustic_folk': 0.3}, # Indie/acoustic rock
     
-    'alt-rock':         {'alternative': 0.8, 'rock': 0.5, 'electronic_house': 0.1}, # Modern Radio Alternative
-    'indie-pop':        {'alternative': 0.7, 'pop': 0.5, 'acoustic_folk': 0.2},
+    'alt-rock':         {'alternative': 0.8, 'rock': 0.5}, 
+    'indie-pop':        {'alternative': 0.7, 'pop': 0.5, 'electronic_house': 0.2},
     'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.2, 'progressive': 0.2},  # Trippy!
     'post-rock':        {'alternative': 0.5, 'chill_ambient': 0.5, 'rock': 0.3, 'progressive': 0.2},  # Atmospheric/cinematic (Mogwai, EITS)
     
@@ -89,10 +89,10 @@ GENRE_DEFINITIONS = {
     # POP & K-POP
     # =========================================================================
     'pop':              {'pop': 1.0},
-    'dance':            {'pop': 0.6, 'electronic_house': 0.6},
+    'dance':            {'pop': 0.6, 'electronic_house': 0.6, 'hip_hop': 0.2},
     'synthpop':         {'pop': 0.5, 'electronic_house': 0.5, 'alternative': 0.5},  # Depeche Mode, Pet Shop Boys
     'hyperpop':         {'pop': 0.3, 'electronic_techno': 0.3, 'alternative': 0.3, 'progressive': 0.3},  # 100 gecs, SOPHIE
-    'schlager':          {'german': 0.5, 'pop': 0.3, 'world_regional': 0.2}, # German Schlager
+    'schlager':         {'german': 0.5, 'pop': 0.3, 'world_regional': 0.2}, # German Schlager
     
     'k-pop':            {'k_pop': 1.0, 'pop': 0.4, 'hip_hop': 0.2},
     'cantopop':         {'k_pop': 0.3, 'pop': 0.3, 'world_regional': 0.3},
@@ -101,7 +101,7 @@ GENRE_DEFINITIONS = {
     # HIP-HOP & R&B
     # =========================================================================
     'hip-hop':          {'hip_hop': 1.0},
-    'trip-hop':         {'chill_ambient': 0.6, 'electronic_house': 0.5, 'hip_hop': 0.2}, # Downtempo
+    'trip-hop':         {'chill_ambient': 0.5, 'electronic_house': 0.5, 'hip_hop': 0.4}, # Downtempo
     'soul':             {'rnb_soul': 1.0, 'jazz_blues': 0.4, 'pop': 0.2},
     'drill':            {'hip_hop': 0.8, 'bass_music': 0.3, 'electronic_techno': 0.2},
     'grime':            {'hip_hop': 0.5, 'bass_music': 0.5, 'electronic_techno': 0.3},
@@ -110,7 +110,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'electronic':       {'electronic_house': 0.5, 'electronic_techno': 0.4, 'bass_music': 0.3, 'chill_ambient': 0.2},
     
-    'house':            {'electronic_house': 0.4, 'hip_hop': 0.2, 'pop': 0.2}, # Mixed genre (lower weights)
+    'house':            {'electronic_house': 0.9, 'electronic_techno': 0.2, 'rnb_soul': 0.1}, # Keep house anchored to dancefloor electronic
     
     'deep-house':       {'electronic_house': 0.9, 'chill_ambient': 0.4, 'rnb_soul': 0.2},
     'chicago-house':    {'electronic_house': 1.0, 'rnb_soul': 0.4},
@@ -163,7 +163,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'salsa':            {'latin_tropical': 1.0, 'jazz_blues': 0.3},
     'samba':            {'latin_tropical': 1.0, 'jazz_blues': 0.2},
-    'afrobeat':         {'latin_tropical': 0.8, 'alternative': 0.4, 'rnb_soul': 0.2}, # Latin alternative
+    'afrobeat':         {'latin_tropical': 0.8, 'rnb_soul': 0.4, 'electronic_house': 0.2}, # Afrobeats tends to sit closer to R&B/dance than indie-alt
     
     'forro':            {'latin_regional': 1.0, 'acoustic_folk': 0.4, 'jazz_blues': 0.2},
     'sertanejo':        {'latin_regional': 0.9, 'acoustic_folk': 0.5, 'pop': 0.3},
@@ -181,13 +181,13 @@ GENRE_DEFINITIONS = {
     'classical':        {'classical_cinematic': 1.0},
     'opera':            {'classical_cinematic': 1.0, 'world_regional': 0.2},
     'piano':            {'classical_cinematic': 0.8, 'acoustic_folk': 0.4, 'chill_ambient': 0.3},
-    'show-tunes':       {'classical_cinematic': 0.2, 'pop': 0.1},
+    'show-tunes':       {'classical_cinematic': 0.8, 'pop': 0.4},
     
     # =========================================================================
     # WORLD / REGIONAL (lower weights for less smearing)
     # =========================================================================
     'world':            {'world_regional': 0.8, 'acoustic_folk': 0.3},  # Generic world music catch-all
-    'indian':           {'world_regional': 0.3, 'classical_cinematic': 0.1, 'pop': 0.1}, # Indian pop and Bollywood
+    'indian':           {'world_regional': 0.7, 'classical_cinematic': 0.4, 'pop': 0.4}, # Indian pop and Bollywood/film scenes
     'german':           {'world_regional': 0.3, 'german': 0.7, 'classical_cinematic': 0.3, 'metal': 0.2, 'electronic_techno': 0.2},
     'french':           {'world_regional': 0.3, 'french': 0.7, 'hip_hop': 0.2, 'electronic_house': 0.2, 'classical_cinematic': 0.1},
     'spanish':          {'world_regional': 0.3, 'latin_tropical': 0.2, 'rock': 0.1, 'pop': 0.1}, # Spanish pop rock
@@ -198,10 +198,10 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # CHRISTIAN 
     # =========================================================================
-    'gospel':           {'christian': 0.3, 'acoustic_folk': 0.2},
-    'ccm':              {'christian': 0.3, 'pop': 0.2},
-    'christian-rock':   {'christian': 0.3, 'rock': 0.2},
-    'christian-metal':  {'christian': 0.3, 'metal': 0.2},
+    'gospel':           {'christian': 0.8, 'rnb_soul': 0.3, 'acoustic_folk': 0.2},
+    'ccm':              {'christian': 0.8, 'pop': 0.5, 'acoustic_folk': 0.2},
+    'christian-rock':   {'christian': 0.8, 'rock': 0.5, 'emo_pop_punk': 0.2},
+    'christian-metal':  {'christian': 0.8, 'metal': 0.6, 'punk': 0.2},
 
     # =========================================================================
     # DATASET FINDINGS
@@ -223,7 +223,7 @@ GENRE_DEFINITIONS = {
     'groove':           {'metal': 0.8, 'rock': 0.4},
 
     # Darkwave
-    'goth':             {'alternative': 0.4, 'electronic_techno': 0.4, 'chill_ambient': 0.4},
+    'goth':             {'alternative': 0.5, 'electronic_techno': 0.4, 'chill_ambient': 0.2, 'rock': 0.2, 'metal': 0.2},
 
     # Indian Playback + All soundtracks
     'pop-film':         {'world_regional': 0.4, 'classical_cinematic': 0.4, 'pop': 0.2},
@@ -234,12 +234,12 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # NEW LANGUAGE/STYLE SPLITS
     # =========================================================================
-    'french-hip-hop':   {'hip_hop': 0.1, 'french': 0.1},
-    'german-hip-hop':   {'hip_hop': 0.1, 'german': 0.1},
-    'latin-urban':      {'hip_hop': 0.1, 'latin_tropical': 0.1, 'pop': 0.1}, # Reggaeton/Trap
+    'french-hip-hop':   {'hip_hop': 0.7, 'french': 0.6, 'pop': 0.2},
+    'german-hip-hop':   {'hip_hop': 0.7, 'german': 0.6, 'electronic_techno': 0.1},
+    'latin-urban':      {'hip_hop': 0.7, 'latin_tropical': 0.6, 'pop': 0.4}, # Reggaeton/Trap
     
-    'j-pop':            {'japanese': 0.2, 'pop': 0.1}, 
-    'j-rock':           {'japanese': 0.2, 'rock': 0.1},
+    'j-pop':            {'japanese': 0.8, 'pop': 0.5},
+    'j-rock':           {'japanese': 0.8, 'rock': 0.5, 'alternative': 0.2},
 
     'hardcore-hip-hop': {'hip_hop': 0.6, 'rnb_soul': 0.3}, # Aggressive Rap (Wu-Tang, DMX)
     'hardcore-punk':    {'punk': 0.6, 'metal': 0.2},

@@ -1,19 +1,1 @@
-# Reassignments for target genre: j-rock
-# One artist per line. Comments starting with #/blank lines are ignored.
-
-ASIAN KUNG-FU GENERATION
-coldrain
-Crossfaith
-DIR EN GREY
-ELLEGARDEN
-Fear, and Loathing in Las Vegas
 L'Arc~en~Ciel
-Ling tosite sigure
-MAN WITH A MISSION
-MAXIMUM THE HORMONE
-ONE OK ROCK
-RADWIMPS
-SiM
-the GazettE
-UVERworld
-X JAPAN
