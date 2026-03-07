@@ -70,6 +70,9 @@ VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
 # Sample size for Gumbel noise distribution
 SAMPLE_SIZE = 5000
 
+# ANN overfetch multiplier: fetch K*ANN_OVERFETCH candidates from audio-only ANN
+ANN_OVERFETCH = 20
+
 
 class DataSource(Protocol):
     def load(self) -> pl.DataFrame:
@@ -130,16 +133,21 @@ class MusicData:
         weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float32)
         self.matrix_audio = audio_data * weights
         
-        # Precompute squared norms for fast Euclidean distance: ||x-q||² = ||x||² + ||q||² - 2x·q
+        # Precompute squared norms for fast Euclidean distance
         self.audio_norms_sq = np.sum(self.matrix_audio ** 2, axis=1)
         
         # Genre Matrix (Unweighted for Cosine)
-        self.matrix_genre = df.select(self.genre_cols).to_numpy().astype(np.float32)
+        matrix_genre_f32 = df.select(self.genre_cols).to_numpy().astype(np.float32)
         
-        # Precompute genre norms once (avoid recomputation per request)
-        self.genre_norms = np.linalg.norm(self.matrix_genre, axis=1)
-        self.genre_norms[self.genre_norms == 0] = 1.0  # Prevent division by zero
-        print(f"[startup] Matrices ready (audio + genre)")
+        # Precompute genre norms 
+        self.genre_norms = np.linalg.norm(matrix_genre_f32, axis=1).astype(np.float32)
+        self.genre_norms[self.genre_norms == 0] = 1.0
+        self.matrix_genre = matrix_genre_f32.astype(np.float16)
+        del matrix_genre_f32
+        
+        audio_mb = self.matrix_audio.nbytes / 1024**2
+        genre_mb = self.matrix_genre.nbytes / 1024**2
+        print(f"[startup] Matrices ready (audio {audio_mb:.0f}MB f32 + genre {genre_mb:.0f}MB f16)")
         
         # Sort artists by popularity
         artist_popularity = (
@@ -502,6 +510,7 @@ def generate_recommendations(
     debug: bool = False,
     debug_audio: bool = False,
 ) -> tuple[dict[str, list[dict]], dict]:
+    t_start = perf_counter()
     df = data.df
     matrix_audio = data.matrix_audio
     matrix_genre = data.matrix_genre
@@ -509,6 +518,7 @@ def generate_recommendations(
     artist_lookup = data.track_id_to_artist
     
     grouped_seeds = get_seed_indices_grouped(df, matrix_audio, input_artists, lookup, track_ids, artist_lookup)
+    t_seeds = perf_counter()
     
     if not grouped_seeds:
         return {}, {"has_more_candidates": False}
@@ -527,7 +537,7 @@ def generate_recommendations(
         artist_ranges.append((artist, start, end))
     
     seeds_audio = [matrix_audio[idx] for idx in seed_indices]
-    seeds_genre_raw = [matrix_genre[idx] for idx in seed_indices]
+    seeds_genre_raw = [matrix_genre[idx].astype(np.float32) for idx in seed_indices]
     seeds_genre = [
         s / np.linalg.norm(s) if np.linalg.norm(s) > 0 else s
         for s in seeds_genre_raw
@@ -550,20 +560,37 @@ def generate_recommendations(
     seeds_audio_stack = np.stack(seeds_audio, axis=0).astype(np.float32)
     seeds_genre_stack = np.stack(seeds_genre, axis=0).astype(np.float32)
     
-    # Batch audio distance
-    seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
-    dot_products = seeds_audio_stack @ matrix_audio.T
-    d_audio_sq = data.audio_norms_sq + seeds_norm_sq - 2.0 * dot_products
-    d_audio = np.sqrt(np.maximum(d_audio_sq, 0))
+    t_prep = perf_counter()
+    # Audio-only candidate generation: fast 12D matmul to find candidates before rerank,
+    fetch_k = min(SAMPLE_SIZE * ANN_OVERFETCH, len(matrix_audio))
     
-    # Batch genre distance (cosine) - use precomputed norms
+    # Batch audio-only squared distances: ||x-q||² = ||x||² + ||q||² - 2x·q
+    seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
+    dot_products_full = seeds_audio_stack @ matrix_audio.T
+    d_audio_sq_full = data.audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_full
+    del dot_products_full
+    
+    # Aggregate audio distances across seeds
+    d_audio_sq_min = np.min(d_audio_sq_full, axis=0)
+    top_k_idx = np.argpartition(d_audio_sq_min, fetch_k)[:fetch_k]
+    candidates = np.sort(top_k_idx)
+    
+    # Extract per-seed audio distances for candidates and free the full matrix
+    d_audio = np.sqrt(np.maximum(d_audio_sq_full[:, candidates], 0))
+    del d_audio_sq_full, d_audio_sq_min
+    
+    t_audio = perf_counter()
+    # Genre distance (cosine) computed ONLY on candidate subset (upcast from f16)
+    cand_genre = matrix_genre[candidates].astype(np.float32)
+    cand_genre_norms = data.genre_norms[candidates]
     seeds_genre_norms = np.linalg.norm(seeds_genre_stack, axis=1, keepdims=True)
-    genre_dots = seeds_genre_stack @ matrix_genre.T
+    genre_dots = seeds_genre_stack @ cand_genre.T
     with np.errstate(divide='ignore', invalid='ignore'):
-        cosine_sim = genre_dots / (seeds_genre_norms * data.genre_norms)
+        cosine_sim = genre_dots / (seeds_genre_norms * cand_genre_norms)
         cosine_sim = np.nan_to_num(cosine_sim, nan=0.0, posinf=0.0, neginf=0.0)
     d_genre = 1.0 - cosine_sim
     
+    t_genre = perf_counter()
     # Look up effective weight from curve (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
     effective_genre_weight = GENRE_WEIGHT_CURVE[genre_weight]
     
@@ -575,30 +602,29 @@ def generate_recommendations(
     d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
     
     # Apply popularity and track count as distance adjustments
-    # Negative slider = favor obscure/low-track artists, positive = favor mainstream/high-track
     if popularity != 0 and data.artist_popularity is not None:
         pop_weight = 0.6
         track_weight = 0.2
-        # Center around actual median
-        pop_adjustment = (data.artist_popularity - data.popularity_median) * popularity * pop_weight
-        track_adjustment = (data.artist_track_count - 0.5) * popularity * track_weight
+        pop_adjustment = (data.artist_popularity[candidates] - data.popularity_median) * popularity * pop_weight
+        track_adjustment = (data.artist_track_count[candidates] - 0.5) * popularity * track_weight
         d_total = d_total - pop_adjustment - track_adjustment
     
-    # Use Gumbel noise for variety - gives controlled randomness while respecting relevance
-    # Clamp n to dataset size and fix argpartition (kth is 0-indexed, so use n-1)
+    # Use Gumbel noise for variety on the candidate set
     n = min(SAMPLE_SIZE, len(d_total))
-    k = n - 1  # argpartition kth parameter is 0-indexed
+    k = n - 1
     if diversity > 0:
-        # Add noise scaled by diversity level (0=None, 1=Low, 2=Medium, 3=High)
         noise_scale = VARIETY_NOISE_SCALE * diversity
         noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_total.shape).astype(np.float32)
         d_noisy = d_total.astype(np.float32) + noise
-        # Use argpartition for O(n) instead of O(n log n) argsort
         top_n_unsorted = np.argpartition(d_noisy, k)[:n]
-        similar_indices = top_n_unsorted[np.argsort(d_noisy[top_n_unsorted])]
+        top_n_sorted = top_n_unsorted[np.argsort(d_noisy[top_n_unsorted])]
     else:
         top_n_unsorted = np.argpartition(d_total, k)[:n]
-        similar_indices = top_n_unsorted[np.argsort(d_total[top_n_unsorted])]
+        top_n_sorted = top_n_unsorted[np.argsort(d_total[top_n_unsorted])]
+    
+    t_rank = perf_counter()
+    # Map back from candidate-local indices to global track indices
+    similar_indices = candidates[top_n_sorted]
     
     # Get similar songs and add score (higher = better, based on position in sorted list)
     similar_df = df[similar_indices.tolist()]
@@ -697,6 +723,11 @@ def generate_recommendations(
             ]
             debug_info[artist] = artist_debug
     
+    t_postprocess = perf_counter()
+    print(f"[perf] seeds={1000*(t_seeds-t_start):.0f}ms prep={1000*(t_prep-t_seeds):.0f}ms "
+          f"audio={1000*(t_audio-t_prep):.0f}ms genre={1000*(t_genre-t_audio):.0f}ms "
+          f"rank={1000*(t_rank-t_genre):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
+          f"TOTAL={1000*(t_postprocess-t_start):.0f}ms candidates={len(candidates)}")
     meta = {
         "has_more_candidates": has_more_candidates,
     }
