@@ -22,7 +22,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-import polars as pl
 
 
 from logic import MusicData, ParquetDataSource, generate_recommendations, GENRE_FOCUS, TRACKS_PER_ARTIST, VARIETY, MAX_ARTISTS
@@ -59,7 +58,7 @@ def _load_cached_data() -> MusicData:
                 with open(CACHE_PATH, 'rb') as f:
                     music_data = pickle.load(f)
                 elapsed = perf_counter() - t0
-                print(f"[startup] Restored {len(music_data.df):,} tracks from cache in {elapsed:.2f}s")
+                print(f"[startup] Restored {music_data.track_count:,} tracks from cache in {elapsed:.2f}s")
                 return music_data
             except Exception as e:
                 print(f"[startup] Cache load failed: {e}, reloading from parquet...")
@@ -75,11 +74,11 @@ def _load_cached_data() -> MusicData:
         try:
             with open(CACHE_PATH, 'wb') as f:
                 pickle.dump(music_data, f)
-            print(f"[startup] Cached {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists")
+            print(f"[startup] Cached {music_data.track_count:,} tracks, {len(music_data.artists_list):,} artists")
         except Exception as e:
             print(f"[startup] Warning: Failed to write cache: {e}")
     else:
-        print(f"[startup] Loaded {len(music_data.df):,} tracks, {len(music_data.artists_list):,} artists (caching disabled)")
+        print(f"[startup] Loaded {music_data.track_count:,} tracks, {len(music_data.artists_list):,} artists (caching disabled)")
 
     elapsed = perf_counter() - t0
     print(f"[startup] Data load finished in {elapsed:.2f}s")
@@ -260,7 +259,7 @@ def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "tracks_loaded": len(music_data.df) if music_data else 0}
+    return {"status": "ok", "tracks_loaded": music_data.track_count if music_data else 0}
 
 
 @app.get("/artists")
@@ -306,14 +305,14 @@ async def recommend(
         raise HTTPException(status_code=400, detail="At least one artist required")
     
     # Validate artists exist
-    valid_artists = [a for a in request.artists if a in music_data.artists_list]
+    valid_artists = [a for a in request.artists if music_data.get_artist_code(a) is not None]
     if not valid_artists:
         raise HTTPException(status_code=400, detail="No valid artists found")
     
     # Also validate exclude_artists if provided (just filter to valid ones)
     valid_exclude = None
     if request.exclude_artists:
-        valid_exclude = [a for a in request.exclude_artists if a in music_data.artists_list]
+        valid_exclude = [a for a in request.exclude_artists if music_data.get_artist_code(a) is not None]
     
     # Build vibe modifiers dict (only include non-zero values)
     vibe_modifiers = {}
@@ -371,7 +370,7 @@ async def get_stats():
     if not music_data:
         raise HTTPException(status_code=503, detail="Data not loaded")
     return {
-        "track_count": len(music_data.df),
+        "track_count": music_data.track_count,
         "artist_count": len(music_data.artists_list),
     }
 
@@ -381,28 +380,32 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
     """Get all tracks for a specific artist (for fine-tuning)."""
     if not music_data:
         raise HTTPException(status_code=503, detail="Data not loaded")
-    
-    df = music_data.df
+
     artist_code = music_data.get_artist_code(artist_name)
     if artist_code is None:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    artist_tracks = df.filter(pl.col('artist_code') == artist_code)
-    
-    if len(artist_tracks) == 0:
+    artist_indices = [int(row_idx) for row_idx in music_data.get_artist_track_indices(artist_code)]
+
+    if not artist_indices:
         raise HTTPException(status_code=404, detail="Artist not found")
-    
-    if 'popularity' in artist_tracks.columns:
-        artist_tracks = artist_tracks.sort(['popularity', 'track_name'], descending=[True, False])
+
+    if music_data.track_popularity is not None:
+        artist_indices.sort(
+            key=lambda row_idx: (
+                -float(music_data.track_popularity[row_idx]),
+                music_data.get_track_name(row_idx).casefold(),
+            )
+        )
     else:
-        artist_tracks = artist_tracks.sort('track_name')
-    
+        artist_indices.sort(key=lambda row_idx: music_data.get_track_name(row_idx).casefold())
+
     return [
         Track(
-            track_id=music_data.get_track_id(int(row['row_idx'])),
-            track_name=row['track_name'],
+            track_id=music_data.get_track_id(row_idx),
+            track_name=music_data.get_track_name(row_idx),
         )
-        for row in artist_tracks.select(['row_idx', 'track_name']).iter_rows(named=True)
+        for row_idx in artist_indices
     ]
 
 
