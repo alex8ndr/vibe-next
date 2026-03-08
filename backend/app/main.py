@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+import polars as pl
 
 
 from logic import MusicData, ParquetDataSource, generate_recommendations, GENRE_FOCUS, TRACKS_PER_ARTIST, VARIETY, MAX_ARTISTS
@@ -382,7 +383,11 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         raise HTTPException(status_code=503, detail="Data not loaded")
     
     df = music_data.df
-    artist_tracks = df.filter(df['artist_name'] == artist_name)
+    artist_code = music_data.get_artist_code(artist_name)
+    if artist_code is None:
+        raise HTTPException(status_code=404, detail="Artist not found")
+
+    artist_tracks = df.filter(pl.col('artist_code') == artist_code)
     
     if len(artist_tracks) == 0:
         raise HTTPException(status_code=404, detail="Artist not found")
@@ -393,8 +398,11 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         artist_tracks = artist_tracks.sort('track_name')
     
     return [
-        Track(track_id=row['track_id'], track_name=row['track_name'])
-        for row in artist_tracks.select(['track_id', 'track_name']).iter_rows(named=True)
+        Track(
+            track_id=music_data.get_track_id(int(row['row_idx'])),
+            track_name=row['track_name'],
+        )
+        for row in artist_tracks.select(['row_idx', 'track_name']).iter_rows(named=True)
     ]
 
 
