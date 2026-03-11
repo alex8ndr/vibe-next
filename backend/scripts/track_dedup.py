@@ -18,6 +18,16 @@ import polars as pl
 # Delimiters that separate base name from variant info
 VARIANT_DELIMITERS = (' - ', ' (', ' [', ' /', ' –', ' —')
 
+_SINGLE_QUOTE_CHARS = "'`´ʻʹʽˈˊ\u2018\u2019\u201b\u2032\uff07"
+_DOUBLE_QUOTE_CHARS = '"\u201c\u201d\u201f\u2033\uff02'
+_QUOTE_TRANSLATION = {
+    **{ord(ch): "'" for ch in _SINGLE_QUOTE_CHARS},
+    **{ord(ch): '"' for ch in _DOUBLE_QUOTE_CHARS},
+}
+
+_SINGLE_QUOTE_RE = "[" + re.escape(_SINGLE_QUOTE_CHARS) + "]"
+_DOUBLE_QUOTE_RE = "[" + re.escape(_DOUBLE_QUOTE_CHARS) + "]"
+
 # Words to strip from track names when normalizing
 TRACK_NOISE_WORDS = {
     'remaster', 'remastered', 'remix', 'remixed', 'version', 'edit',
@@ -37,9 +47,7 @@ def _normalize_unicode(text: str) -> str:
 
 def _normalize_quotes(name: str) -> str:
     """Normalize quote characters."""
-    name = name.replace(''', "'").replace(''', "'").replace('"', '"').replace('"', '"')
-    name = name.replace('`', "'").replace('´', "'")
-    return name
+    return name.translate(_QUOTE_TRANSLATION)
 
 
 def normalize_artist_name(name: str) -> str:
@@ -155,8 +163,8 @@ def artist_norm_expr(col: str = "artist_name") -> pl.Expr:
     return _strip_accents_expr(
         pl.col(col)
         .str.to_lowercase()
-        .str.replace_all(r"['`´'']", "'", literal=False)  # normalize quotes
-        .str.replace_all(r'[""]', '"', literal=False)     # normalize double quotes
+        .str.replace_all(_SINGLE_QUOTE_RE, "'", literal=False)
+        .str.replace_all(_DOUBLE_QUOTE_RE, '"', literal=False)
         .str.strip_chars()
         .str.replace_all(r'\s+', ' ', literal=False)      # normalize whitespace
         .str.replace(r'^the\s+', '', literal=False)       # strip "the " prefix
@@ -171,8 +179,8 @@ def track_norm_expr(col: str = "track_name") -> pl.Expr:
     return _strip_accents_expr(
         pl.col(col)
         .str.to_lowercase()
-        .str.replace_all(r"['`´'']", "'", literal=False)
-        .str.replace_all(r'[""]', '"', literal=False)
+        .str.replace_all(_SINGLE_QUOTE_RE, "'", literal=False)
+        .str.replace_all(_DOUBLE_QUOTE_RE, '"', literal=False)
         .str.strip_chars()
         .str.replace_all(r'\s+', ' ', literal=False)
         # Strip variant suffixes: ( [ / - – —

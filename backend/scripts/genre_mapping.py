@@ -61,6 +61,9 @@ _LOCALE_OVERRIDES = {
     "latin rock": "spanish",
     "latin alternative": "spanish",
     "latin soul": "soul",
+    "pop electronico": "latin-urban",
+    "pop electrónico": "latin-urban",
+    "electro latino": "latin-urban",
     "rock en espanol": "spanish",
     "rock en español": "spanish",
     "rock independant francais": "french",
@@ -124,6 +127,8 @@ _LOCALE_KEYWORDS = {
     "sri lankan": "indian",
     # Latin American → latin-urban
     "latin": "latin-urban",
+    "latino": "latin-urban",
+    "latina": "latin-urban",
     "mexican": "latin-urban",
     "colombian": "latin-urban",
     "argentine": "latin-urban",
@@ -203,6 +208,7 @@ _LOCALE_GENERIC_TOKENS = (
     "breakbeat", "garage", "lo-fi", "phonk", "boom bap",
     "samba", "salsa", "swing", "soundtrack", "film", "chanson", "variete",
     "rnb", "variété",
+    "electropop", "electronica", "electronico",
 )
 
 # Pre-compiled locale regexes
@@ -225,7 +231,7 @@ _LOCALE_KEYWORD_RES: dict[str, re.Pattern] = {
 _SAFE_PREFIXES: tuple[str, ...] = tuple(sorted([
     # English-speaking nationalities
     "australian", "canadian", "british", "american", "uk",
-    "scottish", "irish", "welsh", "new zealand",
+    "scottish", "irish", "welsh", "new zealand", "nz", "aussie", "aus",
     # Era / style modifiers
     "modern", "classic", "contemporary", "old school", "old-school",
     "neo", "nu", "new",

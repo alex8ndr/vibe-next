@@ -19,6 +19,7 @@
         knownArtists,
         nowPlaying,
         sidebarPlaying,
+        sidebarPlayerStatus,
         sidebarLoadingTrackId,
         devSettings,
         clientId,
@@ -41,7 +42,7 @@
     let sidebarPlayerEl = $state<HTMLDivElement | null>(null);
     let sidebarController: any = null;
     let sidebarReady = $state(false);
-    let sidebarActuallyPlaying = $state(false);
+    let sidebarCurrentUri = "";  // tracks what URI is loaded in the embed
     let datasetStats = $state<{ track_count: number; artist_count: number } | null>(null);
 
     onMount(async () => {
@@ -178,14 +179,15 @@
     }
 
     function playTrack(track: FavoriteTrack) {
-        // Toggle if clicking the same track - use explicit play/pause
-        if ($sidebarPlaying?.trackId === track.track_id && sidebarController) {
-            if (sidebarActuallyPlaying) {
-                sidebarController.pause();
-            } else {
-                // Use resume() instead of play() - correct API for unpausing
-                sidebarController.resume();
-            }
+        if (!sidebarReady || !sidebarController) {
+            return;
+        }
+
+        const uri = `spotify:track:${track.track_id}`;
+
+        // Same track already loaded → toggle play/pause
+        if (sidebarCurrentUri === uri) {
+            sidebarController.togglePlay();
             return;
         }
 
@@ -198,10 +200,10 @@
             nowPlaying.set(null);
         }
 
-        // Set loading state
+        // Set loading state and load new track
         sidebarLoadingTrackId.set(track.track_id);
+        sidebarCurrentUri = uri;
 
-        // Update sidebar playing state immediately for highlight
         sidebarPlaying.set({
             artist: track.artist_name,
             trackId: track.track_id,
@@ -212,6 +214,8 @@
     // Initialize sidebar player when element is available
     $effect(() => {
         if (!sidebarPlayerEl || sidebarController) return;
+
+        sidebarReady = false;
 
         const initPlayer = () => {
             const api = (window as any).SpotifyIframeApi;
@@ -225,17 +229,33 @@
                     (window as any).vibeSidebarController = c;
                     c.addListener("ready", () => {
                         sidebarReady = true;
+                        sidebarPlayerStatus.set("ready");
                     });
+                    // Spotify's "ready" event may not fire for an empty URI,
+                    // so treat controller creation as ready after a short delay
+                    setTimeout(() => {
+                        if (!sidebarReady) {
+                            sidebarReady = true;
+                            sidebarPlayerStatus.set("ready");
+                        }
+                    }, 2000);
                     c.addListener("playback_update", (e: any) => {
-                        sidebarActuallyPlaying = !e.data.isPaused;
-                        // Clear loading state when playback starts
+                        // Clear loading spinner when playback starts
                         if (!e.data.isPaused) {
                             sidebarLoadingTrackId.set(null);
                         }
+
+                        // Detect track end → clear sidebar playing state
+                        const hasEnded =
+                            Boolean(e.data.isPaused) &&
+                            Number(e.data.duration || 0) > 0 &&
+                            Number(e.data.position || 0) >= Math.max(Number(e.data.duration || 0) - 750, 0);
+
+                        if (hasEnded) {
+                            sidebarLoadingTrackId.set(null);
+                            sidebarPlaying.set(null);
+                        }
                     });
-                    setTimeout(() => {
-                        sidebarReady = true;
-                    }, 2000);
                 },
             );
         };
@@ -251,12 +271,15 @@
         }
     });
 
-    // Update sidebar player when track changes
+    // Load + play when a new track is set via sidebarPlaying
     $effect(() => {
         const track = $sidebarPlaying;
-        if (!track || !sidebarController) return;
+        if (!track || !sidebarController || !sidebarReady) return;
 
-        sidebarController.loadUri(`spotify:track:${track.trackId}`);
+        const uri = `spotify:track:${track.trackId}`;
+        // Only load if this is actually a new track (not a toggle)
+        if (sidebarCurrentUri !== uri) return;
+        sidebarController.loadUri(uri);
         setTimeout(() => sidebarController.play(), 50);
     });
 </script>

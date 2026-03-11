@@ -427,10 +427,11 @@
             </div>
         {:else}
         <div class="grid">
-            {#each Object.entries($recommendations) as [artist, tracks] (artist + '-' + (tracks[0]?.track_id || ''))}
+            {#each Object.entries($recommendations) as [artist, tracks], i (artist + '-' + (tracks[0]?.track_id || ''))}
                 <ArtistCard 
                     {artist} 
                     {tracks}
+                    staggerIndex={i}
                     isKnown={$knownArtists.includes(artist)}
                     isAdded={selected.includes(artist)}
                     onAddToKnown={() => addToKnown(artist)}

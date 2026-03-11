@@ -224,9 +224,9 @@ AUDIODB_GENRE_MAP = {
   'world music': 'world', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
   'filmi': 'pop-film', 'nova mpb': 'samba',
   'francoton': 'french', 'azontobeats': 'afrobeat',
-    'pop urbaine': 'french-hip-hop', 'rap francais': 'french-hip-hop', 'rap français': 'french-hip-hop',
-    'hindi pop': 'indian', 'hindi indie': 'indian',
-  'opm': 'pop', 'j-division': 'j-pop', 'otacore': 'j-pop',
+  'pop urbaine': 'french-hip-hop', 'rap francais': 'french-hip-hop', 'rap français': 'french-hip-hop',
+  'hindi pop': 'indian', 'hindi indie': 'indian',
+  'j-division': 'j-pop', 'otacore': 'j-pop',
     
   # === Christian / Worship ===
   'christian': 'ccm', 'christian hip hop': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',

@@ -3,6 +3,7 @@
         knownArtists,
         favoriteTracks,
         sidebarPlaying,
+        sidebarPlayerStatus,
         sidebarLoadingTrackId,
         type FavoriteTrack,
     } from "$lib/stores";
@@ -21,6 +22,8 @@
     let allCollapsed = $state(false);
     let exportDropdownOpen = $state(false);
     let exportDropdownRef = $state<HTMLDivElement | null>(null);
+    let copyStatus = $state<"idle" | "copied" | "failed">("idle");
+    let copyStatusTimeoutId = $state<ReturnType<typeof setTimeout> | null>(null);
 
     // Persist collapsed artists to localStorage
     const COLLAPSED_STORAGE_KEY = 'vibe-collapsed-artists';
@@ -53,6 +56,47 @@
         }
         return map;
     });
+
+    const canPlaySidebar = $derived($sidebarPlayerStatus === "ready");
+
+    function setCopyStatus(status: "idle" | "copied" | "failed") {
+        copyStatus = status;
+        if (copyStatusTimeoutId) {
+            clearTimeout(copyStatusTimeoutId);
+            copyStatusTimeoutId = null;
+        }
+        if (status !== "idle") {
+            copyStatusTimeoutId = setTimeout(() => {
+                copyStatus = "idle";
+                copyStatusTimeoutId = null;
+            }, 2500);
+        }
+    }
+
+    function buildTuneMyMusicText(): string {
+        return $favoriteTracks
+            .map((track) => `${track.artist_name} - ${track.track_name}`)
+            .join("\n");
+    }
+
+    async function copyTuneMyMusicText() {
+        const text = buildTuneMyMusicText();
+        if (!text) return;
+
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopyStatus("copied");
+        } catch {
+            setCopyStatus("failed");
+        }
+    }
+
+    function playFavorite(track: FavoriteTrack) {
+        if (!canPlaySidebar) {
+            return;
+        }
+        onplay(track);
+    }
 
     function toggleArtistCollapse(artist: string) {
         const next = new Set(collapsedArtists);
@@ -170,6 +214,34 @@
         <h4>Favourites <span class="cnt">{$favoriteTracks.length}</span></h4>
         <div class="header-btns">
             {#if $favoriteTracks.length > 0}
+                <div class="tunemymusic-btn-wrap">
+                    <button
+                        class="header-btn tunemymusic-copy"
+                        class:copied={copyStatus === "copied"}
+                        onclick={copyTuneMyMusicText}
+                        title="Copy to clipboard for TuneMyMusic"
+                    >
+                        {#if copyStatus === "copied"}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 6 9 17l-5-5"/>
+                            </svg>
+                        {:else}
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                        {/if}
+                    </button>
+                    <span class="tunemymusic-tooltip">
+                        {#if copyStatus === "copied"}
+                            Copied! Paste into <a href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a> → Free Text
+                        {:else if copyStatus === "failed"}
+                            Copy failed
+                        {:else}
+                            Copy for <a href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a>
+                        {/if}
+                    </span>
+                </div>
                 <button class="header-btn" onclick={toggleAllCollapsed} title={allCollapsed ? "Expand all" : "Collapse all"}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         {#if allCollapsed}
@@ -213,6 +285,16 @@
         </div>
     </div>
 
+    {#if !canPlaySidebar}
+        <div class="player-status-note">
+            {#if $sidebarPlayerStatus === "loading"}
+                Spotify preview is still loading.
+            {:else}
+                Spotify preview is unavailable right now.
+            {/if}
+        </div>
+    {/if}
+
     <div class="favourites-list">
         {#if $favoriteTracks.length === 0}
             <span class="empty">No favourite tracks yet</span>
@@ -240,10 +322,12 @@
                             class="fav-track"
                             class:playing={$sidebarPlaying?.trackId === track.track_id}
                             class:loading={$sidebarLoadingTrackId === track.track_id}
+                            class:disabled={!canPlaySidebar}
                             role="button"
-                            tabindex="0"
-                            onclick={() => onplay(track)}
-                            onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onplay(track); } }}
+                            tabindex={canPlaySidebar ? 0 : -1}
+                            title={canPlaySidebar ? "Play preview" : "Spotify preview is still loading"}
+                            onclick={() => playFavorite(track)}
+                            onkeydown={(e) => { if (canPlaySidebar && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playFavorite(track); } }}
                         >
                             {#if $sidebarLoadingTrackId === track.track_id}
                                 <span class="loading-icon">
@@ -328,6 +412,55 @@
         font-size: 0.65rem;
         color: var(--text-3);
         margin: 0 0 0.5rem 0;
+    }
+
+    .player-status-note,
+    .copy-status {
+        font-size: 0.65rem;
+        color: var(--text-3);
+    }
+
+    .tunemymusic-btn-wrap {
+        position: relative;
+    }
+
+    .tunemymusic-copy.copied {
+        border-color: var(--gold);
+        color: var(--gold);
+    }
+
+    .tunemymusic-tooltip {
+        display: none;
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 0.65rem;
+        color: var(--text-2);
+        white-space: nowrap;
+        z-index: 10;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .tunemymusic-tooltip a {
+        color: var(--gold);
+        text-decoration: none;
+    }
+
+    .tunemymusic-tooltip a:hover {
+        text-decoration: underline;
+    }
+
+    .tunemymusic-btn-wrap:hover .tunemymusic-tooltip,
+    .tunemymusic-copy.copied ~ .tunemymusic-tooltip {
+        display: block;
+    }
+
+    .player-status-note {
+        margin: -0.15rem 0 0.45rem 0;
     }
 
     .mt { margin-top: 1.5rem; }
@@ -507,6 +640,13 @@
     .fav-track.playing .track-name { color: #111; }
     .fav-track.playing .remove-btn { color: #333; }
     .fav-track.playing .remove-btn:hover { color: #900; }
+    .fav-track.disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+    }
+    .fav-track.disabled:hover {
+        background: var(--bg-alt);
+    }
     
     .loading-icon {
         display: flex;

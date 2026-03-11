@@ -13,6 +13,7 @@
         isKnown?: boolean;
         isAdded?: boolean;
         debugInfo?: ArtistDebugInfo;
+        staggerIndex?: number;
     }
 
     let {
@@ -24,6 +25,7 @@
         isKnown = false,
         isAdded = false,
         debugInfo,
+        staggerIndex = 0,
     }: Props = $props();
     
     function isFavorite(trackId: string): boolean {
@@ -58,15 +60,21 @@
     const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
     const hasTrackFeatures = $derived(tracks.some(t => t.audio_features));
 
+    // Stagger config: delay between each card's iframe init (ms)
+    const STAGGER_DELAY_MS = 150;
+
     let playerEl: HTMLDivElement;
     let controller: any = null;
     let isReady = $state(false);
+    let embedStatus = $state<"loading" | "ready" | "unavailable">("loading");
     let firstTrack = "";
     let currentTrackId = "";
     let showActions = $state(false);
     let isActuallyPlaying = $state(false);
-    let pendingPlay: { trackId: string; trackName: string } | null = null;
+    let playerMessage = $state<string | null>(null);
     let loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let initTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let staggerTimeoutId: ReturnType<typeof setTimeout> | null = null;
     let playGeneration = 0;
 
     function getHue(name: string): number {
@@ -81,14 +89,60 @@
     const isThisArtist = $derived($nowPlaying?.artist === artist);
     const playingTrackId = $derived(isThisArtist ? $nowPlaying?.trackId : null);
     const isLoadingTrack = $derived((id: string) => $loadingTrackId === id);
+    const canUseEmbed = $derived(embedStatus === "ready");
+
+    function clearLoadingTimeout() {
+        if (loadingTimeoutId) {
+            clearTimeout(loadingTimeoutId);
+            loadingTimeoutId = null;
+        }
+    }
+
+    function startLoadingTimeout(trackId: string) {
+        clearLoadingTimeout();
+        loadingTimeoutId = setTimeout(() => {
+            if ($loadingTrackId === trackId) {
+                loadingTrackId.set(null);
+            }
+            if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === trackId && !isActuallyPlaying) {
+                nowPlaying.set(null);
+            }
+            playerMessage = "Spotify preview timed out. Try again or use the embed controls.";
+        }, 10000);
+    }
+
+    function stopSidebarPlayback() {
+        const sidebarCtrl = (window as any).vibeSidebarController;
+        if (sidebarCtrl) {
+            try {
+                sidebarCtrl.pause();
+            } catch {}
+        }
+        sidebarPlaying.set(null);
+    }
 
     onMount(() => {
         firstTrack = tracks[0]?.track_id || "";
         currentTrackId = firstTrack;
+        embedStatus = "loading";
+        playerMessage = null;
 
         const tryInit = () => {
             const api = (window as any).SpotifyIframeApi;
             if (!api || !playerEl || controller) return;
+
+            if (initTimeoutId) {
+                clearTimeout(initTimeoutId);
+            }
+            initTimeoutId = setTimeout(() => {
+                if (!isReady) {
+                    embedStatus = "unavailable";
+                    playerMessage = "Spotify preview did not initialize for this card.";
+                    if ($loadingTrackId === currentTrackId) {
+                        loadingTrackId.set(null);
+                    }
+                }
+            }, 15000);
 
             api.createController(
                 playerEl,
@@ -107,25 +161,27 @@
 
                     c.addListener("ready", () => {
                         isReady = true;
-                        // Play pending track if user clicked before ready
-                        if (pendingPlay) {
-                            const { trackId, trackName } = pendingPlay;
-                            pendingPlay = null;
-                            play(trackId, trackName);
+                        embedStatus = "ready";
+                        playerMessage = null;
+                        if (initTimeoutId) {
+                            clearTimeout(initTimeoutId);
+                            initTimeoutId = null;
                         }
                     });
                     c.addListener("playback_update", (e: any) => {
                         const wasPlaying = isActuallyPlaying;
+                        const hasEnded =
+                            Boolean(e.data.isPaused) &&
+                            Number(e.data.duration || 0) > 0 &&
+                            Number(e.data.position || 0) >= Math.max(Number(e.data.duration || 0) - 750, 0);
+
                         isActuallyPlaying = !e.data.isPaused;
                         
                         // Clear loading state when playback starts for this card's current track
                         if (!e.data.isPaused && $loadingTrackId === currentTrackId) {
                             loadingTrackId.set(null);
-                            // Clear the timeout since playback started
-                            if (loadingTimeoutId) {
-                                clearTimeout(loadingTimeoutId);
-                                loadingTimeoutId = null;
-                            }
+                            clearLoadingTimeout();
+                            playerMessage = null;
                         }
                         
                         // Sync nowPlaying when user clicks directly on embed's play/pause button
@@ -135,26 +191,39 @@
                             if (prev && prev.artist !== artist) {
                                 window.dispatchEvent(new CustomEvent("vibeReset", { detail: prev.artist }));
                             }
-                            const sidebarCtrl = (window as any).vibeSidebarController;
-                            if (sidebarCtrl) {
-                                try { sidebarCtrl.pause(); } catch {}
-                            }
-                            sidebarPlaying.set(null);
+                            stopSidebarPlayback();
                             
                             const track = tracks.find(t => t.track_id === currentTrackId);
                             nowPlaying.set({ artist, trackId: currentTrackId, trackName: track?.track_name || "" });
                         }
-                        // Don't clear nowPlaying on pause - track stays highlighted (green)
+
+                        if (hasEnded) {
+                            isActuallyPlaying = false;
+                            loadingTrackId.set(null);
+                            clearLoadingTimeout();
+                            if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === currentTrackId) {
+                                nowPlaying.set(null);
+                            }
+                        }
                     });
                 },
             );
         };
 
+        const staggeredInit = () => {
+            const delay = staggerIndex * STAGGER_DELAY_MS;
+            if (delay > 0) {
+                staggerTimeoutId = setTimeout(tryInit, delay);
+            } else {
+                tryInit();
+            }
+        };
+
         if ((window as any).SpotifyIframeApi) {
-            tryInit();
+            staggeredInit();
         } else {
             const h = () => {
-                tryInit();
+                staggeredInit();
                 window.removeEventListener("SpotifyIframeApiReady", h);
             };
             window.addEventListener("SpotifyIframeApiReady", h);
@@ -163,13 +232,6 @@
         const resetHandler = (e: CustomEvent) => {
             if (e.detail === artist) {
                 playGeneration++;
-                // If we have a pending play request, cancel it to prevent race condition
-                if (pendingPlay) {
-                    pendingPlay = null;
-                    if ($nowPlaying?.artist === artist) {
-                        nowPlaying.set(null);
-                    }
-                }
                 if (controller) {
                     controller.pause();
                     // Reload current track to avoid Spotify login nag screen (keeps same track)
@@ -183,49 +245,36 @@
                 if ($loadingTrackId === currentTrackId) {
                     loadingTrackId.set(null);
                 }
-                // Clear any pending loading timeout
-                if (loadingTimeoutId) {
-                    clearTimeout(loadingTimeoutId);
-                    loadingTimeoutId = null;
-                }
+                clearLoadingTimeout();
             }
         };
         window.addEventListener("vibeReset", resetHandler as EventListener);
-        return () =>
+        return () => {
+            clearLoadingTimeout();
+            if (initTimeoutId) {
+                clearTimeout(initTimeoutId);
+            }
+            if (staggerTimeoutId) {
+                clearTimeout(staggerTimeoutId);
+            }
             window.removeEventListener(
                 "vibeReset",
                 resetHandler as EventListener,
             );
+        };
     });
 
     function play(trackId: string, trackName: string) {
+        if (!controller || !isReady || embedStatus !== "ready") {
+            return;
+        }
+
         // If another track is loading, cancel it and proceed with the new one
         if ($loadingTrackId && $loadingTrackId !== trackId) {
             loadingTrackId.set(null);
         }
-        if (loadingTimeoutId) {
-            clearTimeout(loadingTimeoutId);
-            loadingTimeoutId = null;
-        }
-
-        // If controller isn't ready yet, queue the play request
-        if (!controller || !isReady) {
-            pendingPlay = { trackId, trackName };
-            loadingTrackId.set(trackId);
-            nowPlaying.set({ artist, trackId, trackName });
-            
-            // Set a 10s timeout to clear loading state if playback never starts
-            loadingTimeoutId = setTimeout(() => {
-                if (pendingPlay && pendingPlay.trackId === trackId) {
-                    pendingPlay = null;
-                    loadingTrackId.set(null);
-                    if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === trackId) {
-                        nowPlaying.set(null);
-                    }
-                }
-            }, 10000);
-            return;
-        }
+        clearLoadingTimeout();
+        playerMessage = null;
 
         const prev = $nowPlaying;
 
@@ -241,14 +290,7 @@
                         new CustomEvent("vibeReset", { detail: prev.artist }),
                     );
                 }
-                // Pause sidebar
-                const sidebarCtrl = (window as any).vibeSidebarController;
-                if (sidebarCtrl) {
-                    try { sidebarCtrl.pause(); } catch {}
-                }
-                sidebarPlaying.set(null);
-                
-                // Use resume() instead of play() - this is the correct API for unpausing
+                stopSidebarPlayback();
                 controller.resume();
                 nowPlaying.set({ artist, trackId, trackName });
             }
@@ -264,24 +306,11 @@
             );
         }
 
-        // Pause sidebar player if playing
-        const sidebarCtrl = (window as any).vibeSidebarController;
-        if (sidebarCtrl) {
-            try {
-                sidebarCtrl.pause();
-            } catch {}
-        }
-        sidebarPlaying.set(null);
+        stopSidebarPlayback();
 
         // Set loading state before starting to load
         loadingTrackId.set(trackId);
-        
-        // Set a 10s timeout to clear loading state if playback never starts
-        loadingTimeoutId = setTimeout(() => {
-            if ($loadingTrackId === trackId) {
-                loadingTrackId.set(null);
-            }
-        }, 10000);
+        startLoadingTimeout(trackId);
         
         // Load and play new track (small delay helps with embed race conditions)
         currentTrackId = trackId;
@@ -339,6 +368,9 @@
         <div class="embed" bind:this={playerEl}></div>
         <div class="skeleton" class:hide={isReady}></div>
     </div>
+    {#if playerMessage}
+        <p class="embed-message">{playerMessage}</p>
+    {/if}
 
     <div class="tracks">
         {#each tracks as t (t.track_id)}
@@ -349,6 +381,8 @@
                     class="trk"
                     class:playing={isSelected}
                     class:loading={isLoading}
+                    disabled={!canUseEmbed}
+                    title={canUseEmbed ? "Play preview" : embedStatus === "loading" ? "Spotify preview is still loading" : "Spotify preview is unavailable"}
                     onclick={() => play(t.track_id, t.track_name)}
                 >
                     <span class="ico">
@@ -550,6 +584,12 @@
         opacity: 0;
     }
 
+    .embed-message {
+        margin: -0.15rem 0 0.5rem 0;
+        font-size: 0.68rem;
+        color: var(--text-3);
+    }
+
     @keyframes shimmer {
         from {
             background-position: 200% 0;
@@ -605,6 +645,16 @@
 
     .trk:hover {
         filter: brightness(1.1);
+    }
+
+    .trk:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+        filter: none;
+    }
+
+    .trk:disabled:hover {
+        filter: none;
     }
 
     .trk.playing {

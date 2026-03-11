@@ -480,15 +480,24 @@
 
 .fine-tune-artists {
     flex: 1;
-    overflow-y: auto;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding-right: 0.25rem;
 }
 
-.fine-tune-artists::-webkit-scrollbar { width: 6px; }
-.fine-tune-artists::-webkit-scrollbar-track { background: transparent; }
-.fine-tune-artists::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-.fine-tune-artists::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+.side-artist {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0.4rem;
+}
+
+.side-artist:has(.side-songs) {
+    flex: 1;
+    min-height: 0;
+}
 
 .customize-section {
     flex-shrink: 0;
@@ -611,11 +620,6 @@
     margin-bottom: 0.5rem;
 }
 
-.fine-tune-artists {
-    flex: 1;
-    overflow-y: auto;
-}
-
 .cnt-badge {
     background: var(--bg-alt);
     padding: 0.1rem 0.4rem;
@@ -633,10 +637,6 @@
     font-size: 0.75rem;
     color: var(--text-3);
     font-style: italic;
-}
-
-.side-artist {
-    margin-bottom: 0.4rem;
 }
 
 .side-artist-btn {
@@ -681,7 +681,8 @@
 
 .side-songs {
     margin-top: 0.35rem;
-    max-height: 180px;
+    flex: 1;
+    min-height: 60px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
