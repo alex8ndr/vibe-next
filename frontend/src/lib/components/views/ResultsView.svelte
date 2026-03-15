@@ -61,6 +61,7 @@
     );
     const debugInfo = $derived($recommendationsMeta?.debug);
     const inputGenreProfile = $derived($recommendationsMeta?.input_genre_profile);
+    const inputLanguageProfile = $derived($recommendationsMeta?.input_language_profile);
     const searchVectorAudio = $derived($recommendationsMeta?.search_vector_audio);
     const searchVectorGenre = $derived($recommendationsMeta?.search_vector_genre);
     const totalTracks = $derived(Object.values($recommendations).reduce((sum, tracks) => sum + tracks.length, 0));
@@ -368,7 +369,10 @@
                 <div class="debug-input-profile">
                     <span class="debug-label">Input profile:</span>
                     {#each inputGenreProfile as { artist, genres }}
-                        <span class="debug-artist-profile">{artist}: {formatGenreProfile(genres)}</span>
+                        {@const langEntry = inputLanguageProfile?.find(l => l.artist === artist)}
+                        <span class="debug-artist-profile">
+                            {artist}: {formatGenreProfile(genres)}{#if langEntry} · {langEntry.languages.map(l => `${Math.round(l.pct)}% ${l.language}`).join(', ')}{/if}
+                        </span>
                     {/each}
                 </div>
             {/if}

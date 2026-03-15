@@ -3,6 +3,8 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 export interface Track {
     track_id: string;
     track_name: string;
+    genre?: string;
+    language?: string;
     audio_features?: Record<string, number | string>;
 }
 
@@ -27,8 +29,14 @@ export interface GenreInfo {
     pct: number;
 }
 
+export interface LanguageInfo {
+    language: string;
+    pct: number;
+}
+
 export interface ArtistDebugInfo {
     genre_profile: GenreInfo[];
+    language_profile?: LanguageInfo[];
     audio_features?: Record<string, number>;
 }
 

@@ -95,9 +95,7 @@ SAMPLING_WEIGHTS = {
 AUDIODB_GENRE_MAP = {
     # === COMPOUND GENRES (TheAudioDB returns these frequently) ===
     'rock/pop': 'alt-rock',  # Most common TheAudioDB response - maps to modern alternative
-    'pop/rock': 'alt-rock',
     'rock and roll': 'rock-n-roll',
-    'rock-and-roll': 'rock-n-roll',
     'pop rock': 'alt-rock',
     'indie pop': 'indie-pop',
     'indie rock': 'alt-rock',
@@ -106,7 +104,7 @@ AUDIODB_GENRE_MAP = {
     # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
-    'indie': 'indie-pop', 'shoegaze': 'shoegaze', 'dream pop': 'shoegaze', 'dream-pop': 'shoegaze',
+    'indie': 'indie-pop', 'shoegaze': 'shoegaze', 'dream pop': 'shoegaze',
     'indie shoegaze': 'shoegaze', 'indie-shoegaze': 'shoegaze', 'bedroom pop': 'indie-pop', 'dance-punk': 'alt-rock',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
     'progressive rock': 'progressive-rock', 'prog rock': 'progressive-rock', 'art rock': 'progressive-rock',
@@ -116,9 +114,9 @@ AUDIODB_GENRE_MAP = {
     
     # === Metal ===
     'metal': 'metal', 'heavy metal': 'heavy-metal', 'thrash metal': 'metal', 'thrash': 'metal',
-    'alternative metal': 'metal', 'alt metal': 'metal', 'alt-metal': 'metal',
+    'alternative metal': 'metal', 'alt metal': 'metal',
     'death metal': 'death-metal', 'black metal': 'black-metal', 'doom metal': 'metal',
-    'nu metal': 'metal', 'nu-metal': 'metal', 'metalcore': 'metalcore', 
+    'nu metal': 'metal', 'metalcore': 'metalcore', 
     'industrial metal': 'industrial-metal', 'industrial': 'industrial',
     'gothic metal': 'metal', 'symphonic metal': 'metal', 'progressive metal': 'prog-metal',
     'prog metal': 'prog-metal', 'djent': 'prog-metal', 'groove metal': 'groove',
@@ -127,30 +125,30 @@ AUDIODB_GENRE_MAP = {
     'stoner metal': 'metal', 'sludge metal': 'metal',
     
     # === Punk ===
-    'punk': 'punk', 'punk rock': 'punk-rock', 'pop punk': 'punk', 'pop-punk': 'punk',
+    'punk': 'punk', 'punk rock': 'punk-rock', 'pop punk': 'punk',
     'hardcore': 'hardcore', 'hardcore punk': 'hardcore-punk',
-    'post-hardcore': 'post-hardcore', 'emo': 'emo', 'screamo': 'emo', 'skate punk': 'punk', 'garage punk': 'punk',
+    'post-hardcore': 'post-hardcore', 'emo': 'emo', 'emo-pop-punk': 'emo', 'screamo': 'emo', 'skate punk': 'punk', 'garage punk': 'punk',
     
     # === Pop ===
-    'pop': 'pop', 'dance pop': 'dance', 'electropop': 'synthpop', 'synth-pop': 'synthpop',
-    'synthpop': 'synthpop', 'synth pop': 'synthpop', 'hyperpop': 'hyperpop', 'bubblegum bass': 'hyperpop',
+    'pop': 'pop', 'dance pop': 'dance', 'electropop': 'synthpop',
+    'synthpop': 'synthpop', 'hyperpop': 'hyperpop', 'bubblegum bass': 'hyperpop',
     'teen pop': 'pop', 'bubblegum pop': 'pop', 'power pop': 'power-pop',
     'art pop': 'indie-pop', 'chamber pop': 'indie-pop', 'soft pop': 'pop',
     'baroque pop': 'indie-pop', 'jangle pop': 'indie-pop', 'twee pop': 'indie-pop',
     'noise pop': 'alt-rock', 'synthwave pop': 'synthpop',
-    'folk-pop': 'folk', 'folk pop': 'folk',
+    'folk pop': 'folk',
     'neo mellow': 'folk', 'shimmer pop': 'indie-pop', 'shiver pop': 'synthpop',
     'indie poptimism': 'indie-pop', 'indie dance': 'dance', 'indietronica': 'indie-pop',
     'vapor soul': 'chill', 'indie soul': 'soul', 'indie emo': 'emo',
     'post-teen pop': 'pop', 'viral pop': 'pop',
     
     # === K-Pop / Asian ===
-    'k-pop': 'k-pop', 'kpop': 'k-pop', 'k-rap': 'k-pop', 'j-pop': 'j-pop', 'jpop': 'j-pop', 'j-dance': 'j-pop',
-    'j-rock': 'j-rock', 'jrock': 'j-rock', 'visual kei': 'j-rock',
+    'k-pop': 'k-pop', 'k-rap': 'k-pop', 'j-pop': 'j-pop', 'j-dance': 'j-pop',
+    'j-rock': 'j-rock', 'visual kei': 'j-rock',
     'c-pop': 'cantopop', 'mandopop': 'cantopop', 'cantopop': 'cantopop',
     
     # === Hip-Hop / R&B ===
-    'hip hop': 'hip-hop', 'hip-hop': 'hip-hop', 'hiphop': 'hip-hop',
+    'hip hop': 'hip-hop',
     'rap': 'hip-hop', 'trap': 'hip-hop', 'g-funk': 'hip-hop', 'emo rap': 'hip-hop',
     'underground hip-hop': 'hip-hop',
     'pop rap': 'hip-hop', 'hip pop': 'hip-hop',
@@ -165,14 +163,17 @@ AUDIODB_GENRE_MAP = {
   # === Electronic ===
   'electronic': 'electronic', 'electronica': 'electronic',
   'edm': 'edm', 'house': 'house', 'deep house': 'deep-house',
+    'club': 'edm',
   'electro house': 'edm', 'progressive house': 'progressive-house',
+    'chicago-house': 'house',
   'progressive electro house': 'edm', 'tech house': 'house',
   'future house': 'house', 'g-house': 'house',
   'techno': 'techno', 'trance': 'trance', 'psytrance': 'trance',
   'minimal techno': 'minimal-techno',
+    'detroit-techno': 'techno',
   'dubstep': 'dubstep', 'drum and bass': 'drum-and-bass', 'dnb': 'drum-and-bass', 'liquid funk': 'drum-and-bass',
-  'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'indie-pop',
-  'trip hop': 'trip-hop', 'trip-hop': 'trip-hop',
+  'ambient': 'ambient', 'downtempo': 'chill', 'chillout': 'chill', 'chillwave': 'synthpop',
+    'trip-hop': 'trip-hop',
   'electro': 'electro', 'disco': 'disco', 'nu disco': 'disco',
   'idm': 'electronic', 'glitch': 'electronic', 'breakbeat': 'breakbeat',
   'future bass': 'dubstep', 'melodic bass': 'dubstep',
@@ -185,7 +186,7 @@ AUDIODB_GENRE_MAP = {
     
   # === Acoustic / Folk / Country ===
   'folk': 'folk', 'acoustic': 'acoustic', 'singer-songwriter': 'singer-songwriter',
-  'singer songwriter': 'singer-songwriter',
+    'singer songwriter': 'singer-songwriter', 'songwriter': 'singer-songwriter',
   'country': 'country', 'americana': 'country', 'bluegrass': 'folk',
   'folk rock': 'folk', 'indie folk': 'folk',
   'celtic': 'folk', 'newgrass': 'folk',
@@ -227,8 +228,8 @@ AUDIODB_GENRE_MAP = {
   'show tunes': 'show-tunes', 'broadway': 'show-tunes',
     
   # === World / Regional ===
-  'world': 'world', 'indian': 'indian', 'bollywood': 'pop-film',
-  'world music': 'world', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
+    'world': 'folk', 'indian': 'indian', 'romance': 'singer-songwriter', 'bollywood': 'pop-film',
+    'world music': 'folk', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
   'filmi': 'pop-film', 'nova mpb': 'samba',
   'francoton': 'dancehall', 'azontobeats': 'afrobeat',
   'hindi pop': 'indian', 'hindi indie': 'indian',
@@ -243,12 +244,13 @@ AUDIODB_GENRE_MAP = {
   'praise': 'ccm',
     
   # === Math Rock / Progressive ===
-  'math rock': 'math-rock', 'mathrock': 'math-rock',
+    'math rock': 'math-rock',
   'progressive': 'progressive-rock', 'experimental': 'experimental', 'avant-garde': 'experimental',
   'mathcore': 'metalcore',
 
   # === Misc / Mood / Era ===
-  'darkwave': 'goth', 'cold wave': 'goth', 'gothic rock': 'goth', 'deathrock': 'goth',
+    'goth': 'goth-rock', 'goth rock': 'goth-rock',
+    'darkwave': 'darkwave', 'cold wave': 'darkwave', 'gothic rock': 'goth-rock', 'deathrock': 'goth-rock',
   'witch house': 'electronic',
   'ebm': 'industrial',
   'aor': 'rock', 'doo-wop': 'rock-n-roll',
@@ -263,7 +265,7 @@ AUDIODB_GENRE_MAP = {
   'schlager': 'schlager',
   'anime': 'j-pop', 'anime score': 'j-pop',
   'boom bap': 'hardcore-hip-hop', 'east coast hip hop': 'hardcore-hip-hop',
-  'lo-fi': 'chill', 'lofi': 'chill',
+    'lo-fi': 'chill',
   'chanson': 'pop',
   'neoclassical': 'classical', 'contemporary classical': 'classical',
   'bolero': 'salsa',

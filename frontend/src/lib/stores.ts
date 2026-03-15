@@ -4,6 +4,8 @@ import { browser } from '$app/environment';
 export interface Track {
     track_id: string;
     track_name: string;
+    genre?: string;
+    language?: string;
     audio_features?: Record<string, number | string>;
 }
 
@@ -16,8 +18,14 @@ export interface GenreInfo {
     pct: number;
 }
 
+export interface LanguageInfo {
+    language: string;
+    pct: number;
+}
+
 export interface ArtistDebugInfo {
     genre_profile: GenreInfo[];
+    language_profile?: LanguageInfo[];
     audio_features?: Record<string, number>;
 }
 
@@ -25,6 +33,7 @@ export interface RecommendMeta {
     has_more_candidates: boolean;
     debug?: Record<string, ArtistDebugInfo>;
     input_genre_profile?: Array<{ artist: string; genres: GenreInfo[] }>;
+    input_language_profile?: Array<{ artist: string; languages: Array<{ language: string; pct: number }> }>;
     search_vector_audio?: Record<string, number>;
     search_vector_genre?: GenreInfo[];
 }

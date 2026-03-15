@@ -182,6 +182,7 @@ class Track(BaseModel):
     track_name: str
     year: int | None = None
     genre: str | None = None
+    language: str | None = None
     audio_features: dict[str, float | str] | None = None
 
 
@@ -417,6 +418,8 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
         Track(
             track_id=music_data.get_track_id(row_idx),
             track_name=music_data.get_track_name(row_idx),
+            genre=music_data.get_track_genre(row_idx),
+            language=music_data.get_track_language(row_idx),
         )
         for row_idx in artist_indices
     ]

@@ -1,30 +1,76 @@
 from __future__ import annotations
 
+from collections import Counter
+
 import polars as pl
 
 from genre_mapping import load_artist_genre_lookup
 from language_config import (
     GENRE_LANG_OVERRIDES,
+    LANGUAGE_MAX_TITLES,
     TAG_FASTTEXT_THRESHOLD,
+    LOCALE_SIGNAL_FASTTEXT_THRESHOLD,
     FALLBACK_FASTTEXT_THRESHOLD,
+    VOTE_FALLBACK_CONF_FLOOR,
+    VOTE_FALLBACK_MIN_VOTES,
+    VOTE_FALLBACK_DOMINANCE,
 )
 from language_detection import load_fasttext_model, clean_track_title, detect_language
 from track_dedup import normalize_artist_name
 
 
+def _vote_language_from_titles(
+    model,
+    cleaned_titles: list[str],
+    *,
+    conf_floor: float,
+    min_votes: int,
+    dominance: float,
+) -> str | None:
+    votes: Counter[str] = Counter()
+
+    for text in cleaned_titles:
+        lang, conf = detect_language(model, text)
+        if not lang:
+            continue
+        if conf < conf_floor:
+            continue
+        votes[lang] += 1
+
+    if not votes:
+        return None
+
+    top_lang, top_count = votes.most_common(1)[0]
+    total_votes = sum(votes.values())
+    if top_count < min_votes:
+        return None
+    if total_votes <= 0:
+        return None
+    if (top_count / total_votes) < dominance:
+        return None
+    return top_lang
+
+
 def resolve_artist_languages(
     df: pl.DataFrame,
     verbose: bool,
-    max_titles: int = 30,
+    max_titles: int = LANGUAGE_MAX_TITLES,
     tag_fasttext_threshold: float = TAG_FASTTEXT_THRESHOLD,
+    locale_signal_fasttext_threshold: float = LOCALE_SIGNAL_FASTTEXT_THRESHOLD,
     fallback_fasttext_threshold: float = FALLBACK_FASTTEXT_THRESHOLD,
+    vote_fallback_conf_floor: float = VOTE_FALLBACK_CONF_FLOOR,
+    vote_fallback_min_votes: int = VOTE_FALLBACK_MIN_VOTES,
+    vote_fallback_dominance: float = VOTE_FALLBACK_DOMINANCE,
 ) -> dict[str, str]:
     """Resolve one final language code per artist.
 
-    Cascade:
-      1) genre override (always wins)
-      2) tag_lang exists -> FastText if conf>=threshold else tag_lang
-      3) no tag_lang/override -> default en, FastText can override at high conf
+        Cascade:
+            1) genre override (always wins)
+              2) explicit tag_lang exists ->
+                  FastText if conf>=TAG threshold, else keep tag_lang
+              3) locale signal exists but no tag_lang ->
+                  FastText if conf>=LOCALE threshold, else en
+              4) no tag signal/override -> default en, FastText can override at fallback threshold
     """
     if "artist_name" not in df.columns or "track_name" not in df.columns:
         raise ValueError("resolve_artist_languages requires artist_name and track_name columns")
@@ -33,7 +79,7 @@ def resolve_artist_languages(
 
     if verbose:
         print("Loading artist tag language lookup...")
-    _, tag_lang_lookup = load_artist_genre_lookup()
+    _, tag_lang_lookup, tag_signal_lookup = load_artist_genre_lookup(include_lang_signal=True)
 
     artist_rows = (
         df.group_by("artist_name")
@@ -49,7 +95,8 @@ def resolve_artist_languages(
 
     artist_lang: dict[str, str] = {}
     override_count = 0
-    tag_count = 0
+    explicit_tag_count = 0
+    locale_signal_count = 0
     fallback_count = 0
 
     for row in artist_rows.iter_rows(named=True):
@@ -82,25 +129,57 @@ def resolve_artist_languages(
         if combined:
             detected_lang, detected_conf = detect_language(model, combined)
 
+        has_tag_signal = bool(tag_lang) or bool(tag_signal_lookup.get(norm_name))
+
         if tag_lang:
             if detected_lang and detected_conf >= tag_fasttext_threshold:
                 artist_lang[artist_name] = detected_lang
             else:
-                artist_lang[artist_name] = tag_lang
-            tag_count += 1
+                voted_lang = _vote_language_from_titles(
+                    model,
+                    cleaned_titles,
+                    conf_floor=vote_fallback_conf_floor,
+                    min_votes=vote_fallback_min_votes,
+                    dominance=vote_fallback_dominance,
+                )
+                artist_lang[artist_name] = voted_lang or tag_lang
+            explicit_tag_count += 1
+            continue
+
+        if has_tag_signal:
+            if detected_lang and detected_conf >= locale_signal_fasttext_threshold:
+                artist_lang[artist_name] = detected_lang
+            else:
+                voted_lang = _vote_language_from_titles(
+                    model,
+                    cleaned_titles,
+                    conf_floor=vote_fallback_conf_floor,
+                    min_votes=vote_fallback_min_votes,
+                    dominance=vote_fallback_dominance,
+                )
+                artist_lang[artist_name] = voted_lang or "en"
+            locale_signal_count += 1
             continue
 
         if detected_lang and detected_conf >= fallback_fasttext_threshold:
             artist_lang[artist_name] = detected_lang
         else:
-            artist_lang[artist_name] = "en"
+            voted_lang = _vote_language_from_titles(
+                model,
+                cleaned_titles,
+                conf_floor=vote_fallback_conf_floor,
+                min_votes=vote_fallback_min_votes,
+                dominance=vote_fallback_dominance,
+            )
+            artist_lang[artist_name] = voted_lang or "en"
         fallback_count += 1
 
     if verbose:
         print(
             "Language resolution stats: "
             f"genre-override={override_count:,}, "
-            f"tag-lang={tag_count:,}, "
+            f"tag-lang={explicit_tag_count:,}, "
+            f"locale-signal={locale_signal_count:,}, "
             f"default/fallback={fallback_count:,}"
         )
 

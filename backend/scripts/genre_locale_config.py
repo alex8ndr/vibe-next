@@ -1,4 +1,10 @@
-"""Locale/language policy config for genre tag mapping."""
+"""Locale/language policy config for genre tag mapping.
+
+Design goals:
+- Locale tokens provide language hints.
+- Genre should primarily come from the non-locale remainder of the tag.
+- Only keep explicit exception maps for non-compositional phrases.
+"""
 
 from __future__ import annotations
 
@@ -6,50 +12,60 @@ LOCALE_TO_LANG: dict[str, str | None] = {
     # European — Romance
     "french": "fr", "francais": "fr", "français": "fr",
     "francaise": "fr", "française": "fr",
-    "spanish": "es",
+    "spanish": "es", "espanol": "es", "español": "es",
     "italian": "it", "italiano": "it", "italiana": "it",
     "portuguese": "pt",
     "catalan": "ca", "basque": "eu", "galician": "gl",
     "romanian": "ro",
+
     # European — Germanic
-    "german": "de", "deutsch": "de",
+    "german": "de", "deutsch": "de", "deutscher": "de",
     "swedish": "sv", "norwegian": "no", "danish": "da",
     "icelandic": "is",
     "dutch": "nl", "flemish": "nl",
-    "austrian": "de", "swiss": None,
+    "austrian": "de", "swiss": "de",
+    "mundart": "de",
+
     # European — Finno-Ugric / Baltic
     "finnish": "fi", "estonian": "et",
     "latvian": "lv", "lithuanian": "lt",
     "hungarian": "hu",
+
     # European — Slavic
     "czech": "cs", "slovak": "sk", "polish": "pl",
     "serbian": "sr", "croatian": "hr", "bosnian": "bs",
     "slovenian": "sl", "bulgarian": "bg", "yugoslav": "sh",
     "ukrainian": "uk", "belarusian": "be", "russian": "ru",
+
     # European — Other
     "greek": "el", "albanian": "sq",
     "turkish": "tr", "georgian": "ka", "armenian": "hy",
-    "belgian": None,
+    "belgian": "fr",
     "afrikaans": "af",
+
     # Asian — East
     "chinese": "zh", "taiwanese": "zh", "taiwan": "zh",
     "mandarin": "zh", "cantonese": "zh",
     "korean": "ko",
     "japanese": "ja",
+
     # Asian — Southeast
     "indonesian": "id", "thai": "th", "vietnamese": "vi",
     "filipino": "tl", "pinoy": "tl",
     "malaysian": "ms", "malay": "ms", "singaporean": None,
+
     # Asian — South
     "indian": "hi", "desi": "hi",
     "tamil": "ta", "telugu": "te", "punjabi": "pa",
     "bengali": "bn", "hindi": "hi", "malayalam": "ml",
     "pakistani": "ur", "nepali": "ne", "sri lankan": "si",
+
     # Middle East
     "persian": "fa", "arab": "ar", "arabic": "ar",
     "lebanese": "ar", "palestinian": "ar", "syrian": "ar",
     "arabesk": "tr",
     "israeli": "he", "egyptian": "ar", "moroccan": "ar",
+
     # Latin American
     "latin": "es", "latino": "es", "latina": "es",
     "mexican": "es", "colombian": "es",
@@ -61,11 +77,14 @@ LOCALE_TO_LANG: dict[str, str | None] = {
     "paraguayan": "es", "cuban": "es",
     "puerto rican": "es", "dominican": "es",
     "panamanian": "es", "costa rican": "es",
+
     # Brazilian
     "brazilian": "pt",
+
     # Caribbean
     "jamaican": "en", "caribbean": "en",
     "trinidadian": "en", "haitian": "fr",
+
     # African
     "nigerian": "en", "african": None, "afro": None,
     "south african": None, "ghanaian": "en",
@@ -74,101 +93,51 @@ LOCALE_TO_LANG: dict[str, str | None] = {
     "senegalese": "fr",
 }
 
-LOCALE_OVERRIDES: dict[str, tuple[str, str | None]] = {
-    "french hip hop": ("hip-hop", "fr"),
-    "french rap": ("hip-hop", "fr"),
-    "rap francais": ("hip-hop", "fr"),
-    "rap français": ("hip-hop", "fr"),
+# Non-compositional locale phrases that cannot be reliably interpreted via
+# locale stripping + standard genre mapping.
+LOCALE_PHRASE_RULES: dict[str, tuple[str | None, str | None]] = {
     "pop urbaine": ("hip-hop", "fr"),
-    "hip hop français": ("hip-hop", "fr"),
-    "hip hop francais": ("hip-hop", "fr"),
-    "rock independant francais": ("alt-rock", "fr"),
-    "german hip hop": ("hip-hop", "de"),
-    "german rap": ("hip-hop", "de"),
-    "deutschrap": ("hip-hop", "de"),
-    "deutscher rap": ("hip-hop", "de"),
-    "neue deutsche welle": ("synthpop", "de"),
-    "japanese pop": ("j-pop", "ja"),
-    "japanese rock": ("j-rock", "ja"),
-    "korean pop": ("k-pop", "ko"),
-    "chinese indie": ("cantopop", "zh"),
-    "chinese rock": ("cantopop", "zh"),
-    "chinese r&b": ("cantopop", "zh"),
-    "chinese alternative": ("cantopop", "zh"),
-    "taiwan indie": ("cantopop", "zh"),
-    "taiwan pop": ("cantopop", "zh"),
-    "taiwan rock": ("cantopop", "zh"),
-    "mandarin pop": ("cantopop", "zh"),
-    "mandarin rock": ("cantopop", "zh"),
-    "cantonese traditional": ("cantopop", "zh"),
-    "taiwanese indigenous": ("world", "zh"),
-    "latin urban": ("latin-urban", "es"),
-    "latin trap": ("latin-urban", "es"),
-    "latin hip hop": ("latin-urban", "es"),
-    "latin jazz": ("salsa", None),
-    "latin rock": ("alt-rock", "es"),
-    "latin alternative": ("alt-rock", "es"),
-    "latin soul": ("soul", None),
     "pop electronico": ("latin-urban", "es"),
     "pop electrónico": ("latin-urban", "es"),
-    "electro latino": ("latin-urban", "es"),
-    "rock en espanol": ("alt-rock", "es"),
-    "rock en español": ("alt-rock", "es"),
-    "reggaeton colombiano": ("latin-urban", "es"),
-    "reggaeton flow": ("latin-urban", "es"),
-    "brazilian pop": ("samba", "pt"),
-    "brazilian rock": ("samba", "pt"),
-    "brazilian indie": ("samba", "pt"),
+    "rock nacional": ("rock", None),
+    "pop nacional": ("pop", None),
+    "deutschrap": ("hip-hop", "de"),
+    "neue deutsche welle": ("synthpop", "de"),
     "mpb": ("samba", "pt"),
     "funk carioca": ("funk", "pt"),
-    "indian film": ("pop-film", "hi"),
-    "tamil film": ("pop-film", "ta"),
-    "desi film": ("pop-film", "hi"),
-    "rock nacional": ("rock", "es"),
-    "pop nacional": ("pop", "pt"),
+    "electro latino": ("latin-urban", "es"),
+    "latin jazz": ("salsa", None),
+    "latin soul": ("soul", None),
+    "taiwanese indigenous": ("folk", "zh"),
 }
 
-LOCALE_GENRE_KEYWORDS: dict[str, str] = {
-    "chinese": "cantopop", "taiwanese": "cantopop", "taiwan": "cantopop",
-    "mandarin": "cantopop", "cantonese": "cantopop",
-    "korean": "k-pop",
-    "japanese": "j-pop",
-    "brazilian": "samba",
-    "indian": "indian", "desi": "indian",
-    "tamil": "indian", "telugu": "indian", "punjabi": "indian",
-    "bengali": "indian", "hindi": "indian", "malayalam": "indian",
-    "pakistani": "indian", "nepali": "indian", "sri lankan": "indian",
-    "latin": "latin-urban", "latino": "latin-urban", "latina": "latin-urban",
-    "mexican": "latin-urban", "colombian": "latin-urban",
-    "argentine": "latin-urban", "argentino": "latin-urban",
-    "argentina": "latin-urban", "argentinian": "latin-urban",
-    "peruvian": "latin-urban", "chilean": "latin-urban",
-    "venezuelan": "latin-urban", "ecuadorian": "latin-urban",
-    "bolivian": "latin-urban", "uruguayan": "latin-urban",
-    "paraguayan": "latin-urban", "cuban": "latin-urban",
-    "puerto rican": "latin-urban", "dominican": "latin-urban",
-    "panamanian": "latin-urban", "costa rican": "latin-urban",
-    "jamaican": "dancehall", "caribbean": "dancehall",
-    "trinidadian": "dancehall", "haitian": "dancehall",
-    "nigerian": "afrobeat", "african": "afrobeat", "afro": "afrobeat",
-    "south african": "afrobeat", "ghanaian": "afrobeat",
-    "kenyan": "afrobeat", "tanzanian": "afrobeat",
-    "ethiopian": "afrobeat", "congolese": "afrobeat",
-    "senegalese": "afrobeat",
-}
-
-LOCALE_GENERIC_TOKENS = (
-    "pop", "rock", "hip hop", "rap", "metal", "house", "electronic",
-    "edm", "dance", "jazz", "blues", "folk", "country", "punk",
-    "alternative", "indie", "soul", "r&b", "reggae", "funk",
-    "ska", "techno", "trance", "classical", "disco",
-    "trap", "drill", "grime", "reggaeton", "ambient", "chill",
-    "gospel", "worship", "emo", "hardcore", "grunge", "opera",
-    "acoustic", "psychedelic", "synthwave", "new wave", "dnb",
-    "post-punk", "progressive", "industrial", "downtempo", "trip hop",
-    "afrobeat", "afrobeats", "cumbia", "bachata", "dancehall", "dub",
-    "breakbeat", "garage", "lo-fi", "phonk", "boom bap",
-    "samba", "salsa", "swing", "soundtrack", "film", "chanson", "variete",
-    "rnb", "variété",
-    "electropop", "electronica", "electronico",
+# Tokens removed after locale stripping (e.g. "rock en espanol" -> "rock").
+LOCALE_CONNECTOR_TOKENS: tuple[str, ...] = (
+    "en", "de", "da", "do", "del", "la", "el", "y", "the",
 )
+
+# Targeted scene remaps after locale stripping resolves a broad base genre.
+LOCALE_SCENE_REMAPS: dict[str, dict[str, str]] = {
+    "japanese": {
+        "pop": "j-pop",
+        "rock": "j-rock",
+    },
+    "korean": {
+        "pop": "k-pop",
+    },
+    "chinese": {
+        "pop": "cantopop",
+    },
+    "taiwanese": {
+        "pop": "cantopop",
+    },
+    "taiwan": {
+        "pop": "cantopop",
+    },
+    "mandarin": {
+        "pop": "cantopop",
+    },
+    "cantonese": {
+        "pop": "cantopop",
+    },
+}

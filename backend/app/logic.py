@@ -156,6 +156,7 @@ class MusicData:
         self.track_genre_codes: np.ndarray | None = None
         self.track_language_codes: np.ndarray | None = None
         self.genre_names_by_code: list[str | None] = [None]
+        self.language_names_by_code: list[str | None] = [None]
         self.artist_track_offsets: np.ndarray | None = None
         self.artist_track_row_indices: np.ndarray | None = None
         self.artist_popularity_by_code: np.ndarray | None = None  # Per-artist popularity (0-1)
@@ -163,6 +164,7 @@ class MusicData:
         self.popularity_median: float = 0.5  # Median artist popularity for centering
         # Debug cache is filled lazily, only when debug mode is requested.
         self.genre_profile_cache: dict[str, list[tuple[str, float]]] = {}
+        self.language_profile_cache: dict[str, list[tuple[str, float]]] = {}
     
     def load(self) -> None:
         t0 = perf_counter()
@@ -248,16 +250,8 @@ class MusicData:
         else:
             self.track_genre_codes = np.zeros(self.track_count, dtype=np.uint16)
 
-        if 'language' in meta_df.columns:
-            self.track_language_codes = (
-                meta_df['language']
-                .fill_null(0)
-                .cast(pl.UInt16)
-                .to_numpy()
-                .astype(np.uint16, copy=False)
-            )
-        else:
-            self.track_language_codes = np.zeros(self.track_count, dtype=np.uint16)
+        language_col = meta_df['language'] if 'language' in meta_df.columns else None
+        self._build_track_languages(language_col)
 
         self._build_artist_track_index(self.track_artist_codes, row_indices, self.track_popularity)
 
@@ -438,6 +432,109 @@ class MusicData:
         self.artist_popularity_by_code[artist_codes] = avg_pops
         self.artist_track_count_by_code[artist_codes] = norm_counts.astype(np.float32, copy=False)
 
+    def _build_track_languages(self, language_col: pl.Series | None) -> None:
+        if language_col is None:
+            self.track_language_codes = np.zeros(self.track_count, dtype=np.uint16)
+            self.language_names_by_code = [None]
+            return
+
+        unique_langs = language_col.drop_nulls().unique(maintain_order=True).to_list()
+        lang_values = [None] + unique_langs
+        dtype = np.uint16 if len(lang_values) <= np.iinfo(np.uint16).max else np.uint32
+        mapping = pl.Series(unique_langs)
+        codes_series = language_col.replace_strict(
+            mapping,
+            pl.Series(range(1, len(unique_langs) + 1), dtype=pl.UInt32),
+            default=0,
+        )
+        self.language_names_by_code = lang_values
+        self.track_language_codes = codes_series.to_numpy().astype(dtype, copy=False)
+
+    def _compute_top_profile(
+        self,
+        code_values: np.ndarray,
+        code_names: list[str | None],
+        *,
+        drop_zero_code: bool,
+        top_n: int = 3,
+        min_percent: float = 1.0,
+    ) -> list[tuple[str, float]]:
+        if len(code_values) == 0:
+            return []
+
+        codes = code_values.astype(np.int64, copy=False)
+        if drop_zero_code:
+            codes = codes[codes > 0]
+            if len(codes) == 0:
+                return []
+
+        counts = np.bincount(codes, minlength=len(code_names))
+        total = int(counts.sum())
+        if total == 0:
+            return []
+
+        ranked_codes = np.argsort(counts)[::-1]
+        profile: list[tuple[str, float]] = []
+        for code in ranked_codes:
+            if drop_zero_code and code == 0:
+                continue
+            count = int(counts[code])
+            if count == 0:
+                continue
+
+            label = code_names[int(code)] if int(code) < len(code_names) else None
+            if label is None:
+                continue
+
+            pct = round((count * 100.0) / total, 1)
+            if pct <= min_percent:
+                break
+
+            profile.append((label, pct))
+            if len(profile) >= top_n:
+                break
+
+        return profile
+
+    def _get_artist_profiles(
+        self,
+        artist_names: list[str],
+        *,
+        track_codes: np.ndarray | None,
+        code_names: list[str | None],
+        cache: dict[str, list[tuple[str, float]]],
+        drop_zero_code: bool,
+    ) -> dict[str, list[tuple[str, float]]]:
+        if track_codes is None or len(code_names) == 0:
+            return {artist: [] for artist in artist_names}
+
+        ordered_artists = [artist for artist in dict.fromkeys(artist_names) if artist]
+        missing = [artist for artist in ordered_artists if artist not in cache]
+
+        for artist in missing:
+            artist_code = self.get_artist_code(artist)
+            if artist_code is None:
+                cache[artist] = []
+                continue
+
+            row_indices = self.get_artist_track_indices(artist_code)
+            if len(row_indices) == 0:
+                cache[artist] = []
+                continue
+
+            cache[artist] = self._compute_top_profile(
+                track_codes[row_indices],
+                code_names,
+                drop_zero_code=drop_zero_code,
+            )
+
+            if len(cache) > 10_000:
+                keep = {name: cache.get(name, []) for name in ordered_artists}
+                cache.clear()
+                cache.update(keep)
+
+        return {artist: cache.get(artist, []) for artist in ordered_artists}
+
     def get_track_index(self, track_id: str) -> int | None:
         if self.track_ids_sorted is None or self.track_row_indices_sorted is None:
             return None
@@ -469,6 +566,14 @@ class MusicData:
             return None
         return self.genre_names_by_code[code]
 
+    def get_track_language(self, row_idx: int) -> str | None:
+        if self.track_language_codes is None:
+            return None
+        code = int(self.track_language_codes[row_idx])
+        if code < 0 or code >= len(self.language_names_by_code):
+            return None
+        return self.language_names_by_code[code]
+
     def get_artist_code(self, artist_name: str) -> int | None:
         if self.artist_names_sorted is None or self.artist_codes_sorted is None:
             return None
@@ -491,54 +596,22 @@ class MusicData:
         return self.artist_track_row_indices[start:end]
 
     def get_artist_genre_profiles(self, artist_names: list[str]) -> dict[str, list[tuple[str, float]]]:
-        if self.track_genre_codes is None or len(self.genre_names_by_code) <= 1:
-            return {artist: [] for artist in artist_names}
+        return self._get_artist_profiles(
+            artist_names,
+            track_codes=self.track_genre_codes,
+            code_names=self.genre_names_by_code,
+            cache=self.genre_profile_cache,
+            drop_zero_code=True,
+        )
 
-        ordered_artists = [artist for artist in dict.fromkeys(artist_names) if artist]
-        missing = [artist for artist in ordered_artists if artist not in self.genre_profile_cache]
-
-        for artist in missing:
-            artist_code = self.get_artist_code(artist)
-            if artist_code is None:
-                self.genre_profile_cache[artist] = []
-                continue
-
-            row_indices = self.get_artist_track_indices(artist_code)
-            if len(row_indices) == 0:
-                self.genre_profile_cache[artist] = []
-                continue
-
-            genre_codes = self.track_genre_codes[row_indices].astype(np.int64, copy=False)
-            genre_codes = genre_codes[genre_codes > 0]
-            if len(genre_codes) == 0:
-                self.genre_profile_cache[artist] = []
-                continue
-
-            counts = np.bincount(genre_codes, minlength=len(self.genre_names_by_code))
-            total = int(counts.sum())
-            top_codes = np.argsort(counts)[::-1]
-            profile: list[tuple[str, float]] = []
-            for code in top_codes:
-                if code == 0 or counts[code] == 0:
-                    continue
-                pct = round((counts[code] * 100.0) / total, 1)
-                if pct <= 1.0:
-                    break
-                genre = self.genre_names_by_code[int(code)]
-                if genre is not None:
-                    profile.append((genre, pct))
-                if len(profile) >= 3:
-                    break
-            self.genre_profile_cache[artist] = profile
-
-            if len(self.genre_profile_cache) > 10_000:
-                # Debug-only cache: keep only the artists from the current request.
-                self.genre_profile_cache = {
-                    artist: self.genre_profile_cache.get(artist, [])
-                    for artist in ordered_artists
-                }
-
-        return {artist: self.genre_profile_cache.get(artist, []) for artist in ordered_artists}
+    def get_artist_language_profiles(self, artist_names: list[str]) -> dict[str, list[tuple[str, float]]]:
+        return self._get_artist_profiles(
+            artist_names,
+            track_codes=self.track_language_codes,
+            code_names=self.language_names_by_code,
+            cache=self.language_profile_cache,
+            drop_zero_code=False,
+        )
     
 
 
@@ -958,6 +1031,12 @@ def generate_recommendations(
         )
         if debug else {}
     )
+    language_profiles = (
+        data.get_artist_language_profiles(
+            input_artists + [data.get_artist_name(int(row["artist_code"])) for row in artist_stats]
+        )
+        if debug else {}
+    )
     
     recommendations = {}
     debug_info = {} if debug else None
@@ -970,10 +1049,12 @@ def generate_recommendations(
         tracks = []
         for track_idx in row['tracks']:
             genre = data.get_track_genre(track_idx)
+            language = data.get_track_language(track_idx)
             track_info = {
                 "track_id": data.get_track_id(track_idx),
                 "track_name": data.get_track_name(track_idx),
                 "genre": genre,
+                "language": language,
             }
             
             # Add per-song debug data if requested
@@ -1007,6 +1088,10 @@ def generate_recommendations(
             artist_debug['genre_profile'] = [
                 {"genre": g, "pct": p} for g, p in genre_profile
             ]
+            language_profile = language_profiles.get(artist, [])
+            artist_debug['language_profile'] = [
+                {"language": l, "pct": p} for l, p in language_profile
+            ]
             debug_info[artist] = artist_debug
     
     t_postprocess = perf_counter()
@@ -1030,8 +1115,19 @@ def generate_recommendations(
                     "genres": [{"genre": g, "pct": p} for g, p in profile]
                 })
         meta["input_genre_profile"] = input_profile
+        input_language_profile = []
+        for inp_artist in input_artists:
+            profile = language_profiles.get(inp_artist, [])
+            if profile:
+                input_language_profile.append({
+                    "artist": inp_artist,
+                    "languages": [{"language": l, "pct": p} for l, p in profile]
+                })
+        meta["input_language_profile"] = input_language_profile
         if query_language_code is not None:
             meta["query_language_code"] = query_language_code
+            if 0 <= query_language_code < len(data.language_names_by_code):
+                meta["query_language"] = data.language_names_by_code[query_language_code]
         meta["effective_language_weight"] = effective_language_weight
         
         # Include search vector audio features if requested (average of seeds for display)

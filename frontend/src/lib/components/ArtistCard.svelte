@@ -54,8 +54,16 @@
             .map(g => `${Math.round(g.pct)}% ${g.genre}`)
             .join(', ');
     }
+
+    function formatLanguageProfile(): string {
+        if (!debugInfo?.language_profile?.length) return '';
+        return debugInfo.language_profile
+            .map(l => `${Math.round(l.pct)}% ${l.language}`)
+            .join(', ');
+    }
     
     const genreProfile = $derived(formatGenreProfile());
+    const languageProfile = $derived(formatLanguageProfile());
     const showDebug = $derived($devSettings.debugMode && $devSettings.showGenreProfiles);
     const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
     const hasTrackFeatures = $derived(tracks.some(t => t.audio_features));
@@ -234,8 +242,6 @@
                 playGeneration++;
                 if (controller) {
                     controller.pause();
-                    // Reload current track to avoid Spotify login nag screen (keeps same track)
-                    // This is safe to do even if we're about to play - the new load will just override it
                     if (currentTrackId) {
                         controller.loadUri(`spotify:track:${currentTrackId}`);
                     }
@@ -334,8 +340,12 @@
     <div class="card-header">
         <div class="title-row">
             <h3 class="title">{artist}</h3>
-            {#if showDebug && genreProfile}
-                <span class="genre-profile">{genreProfile}</span>
+            {#if showDebug && (genreProfile || languageProfile)}
+                <span class="genre-profile">
+                    {#if genreProfile}{genreProfile}{/if}
+                    {#if genreProfile && languageProfile} • {/if}
+                    {#if languageProfile}{languageProfile}{/if}
+                </span>
             {/if}
         </div>
         <div class="card-actions" class:visible={showActions}>
@@ -428,13 +438,18 @@
                                 <span class="feature-name">genre</span>
                                 <span class="feature-value-text">{value}</span>
                             </div>
-                        {:else}
+                        {:else if typeof value === 'number'}
                             <div class="feature">
                                 <span class="feature-name">{key}</span>
                                 <div class="feature-bar">
                                     <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
                                 </div>
                                 <span class="feature-value">{(value as number).toFixed(2)}</span>
+                            </div>
+                        {:else}
+                            <div class="feature genre-feature">
+                                <span class="feature-name">{key}</span>
+                                <span class="feature-value-text">{String(value)}</span>
                             </div>
                         {/if}
                     {/each}
@@ -611,6 +626,10 @@
     }
 
     .trk {
+        --trk-sat: 26%;
+        --trk-lit: 24%;
+        --trk-sat2: 20%;
+        --trk-lit2: 18%;
         flex: 1;
         min-width: 0;
         display: flex;
@@ -621,8 +640,8 @@
         border-radius: 5px;
         background: linear-gradient(
             135deg,
-            hsl(var(--hue), 26%, 24%) 0%,
-            hsl(calc(var(--hue) + 20), 20%, 18%) 100%
+            hsl(var(--hue), var(--trk-sat), var(--trk-lit)) 0%,
+            hsl(calc(var(--hue) + 20), var(--trk-sat2), var(--trk-lit2)) 100%
         );
         color: #ddd;
         font-size: 0.78rem;
@@ -657,16 +676,7 @@
         filter: none;
     }
 
-    .trk.playing {
-        background: linear-gradient(135deg, #1db954, #169c46);
-        color: #fff;
-    }
 
-    .trk.loading {
-        background: linear-gradient(135deg, #1db954, #169c46);
-        color: #fff;
-        opacity: 0.8;
-    }
 
     .spinner {
         animation: spin 1s linear infinite;
@@ -744,11 +754,10 @@
 
     @media (prefers-color-scheme: light) {
         .trk {
-            background: linear-gradient(
-                135deg,
-                hsl(var(--hue), 20%, 38%) 0%,
-                hsl(calc(var(--hue) + 20), 16%, 32%) 100%
-            );
+            --trk-sat: 20%;
+            --trk-lit: 38%;
+            --trk-sat2: 16%;
+            --trk-lit2: 32%;
         }
 
         .fav-btn {
@@ -761,11 +770,10 @@
     }
 
     :global([data-theme="light"]) .trk {
-        background: linear-gradient(
-            135deg,
-            hsl(var(--hue), 20%, 38%) 0%,
-            hsl(calc(var(--hue) + 20), 16%, 32%) 100%
-        );
+        --trk-sat: 20%;
+        --trk-lit: 38%;
+        --trk-sat2: 16%;
+        --trk-lit2: 32%;
     }
 
     :global([data-theme="light"]) .fav-btn {
@@ -774,6 +782,34 @@
             hsl(var(--hue), 20%, 38%) 0%,
             hsl(calc(var(--hue) + 20), 16%, 32%) 100%
         );
+    }
+
+    /* Playing/loading states MUST come after theme blocks to win specificity */
+    .trk.playing {
+        --trk-sat: 60%;
+        --trk-lit: 30%;
+        --trk-sat2: 30%;
+        --trk-lit2: 24%;
+        color: #fff;
+    }
+
+    .trk.playing::before {
+        background: hsl(var(--hue), 60%, 58%);
+        width: 3px;
+    }
+
+    .trk.loading {
+        --trk-sat: 35%;
+        --trk-lit: 28%;
+        --trk-sat2: 30%;
+        --trk-lit2: 22%;
+        color: #fff;
+        animation: pulse-loading 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-loading {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
     }
 
     @media (hover: none) {
