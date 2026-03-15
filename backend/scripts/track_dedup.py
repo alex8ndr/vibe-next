@@ -9,7 +9,6 @@ Track deduplication:
 Artist deduplication:
 - Case-insensitive matching
 - Unicode normalization (accents, special chars)
-- Handles "The" prefix variations
 """
 import re
 import unicodedata
@@ -57,9 +56,8 @@ def normalize_artist_name(name: str) -> str:
     Handles:
     - Case: "RADIOHEAD" == "Radiohead"
     - Accents: "Björk" == "Bjork"
-    - "The" prefix: "The Beatles" == "Beatles"
     - Whitespace: "  Artist  Name  " == "Artist Name"
-    """
+        """
     if not name:
         return ""
     
@@ -69,10 +67,6 @@ def normalize_artist_name(name: str) -> str:
     
     # Normalize whitespace
     name = ' '.join(name.split())
-    
-    # Remove "the " prefix for matching purposes
-    if name.startswith('the '):
-        name = name[4:]
     
     return name
 
@@ -167,7 +161,6 @@ def artist_norm_expr(col: str = "artist_name") -> pl.Expr:
         .str.replace_all(_DOUBLE_QUOTE_RE, '"', literal=False)
         .str.strip_chars()
         .str.replace_all(r'\s+', ' ', literal=False)      # normalize whitespace
-        .str.replace(r'^the\s+', '', literal=False)       # strip "the " prefix
     )
 
 
@@ -274,14 +267,14 @@ def deduplicate_tracks_polars(df: pl.DataFrame, track_col: str = "track_name", a
     This avoids Pandas conversion entirely.
     
     Strategy:
-    1. Create normalized artist name (lowercase, strip accents, handle "the" prefix)
+    1. Create normalized artist name (lowercase, strip accents)
     2. Create normalized track name (lowercase, strip variant suffixes)
     3. Sort by popularity descending
     4. Keep first row per (norm_artist, norm_track) group
     
     This handles:
     - Case insensitivity: "RADIOHEAD" matches "Radiohead"
-    - "The" variations: "The Beatles" matches "Beatles" 
+    - Accent normalization: "Björk" matches "Bjork"
     - Track variants: "Song (Remastered)" matches "Song"
     """
     if df.is_empty() or track_col not in df.columns:

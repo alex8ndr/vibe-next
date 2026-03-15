@@ -40,91 +40,13 @@ from io_utils import (
     update_manifest,
     save_scaler_params,
 )
-from genre_families import GENRE_DEFINITIONS
+from pipeline.utils import (
+    compute_genre_embeddings_polars,
+    apply_inter_artist_smearing,
+    resolve_artist_languages,
+    minmax_scale_polars,
+)
 from track_dedup import deduplicate_tracks_polars
-
-
-def compute_genre_embeddings_polars(unique_genres: list[str]) -> pl.DataFrame:
-    """Compute dense embeddings for genres based on family relationships.
-    
-    Returns a Polars DataFrame with 'genre' column and 'genre_*' embedding columns.
-    Uses NumPy only for L2 normalization of the small embedding matrix.
-    """
-    # Get all family dimensions from the definitions
-    all_families = set()
-    for families in GENRE_DEFINITIONS.values():
-        all_families.update(families.keys())
-    all_families = sorted(all_families)
-    
-    # Reverse mapping: Family -> {Genre: Weight}
-    family_to_genres = {f: {} for f in all_families}
-    for genre, families in GENRE_DEFINITIONS.items():
-        for fam, weight in families.items():
-            family_to_genres[fam][genre] = weight
-    
-    # Build embeddings as list of dicts (fast with Polars)
-    rows = []
-    for g in unique_genres:
-        vec = {"genre": g}
-        for fam in all_families:
-            vec[f"genre_{fam}"] = 0.0
-        
-        # 1. Direct Membership
-        if g in GENRE_DEFINITIONS:
-            for fam, w in GENRE_DEFINITIONS[g].items():
-                vec[f"genre_{fam}"] = max(vec[f"genre_{fam}"], w)
-                
-        # 2. Neighbor Connections: Propagate traits from neighbors sharing a family
-        if g in GENRE_DEFINITIONS:
-            SMEARING_DECAY = 0.5
-            for fam_shared, w_g_in_shared in GENRE_DEFINITIONS[g].items():
-                for neighbor, w_n_in_shared in family_to_genres[fam_shared].items():
-                    if neighbor == g:
-                        continue
-                    connection_strength = w_g_in_shared * w_n_in_shared
-                    if neighbor in GENRE_DEFINITIONS:
-                        for fam_target, w_n_in_target in GENRE_DEFINITIONS[neighbor].items():
-                            score = connection_strength * w_n_in_target * SMEARING_DECAY
-                            col = f"genre_{fam_target}"
-                            vec[col] = max(vec[col], score)
-        
-        rows.append(vec)
-    
-    # Convert to Polars DataFrame
-    df_emb = pl.from_dicts(rows)
-    
-    # L2 normalize embeddings (brief NumPy usage for this small matrix)
-    genre_cols = [c for c in df_emb.columns if c.startswith("genre_")]
-    emb_matrix = df_emb.select(genre_cols).to_numpy()
-    norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
-    norms[norms == 0] = 1  # Avoid division by zero
-    emb_matrix = emb_matrix / norms
-    
-    # Replace embedding columns with normalized values
-    df_emb = df_emb.select("genre").hstack(
-        pl.from_numpy(emb_matrix, schema=genre_cols)
-    )
-    
-    return df_emb
-
-
-def minmax_scale_polars(df: pl.LazyFrame, columns: list[str]) -> pl.LazyFrame:
-    """Apply min-max scaling to columns using pure Polars expressions.
-    
-    Formula: (x - min) / (max - min)
-    This replaces sklearn's MinMaxScaler without any Pandas conversion.
-    """
-    # Build expressions for each column
-    scale_exprs = []
-    for col in columns:
-        # Use .over(pl.lit(True)) to compute global min/max (not per-group)
-        scaled = (
-            (pl.col(col) - pl.col(col).min()) / 
-            (pl.col(col).max() - pl.col(col).min())
-        ).fill_nan(0.0).fill_null(0.0).alias(col)
-        scale_exprs.append(scaled)
-    
-    return df.with_columns(scale_exprs)
 
 
 def parse_args() -> argparse.Namespace:
@@ -172,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Dev mode: use fast compression (zstd level 1 instead of 22)",
     )
+    parser.add_argument(
+        "--max-international-pct",
+        type=float,
+        default=None,
+        help="Maximum percentage of non-English tracks based on resolved language (e.g., 15 for 15%%)",
+    )
     return parser.parse_args()
 
 
@@ -218,6 +146,7 @@ def process_data(
     output_path: Path,
     max_songs: int,
     max_artists: int,
+    max_international_pct: float | None,
     smear_strength: float,
     verbose: bool,
     dev: bool = False,
@@ -299,35 +228,54 @@ def process_data(
         n_artists_before = n_before_dedup  # approx, tracks not artists
         log(f"  ({n_dedup_removed / n_before_dedup * 100:.1f}% of pre-dedup tracks were duplicates)", verbose)
 
-    # Canonicalize artist names: pick the most popular spelling per normalized artist
-    from track_dedup import artist_norm_expr
-    df = df.with_columns(artist_norm_expr("artist_name").alias("_norm_artist"))
-    # For each normalized name, pick the spelling with the highest total popularity
-    canonical = (
-        df.group_by(["_norm_artist", "artist_name"])
-        .agg(pl.col("popularity").sum().alias("_total_pop"))
-        .sort("_total_pop", descending=True)
-        .unique(subset=["_norm_artist"], keep="first")
-        .select(["_norm_artist", pl.col("artist_name").alias("_canonical_name")])
+    # Enforce non-null genre rows in encoded output
+    if "genre" in df.columns:
+        n_null_genre = df["genre"].null_count()
+        if n_null_genre > 0:
+            df = df.filter(pl.col("genre").is_not_null())
+            log(f"Dropped {n_null_genre:,} tracks with null genre", verbose)
+
+    # Canonicalize artist casing/spacing variants
+    artist_key_expr = (
+        pl.col("artist_name")
+        .cast(pl.Utf8)
+        .str.to_lowercase()
+        .str.strip_chars()
+        .str.replace_all(r"\s+", " ", literal=False)
     )
-    df = df.join(canonical, on="_norm_artist", how="left")
-    n_canonicalized = df.filter(pl.col("artist_name") != pl.col("_canonical_name")).height
-    df = df.with_columns(pl.col("_canonical_name").alias("artist_name")).drop(["_norm_artist", "_canonical_name"])
-    if n_canonicalized > 0:
-        log(f"Artist name canonicalization: {n_canonicalized:,} tracks updated to canonical spelling", verbose)
+    df = df.with_columns(artist_key_expr.alias("_artist_key"))
+
+    canonical_names = (
+        df.group_by(["_artist_key", "artist_name"])
+        .agg([
+            pl.col("popularity").max().alias("_artist_max_pop"),
+            pl.len().alias("_artist_rows"),
+        ])
+        .sort(["_artist_key", "_artist_max_pop", "_artist_rows"], descending=[False, True, True])
+        .unique(subset=["_artist_key"], keep="first")
+        .select(["_artist_key", pl.col("artist_name").alias("_artist_canonical")])
+    )
+    df = df.join(canonical_names, on="_artist_key", how="left")
+    n_artist_canonicalized = df.filter(pl.col("artist_name") != pl.col("_artist_canonical")).height
+    df = df.with_columns(pl.col("_artist_canonical").alias("artist_name")).drop("_artist_canonical")
+    if verbose and n_artist_canonicalized > 0:
+        log(f"Artist name canonicalization (case/spacing): {n_artist_canonicalized:,} tracks updated", verbose)
 
     # Optional: keep only top N most popular artists
     if max_artists > 0:
         artist_pop = (
-            df.group_by("artist_name")
+            df.group_by("_artist_key")
             .agg(pl.col("popularity").max().alias("_artist_max_pop"))
             .sort("_artist_max_pop", descending=True)
             .head(max_artists)
-            .select("artist_name")
+            .select("_artist_key")
         )
         n_before_artist_limit = len(df)
-        df = df.filter(pl.col("artist_name").is_in(artist_pop["artist_name"]))
+        df = df.join(artist_pop, on="_artist_key", how="semi")
         log(f"Artist limit ({max_artists}): kept {df['artist_name'].n_unique():,} artists, removed {n_before_artist_limit - len(df):,} tracks", verbose)
+
+    if "_artist_key" in df.columns:
+        df = df.drop("_artist_key")
 
     # Cap songs per artist using window function (Pure Polars)
     # This replaces: df.groupby("artist_name").cumcount() < max_songs
@@ -353,7 +301,7 @@ def process_data(
         log(f"  Artists: {n_artists_final:,} unique artists in final output", verbose)
 
     # Core Metadata columns
-    meta_cols = ["artist_name", "track_name", "track_id", "genre"]
+    meta_cols = ["artist_name", "track_name", "track_id", "genre", "language"]
     
     # Audio Features (Scaled 0-1)
     feature_cols = [
@@ -379,86 +327,60 @@ def process_data(
         df = df.with_columns([
             pl.col(c).fill_null(0.0).cast(pl.Float32) for c in genre_cols
         ])
+        df = apply_inter_artist_smearing(
+            df,
+            embedding_df,
+            genre_cols,
+            smear_strength,
+            verbose=verbose,
+        )
 
-        # Inter-artist smearing (Pure Polars)
-        ARTIST_SMEAR_STRENGTH = smear_strength
-        MIN_TRACKS_FOR_GENRE = 1
-        TOP_GENRES = 0  # 0 = all
-        
-        if ARTIST_SMEAR_STRENGTH > 0:
-            log(f"Applying inter-artist smearing (strength={ARTIST_SMEAR_STRENGTH})...", verbose)
-            
-            # Count (artist, genre) pairs and filter
-            ag_counts = (
-                df
-                .group_by(["artist_name", "genre"])
-                .len()
-                .filter(pl.col("len") >= MIN_TRACKS_FOR_GENRE)
+    # Resolve final language per artist and attach language column
+    artist_lang = resolve_artist_languages(df, verbose=verbose)
+    if not artist_lang:
+        raise RuntimeError("Language resolution produced no artist mappings")
+
+    artist_lang_df = pl.DataFrame(
+        {
+            "artist_name": list(artist_lang.keys()),
+            "_language_iso": list(artist_lang.values()),
+        }
+    )
+    df = df.join(artist_lang_df, on="artist_name", how="left")
+    df = df.with_columns(pl.col("_language_iso").fill_null("en"))
+
+    # Optional: cap non-English tracks based on resolved language
+    if max_international_pct is not None:
+        intl_mask = pl.col("_language_iso") != "en"
+        n_intl = df.filter(intl_mask).height
+        n_total = len(df)
+        current_pct = (n_intl / n_total * 100.0) if n_total else 0.0
+
+        if current_pct > max_international_pct:
+            target_intl = int(n_total * max_international_pct / 100.0)
+            df_intl = df.filter(intl_mask).sort("popularity", descending=True).head(target_intl)
+            df_en = df.filter(~intl_mask)
+            removed = n_intl - target_intl
+            df = pl.concat([df_en, df_intl], how="vertical")
+            log(
+                f"Language cap ({max_international_pct}%): removed {removed:,} non-English tracks "
+                f"({current_pct:.1f}% -> {max_international_pct}%)",
+                verbose,
             )
-            
-            # Optionally limit to top N genres per artist
-            if TOP_GENRES > 0:
-                ag_counts = (
-                    ag_counts
-                    .sort("len", descending=True)
-                    .with_columns(
-                        pl.col("len").rank("ordinal", descending=True).over("artist_name").alias("_genre_rank")
-                    )
-                    .filter(pl.col("_genre_rank") <= TOP_GENRES)
-                    .drop("_genre_rank")
-                )
-            
-            # Get genre vectors and compute artist identity (mean of their genres)
-            ag_with_vectors = ag_counts.join(embedding_df, on="genre", how="left")
-            
-            artist_identities = (
-                ag_with_vectors
-                .group_by("artist_name")
-                .agg([pl.col(c).mean() for c in genre_cols])
+        else:
+            log(
+                f"Language cap not applied: non-English share {current_pct:.1f}% <= {max_international_pct}%",
+                verbose,
             )
-            
-            # Rename to profile columns for the join
-            profile_cols = [f"_profile_{c}" for c in genre_cols]
-            artist_identities = artist_identities.rename({
-                c: f"_profile_{c}" for c in genre_cols
-            })
-            
-            # Join artist profiles to tracks
-            df = df.join(artist_identities, on="artist_name", how="left")
-            
-            # Fallback: artists with no valid genres use their track's genre
-            for p_col, g_col in zip(profile_cols, genre_cols):
-                df = df.with_columns(
-                    pl.when(pl.col(p_col).is_null())
-                    .then(pl.col(g_col))
-                    .otherwise(pl.col(p_col))
-                    .alias(p_col)
-                )
-            
-            # Blend: track = (1-strength)*track + strength*artist_profile
-            blend_exprs = []
-            for g_col, p_col in zip(genre_cols, profile_cols):
-                blended = (
-                    (1.0 - ARTIST_SMEAR_STRENGTH) * pl.col(g_col) + 
-                    ARTIST_SMEAR_STRENGTH * pl.col(p_col)
-                ).alias(g_col)
-                blend_exprs.append(blended)
-            
-            df = df.with_columns(blend_exprs).drop(profile_cols)
-            
-            # Re-normalize for cosine similarity (brief NumPy usage)
-            genre_matrix = df.select(genre_cols).to_numpy()
-            norms = np.linalg.norm(genre_matrix, axis=1, keepdims=True)
-            norms[norms == 0] = 1.0
-            genre_matrix = genre_matrix / norms
-            
-            # Replace genre columns with normalized values
-            df = df.drop(genre_cols).hstack(
-                pl.from_numpy(genre_matrix, schema=genre_cols)
-            )
-            
-            # Cast back to Float32
-            df = df.with_columns([pl.col(c).cast(pl.Float32) for c in genre_cols])
+
+    df = df.with_columns(
+        pl.col("_language_iso")
+        .cast(pl.Utf8)
+        .alias("language")
+    )
+    df = df.drop("_language_iso")
+
+    langs = sorted(df["language"].drop_nulls().unique().to_list())
 
     # Select final columns
     final_cols = meta_cols + [c for c in feature_cols if c in df.columns] + genre_cols
@@ -470,7 +392,7 @@ def process_data(
     df = df.select(final_cols)
     log(f"Pruned columns. Keeping {len(genre_cols)} genre columns.", verbose)
 
-    # Downcast floats to float16 for memory savings
+    # Normalize all float columns to float32 for consistent runtime memory/precision
     float_cols = [c for c in df.columns if df[c].dtype in [pl.Float32, pl.Float64]]
     df = df.with_columns([pl.col(c).cast(pl.Float32) for c in float_cols])
     
@@ -482,7 +404,7 @@ def process_data(
             print(f"  {dtype}")
 
     # Atomic write with validation
-    compression_level = 2 if dev else 22
+    compression_level = 1 if dev else 22
     if dev:
         print("[DEV MODE] Using fast compression (zstd level 1)")
     log(f"Writing to {output_path}...", verbose)
@@ -500,6 +422,10 @@ def process_data(
         operation="full_process",
         track_count=len(df),
         artist_count=df["artist_name"].n_unique(),
+        extra={
+            "language_codebook": None,
+            "language_count": len(langs),
+        },
     )
 
     # Summary
@@ -534,6 +460,7 @@ def main() -> None:
         output_path=output_path,
         max_songs=args.max_songs,
         max_artists=args.max_artists,
+        max_international_pct=args.max_international_pct,
         smear_strength=args.smear_strength,
         verbose=args.verbose,
         dev=args.dev,

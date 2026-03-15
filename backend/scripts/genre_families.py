@@ -2,7 +2,7 @@
 Genre Definitions for Vibe Recommendation System.
 
 Strategy: "Sparse Definitions + Smearing"
-- We define ~25 core "Family Dimensions" (Axes).
+- We define ~24 core "Family Dimensions" (Axes).
 - Each genre is assigned 1-4 families explicitly.
 - "Smearing" (neighbor propagation) in process_data.py creates the organic gradients.
   (e.g. Rock <-> Alt-Rock <-> Indie)
@@ -42,9 +42,7 @@ The Dimensions (Output Columns):
 21. world_regional      (Specific cultural scenes: Indian, European Pop)
 22. christian           (CCM, Worship, Christian Rock/Metal)
 23. japanese            (J-Pop, J-Rock, Anime)
-24. french              (French Pop, Chanson, French Hip-Hop)
-25. german              (German Pop, Schlager, German Hip-Hop)
-26. progressive         (Prog-Rock, Prog-Metal, Math-Rock, Technical)
+24. progressive         (Prog-Rock, Prog-Metal, Math-Rock, Technical)
 """
 
 GENRE_DEFINITIONS = {
@@ -59,7 +57,8 @@ GENRE_DEFINITIONS = {
     
     'alt-rock':         {'alternative': 0.8, 'rock': 0.5}, 
     'indie-pop':        {'alternative': 0.7, 'pop': 0.5, 'electronic_house': 0.2},
-    'psych-rock':       {'alternative': 0.4, 'rock': 0.4, 'chill_ambient': 0.2, 'progressive': 0.2},  # Trippy!
+    'shoegaze':         {'alternative': 0.7, 'chill_ambient': 0.5, 'rock': 0.3, 'pop': 0.3},
+    'psych-rock':       {'alternative': 0.4, 'progressive': 0.4, 'rock': 0.4, 'chill_ambient': 0.2},  # Trippy!
     'post-rock':        {'alternative': 0.5, 'chill_ambient': 0.5, 'rock': 0.3, 'progressive': 0.2},  # Atmospheric/cinematic (Mogwai, EITS)
     
     # =========================================================================
@@ -92,7 +91,7 @@ GENRE_DEFINITIONS = {
     'dance':            {'pop': 0.6, 'electronic_house': 0.6, 'hip_hop': 0.2},
     'synthpop':         {'pop': 0.5, 'electronic_house': 0.5, 'alternative': 0.5},  # Depeche Mode, Pet Shop Boys
     'hyperpop':         {'pop': 0.3, 'electronic_techno': 0.3, 'alternative': 0.3, 'progressive': 0.3},  # 100 gecs, SOPHIE
-    'schlager':         {'german': 0.5, 'pop': 0.3, 'world_regional': 0.2}, # German Schlager
+    'schlager':         {'world_regional': 0.5, 'pop': 0.5}, # German Schlager
     
     'k-pop':            {'k_pop': 1.0, 'pop': 0.4, 'hip_hop': 0.2},
     'cantopop':         {'k_pop': 0.3, 'pop': 0.3, 'world_regional': 0.3},
@@ -188,10 +187,6 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'world':            {'world_regional': 0.8, 'acoustic_folk': 0.3},  # Generic world music catch-all
     'indian':           {'world_regional': 0.7, 'classical_cinematic': 0.4, 'pop': 0.4}, # Indian pop and Bollywood/film scenes
-    'german':           {'world_regional': 0.3, 'german': 0.7, 'classical_cinematic': 0.3, 'metal': 0.2, 'electronic_techno': 0.2},
-    'french':           {'world_regional': 0.3, 'french': 0.7, 'hip_hop': 0.2, 'electronic_house': 0.2, 'classical_cinematic': 0.1},
-    'spanish':          {'world_regional': 0.3, 'latin_tropical': 0.2, 'rock': 0.1, 'pop': 0.1}, # Spanish pop rock
-    'swedish':          {'world_regional': 0.3, 'pop': 0.1, 'rock': 0.1}, # Pop and Rock
     'romance':          {'world_regional': 0.3, 'classical_cinematic': 0.2, 'acoustic_folk': 0.2}, # Russian Romance
     'flamenco':         {'acoustic_folk': 0.6, 'world_regional': 0.5, 'classical_cinematic': 0.3},
 
@@ -228,14 +223,12 @@ GENRE_DEFINITIONS = {
     # Indian Playback + All soundtracks
     'pop-film':         {'world_regional': 0.4, 'classical_cinematic': 0.4, 'pop': 0.2},
 
-    # Sad Sierreño
-    'sad':              {'latin_regional': 1.0, 'latin_tropical': 0.3, 'acoustic_folk': 0.2},
+    # Mexican Regional (Corrido, Sierreño, Banda, Norteño, Ranchera)
+    'corrido':          {'latin_regional': 1.0, 'latin_tropical': 0.3, 'acoustic_folk': 0.2},
 
     # =========================================================================
-    # NEW LANGUAGE/STYLE SPLITS
+    # NEW STYLE SPLITS
     # =========================================================================
-    'french-hip-hop':   {'hip_hop': 0.7, 'french': 0.6, 'pop': 0.2},
-    'german-hip-hop':   {'hip_hop': 0.7, 'german': 0.6, 'electronic_techno': 0.1},
     'latin-urban':      {'hip_hop': 0.7, 'latin_tropical': 0.6, 'pop': 0.4}, # Reggaeton/Trap
     
     'j-pop':            {'japanese': 0.8, 'pop': 0.5},

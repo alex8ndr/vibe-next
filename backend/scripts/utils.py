@@ -97,6 +97,7 @@ AUDIODB_GENRE_MAP = {
     'rock/pop': 'alt-rock',  # Most common TheAudioDB response - maps to modern alternative
     'pop/rock': 'alt-rock',
     'rock and roll': 'rock-n-roll',
+    'rock-and-roll': 'rock-n-roll',
     'pop rock': 'alt-rock',
     'indie pop': 'indie-pop',
     'indie rock': 'alt-rock',
@@ -105,7 +106,8 @@ AUDIODB_GENRE_MAP = {
     # === Rock variants ===
     'rock': 'rock', 'classic rock': 'rock', 'hard rock': 'hard-rock',
     'alternative rock': 'alt-rock', 'alternative': 'alt-rock', 'alt-rock': 'alt-rock',
-    'indie': 'indie-pop', 'shoegaze': 'alt-rock', 'dream pop': 'indie-pop', 'bedroom pop': 'indie-pop', 'dance-punk': 'alt-rock',
+    'indie': 'indie-pop', 'shoegaze': 'shoegaze', 'dream pop': 'shoegaze', 'dream-pop': 'shoegaze',
+    'indie shoegaze': 'shoegaze', 'indie-shoegaze': 'shoegaze', 'bedroom pop': 'indie-pop', 'dance-punk': 'alt-rock',
     'psychedelic rock': 'psych-rock', 'psychedelic': 'psych-rock', 'neo-psychedelia': 'psych-rock',
     'progressive rock': 'progressive-rock', 'prog rock': 'progressive-rock', 'art rock': 'progressive-rock',
     'garage rock': 'garage', 'garage': 'garage', 'grunge': 'grunge', 'post-punk': 'punk-rock',
@@ -189,6 +191,8 @@ AUDIODB_GENRE_MAP = {
   'celtic': 'folk', 'newgrass': 'folk',
   'stomp and holler': 'folk',
   'southern gothic': 'country', 'red dirt': 'country',
+  
+  'a cappella': 'acoustic', 'acappella': 'acoustic', 'christmas': 'acoustic',
     
   # === Jazz / Blues ===
   'jazz': 'jazz', 'blues': 'blues', 'swing': 'jazz', 'bebop': 'jazz',
@@ -201,8 +205,11 @@ AUDIODB_GENRE_MAP = {
   'bossa nova': 'samba', 'samba': 'samba', 'tango': 'tango',
   'bachata': 'salsa',
   'tropical': 'salsa', 'rumba': 'salsa',
-  'corrido': 'sertanejo', 'regional mexican': 'sertanejo',
-  'nuevo regional mexicano': 'sertanejo',
+  'corrido': 'corrido', 'regional mexican': 'corrido',
+  'nuevo regional mexicano': 'corrido',
+  'corridos tumbados': 'corrido', 'sierreno': 'corrido', 'sad sierreno': 'corrido',
+  'electro corridos': 'corrido', 'banda': 'corrido',
+  'cumbia nortena': 'corrido', 'duranguense': 'corrido',
   'latin trap': 'latin-urban', 'trap latino': 'latin-urban',
   'reggaeton colombiano': 'latin-urban', 'reggaeton flow': 'latin-urban',
     
@@ -223,8 +230,7 @@ AUDIODB_GENRE_MAP = {
   'world': 'world', 'indian': 'indian', 'bollywood': 'pop-film',
   'world music': 'world', 'afrobeat': 'afrobeat', 'afrobeats': 'afrobeat',
   'filmi': 'pop-film', 'nova mpb': 'samba',
-  'francoton': 'french', 'azontobeats': 'afrobeat',
-  'pop urbaine': 'french-hip-hop', 'rap francais': 'french-hip-hop', 'rap français': 'french-hip-hop',
+  'francoton': 'dancehall', 'azontobeats': 'afrobeat',
   'hindi pop': 'indian', 'hindi indie': 'indian',
   'j-division': 'j-pop', 'otacore': 'j-pop',
     
@@ -258,7 +264,7 @@ AUDIODB_GENRE_MAP = {
   'anime': 'j-pop', 'anime score': 'j-pop',
   'boom bap': 'hardcore-hip-hop', 'east coast hip hop': 'hardcore-hip-hop',
   'lo-fi': 'chill', 'lofi': 'chill',
-  'chanson': 'french',
+  'chanson': 'pop',
   'neoclassical': 'classical', 'contemporary classical': 'classical',
   'bolero': 'salsa',
   'eurodance': 'dance', 'bubblegum dance': 'dance',
@@ -281,19 +287,27 @@ AUDIODB_GENRE_MAP = {
   # === Blind spot mappings (from unmapped-tag analysis) ===
   'cumbia': 'salsa', 'merengue': 'salsa', 'vallenato': 'salsa',
   'zouk': 'salsa', 'kizomba': 'afrobeat',
+    'afro-funk': 'afrobeat',
   'phonk': 'hip-hop', 'horrorcore': 'hip-hop',
   'new age': 'new-age',
-  'tejano': 'sertanejo', 'mariachi': 'sertanejo',
+  'tejano': 'corrido', 'mariachi': 'corrido',
   'bhangra': 'indian', 'highlife': 'afrobeat',
   'afropop': 'afrobeat', 'afroswing': 'afrobeat',
   'soukous': 'afrobeat', 'mbalax': 'afrobeat',
   'kompa': 'dancehall',
   'pagode': 'samba',
-  'norteño': 'sertanejo', 'norteno': 'sertanejo',
-  'ranchera': 'sertanejo', 'grupera': 'sertanejo',
-  'musica mexicana': 'sertanejo',
+  'norteño': 'corrido', 'norteno': 'corrido',
+  'ranchera': 'corrido', 'grupera': 'corrido',
+  'musica mexicana': 'corrido',
   'lounge': 'chill', 'freestyle': 'dance',
   'fado': 'folk', 'k-ballad': 'k-pop',
+
+    # === Merged from compound fallback layer ===
+    'country hip hop': 'hip-hop', 'country rap': 'hip-hop',
+    'folk metal': 'heavy-metal', 'viking metal': 'heavy-metal',
+    'neo classical metal': 'prog-metal', 'gothic symphonic metal': 'prog-metal',
+    'uk grime': 'grime', 'instrumental grime': 'grime',
+
 }
 
 

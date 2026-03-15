@@ -29,6 +29,9 @@ FEATURE_WEIGHTS = {
 # Effective genre weight for each slider position (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
 GENRE_WEIGHT_CURVE = [0, 0.3, 0.8, 2.0, 5.0]
 
+# Effective language weight for each slider position (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
+LANGUAGE_WEIGHT_CURVE = [0, 0.2, 0.5, 1.0, 2.0]
+
 # Composite "vibe" dimensions that map to multiple audio features
 # Each maps a -1 to +1 slider to feature offsets
 # Format: { 'feature_name': weight } - positive weight = feature increases with slider
@@ -60,6 +63,9 @@ TRACKS_PER_ARTIST = 3
 
 # Genre focus slider (0-4: None/Low/Medium/High/Max)
 GENRE_FOCUS = 2
+
+# Language focus slider (0-4: None/Low/Medium/High/Max)
+LANGUAGE_FOCUS = 2
 
 # Variety/diversity level (0-3: None/Low/Medium/High)
 VARIETY = 0
@@ -148,6 +154,7 @@ class MusicData:
         self.track_name_blob: bytearray | None = None
         self.track_name_offsets: np.ndarray | None = None
         self.track_genre_codes: np.ndarray | None = None
+        self.track_language_codes: np.ndarray | None = None
         self.genre_names_by_code: list[str | None] = [None]
         self.artist_track_offsets: np.ndarray | None = None
         self.artist_track_row_indices: np.ndarray | None = None
@@ -172,7 +179,7 @@ class MusicData:
         self.audio_col_indices = {col: idx for idx, col in enumerate(self.audio_cols)}
 
         meta_cols = required[:]
-        for col in ['popularity', 'genre']:
+        for col in ['popularity', 'genre', 'language']:
             if col in all_columns and col not in meta_cols:
                 meta_cols.append(col)
 
@@ -240,6 +247,18 @@ class MusicData:
             self._build_track_genres(meta_df['genre'])
         else:
             self.track_genre_codes = np.zeros(self.track_count, dtype=np.uint16)
+
+        if 'language' in meta_df.columns:
+            self.track_language_codes = (
+                meta_df['language']
+                .fill_null(0)
+                .cast(pl.UInt16)
+                .to_numpy()
+                .astype(np.uint16, copy=False)
+            )
+        else:
+            self.track_language_codes = np.zeros(self.track_count, dtype=np.uint16)
+
         self._build_artist_track_index(self.track_artist_codes, row_indices, self.track_popularity)
 
         # Precompute artist-level popularity (avg track popularity per artist)
@@ -728,6 +747,7 @@ def generate_recommendations(
     diversity: int = VARIETY,
     max_artists: int = MAX_ARTISTS,
     genre_weight: int = GENRE_FOCUS,
+    language_weight: int = LANGUAGE_FOCUS,
     tracks_per_artist: int = TRACKS_PER_ARTIST,
     vibe_modifiers: dict[str, float] | None = None,  # e.g., {'mood': 0.5, 'sound': -0.3}
     popularity: float = 0.0,  # -1 (hidden gems) to +1 (mainstream)
@@ -821,8 +841,14 @@ def generate_recommendations(
     d_genre = 1.0 - cosine_sim
     
     t_genre = perf_counter()
-    # Look up effective weight from curve (0=None, 1=Low, 2=Medium, 3=High, 4=Max)
+
+    # Clamp slider inputs to valid ranges
+    genre_weight = int(np.clip(genre_weight, 0, len(GENRE_WEIGHT_CURVE) - 1))
+    language_weight = int(np.clip(language_weight, 0, len(LANGUAGE_WEIGHT_CURVE) - 1))
+
+    # Look up effective weights from curves
     effective_genre_weight = GENRE_WEIGHT_CURVE[genre_weight]
+    effective_language_weight = LANGUAGE_WEIGHT_CURVE[language_weight]
     
     # Combined distance per seed
     d_total_stack = np.sqrt(d_audio**2 + (d_genre * effective_genre_weight)**2)
@@ -830,6 +856,22 @@ def generate_recommendations(
     # Hierarchical aggregation: low tau within artists, high tau between
     weights_arr = np.array(weights, dtype=np.float32)
     d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
+
+    # Language distance term: d_lang = 0 when candidate language matches query language, else 1.
+    # Query language is inferred from weighted seed-language profile.
+    query_language_code: int | None = None
+    if effective_language_weight > 0 and data.track_language_codes is not None:
+        seed_lang_codes = data.track_language_codes[seed_index_arr].astype(np.int64, copy=False)
+        if len(seed_lang_codes) > 0:
+            weighted_votes = np.bincount(seed_lang_codes, weights=weights_arr)
+            if len(weighted_votes) > 0:
+                query_language_code = int(np.argmax(weighted_votes))
+
+    if query_language_code is not None and effective_language_weight > 0 and data.track_language_codes is not None:
+        candidate_lang_codes = data.track_language_codes[candidates].astype(np.int64, copy=False)
+        d_lang = (candidate_lang_codes != query_language_code).astype(np.float32, copy=False)
+        d_total = np.sqrt(d_total**2 + (d_lang * effective_language_weight)**2)
+    t_language = perf_counter()
     
     # Apply popularity and track count as distance adjustments
     if popularity != 0 and data.artist_popularity_by_code is not None:
@@ -839,6 +881,7 @@ def generate_recommendations(
         pop_adjustment = (data.artist_popularity_by_code[candidate_artist_codes] - data.popularity_median) * popularity * pop_weight
         track_adjustment = (data.artist_track_count_by_code[candidate_artist_codes] - 0.5) * popularity * track_weight
         d_total = d_total - pop_adjustment - track_adjustment
+    t_adjust = perf_counter()
     
     # Use Gumbel noise for variety on the candidate set
     n = min(SAMPLE_SIZE, len(d_total))
@@ -969,7 +1012,8 @@ def generate_recommendations(
     t_postprocess = perf_counter()
     print(f"[perf] seeds={1000*(t_seeds-t_start):.0f}ms prep={1000*(t_prep-t_seeds):.0f}ms "
           f"audio={1000*(t_audio-t_prep):.0f}ms genre={1000*(t_genre-t_audio):.0f}ms "
-          f"rank={1000*(t_rank-t_genre):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
+            f"lang={1000*(t_language-t_genre):.0f}ms adjust={1000*(t_adjust-t_language):.0f}ms "
+            f"rank={1000*(t_rank-t_adjust):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
           f"TOTAL={1000*(t_postprocess-t_start):.0f}ms candidates={len(candidates)}")
     meta = {
         "has_more_candidates": has_more_candidates,
@@ -986,6 +1030,9 @@ def generate_recommendations(
                     "genres": [{"genre": g, "pct": p} for g, p in profile]
                 })
         meta["input_genre_profile"] = input_profile
+        if query_language_code is not None:
+            meta["query_language_code"] = query_language_code
+        meta["effective_language_weight"] = effective_language_weight
         
         # Include search vector audio features if requested (average of seeds for display)
         if debug_audio and len(seed_indices) > 0:

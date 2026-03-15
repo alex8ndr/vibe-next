@@ -24,7 +24,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
-from logic import MusicData, ParquetDataSource, generate_recommendations, GENRE_FOCUS, TRACKS_PER_ARTIST, VARIETY, MAX_ARTISTS
+from logic import (
+    MusicData,
+    ParquetDataSource,
+    generate_recommendations,
+    GENRE_FOCUS,
+    LANGUAGE_FOCUS,
+    TRACKS_PER_ARTIST,
+    VARIETY,
+    MAX_ARTISTS,
+)
 
 # Data path - configurable via environment in production
 DATA_PATH = Path(__file__).parent.parent / "data" / "data_encoded.parquet"
@@ -156,6 +165,7 @@ class RecommendRequest(BaseModel):
     diversity: int = VARIETY
     max_artists: int = MAX_ARTISTS
     genre_weight: int = GENRE_FOCUS
+    language_weight: int = LANGUAGE_FOCUS
     tracks_per_artist: int = TRACKS_PER_ARTIST
     vibe_mood: float = 0.0  # -1 (chill) to +1 (energetic)
     vibe_sound: float = 0.0  # -1 (acoustic) to +1 (electronic)
@@ -231,6 +241,7 @@ def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_
         "diversity": request.diversity,
         "max_artists": request.max_artists,
         "genre_weight": request.genre_weight,
+        "language_weight": request.language_weight,
         "tracks_per_artist": request.tracks_per_artist,
         "vibe_mood": request.vibe_mood,
         "vibe_sound": request.vibe_sound,
@@ -329,6 +340,7 @@ async def recommend(
         diversity=request.diversity,
         max_artists=request.max_artists,
         genre_weight=request.genre_weight,
+        language_weight=request.language_weight,
         tracks_per_artist=request.tracks_per_artist,
         vibe_modifiers=vibe_modifiers if vibe_modifiers else None,
         popularity=request.popularity,
@@ -347,6 +359,7 @@ async def recommend(
                 "diversity": request.diversity,
                 "max_artists": request.max_artists,
                 "genre_weight": request.genre_weight,
+                "language_weight": request.language_weight,
                 "tracks_per_artist": request.tracks_per_artist,
                 "vibe_mood": request.vibe_mood,
                 "vibe_sound": request.vibe_sound,

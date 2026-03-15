@@ -113,10 +113,15 @@ def main():
         help="Keep remix tracks (filter step only)",
     )
     parser.add_argument(
+        "--keep-live",
+        action="store_true",
+        help="Keep live tracks (filter step only)",
+    )
+    parser.add_argument(
         "--max-international-pct",
         type=float,
         default=None,
-        help="Maximum percentage of international tracks (filter step only)",
+        help="Maximum percentage of non-English tracks after language resolution (process step only)",
     )
     parser.add_argument(
         "--datasets",
@@ -278,13 +283,19 @@ def main():
                     filter_args.extend(["--min-songs", str(args.min_songs)])
                 if args.keep_remixes:
                     filter_args.append("--keep-remixes")
-                if args.max_international_pct is not None:
-                    filter_args.extend(["--max-international-pct", str(args.max_international_pct)])
+                if args.keep_live:
+                    filter_args.append("--keep-live")
+                if args.dry_run:
+                    filter_args.append("--dry-run")
                 
                 ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
                 if ret != 0:
                     print(f"\nfilter_data.py failed with exit code {ret}")
                     sys.exit(ret)
+
+            if args.dry_run:
+                print("\n[DRY-RUN] Skipping process step")
+                return
             
             if not args.skip_process:
                 process_args = ["-i", str(FILTERED_DATASET), "-o", str(ENCODED_DATASET)]
@@ -298,7 +309,8 @@ def main():
                     process_args.extend(["--max-songs", str(args.max_songs)])
                 if args.smear_strength != 0.6:
                     process_args.extend(["--smear-strength", str(args.smear_strength)])
-                
+                if args.max_international_pct is not None:
+                    process_args.extend(["--max-international-pct", str(args.max_international_pct)])
                 ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
                 if ret != 0:
                     print(f"\nprocess_data.py failed with exit code {ret}")
@@ -316,6 +328,7 @@ def main():
                     input_path=input_file,
                     output_path=None,
                     keep_remixes=args.keep_remixes,
+                    keep_live=args.keep_live,
                     min_songs=args.min_songs if args.min_songs is not None else 2,
                     verbose=args.verbose,
                     merge_paths=merge_paths or None,
@@ -323,7 +336,6 @@ def main():
                     override=args.override_genres,
                     override_only=args.override_genres_only,
                     added_artists_path=added_artists_path,
-                    max_international_pct=args.max_international_pct,
                 )
                 print("=" * 60)
                 print(f"Filtered: {stats['original_tracks']:,} -> {stats['final_tracks']:,} tracks")
@@ -331,6 +343,10 @@ def main():
                 from io_utils import read_input_file
                 filtered_df = read_input_file(FILTERED_DATASET)
                 print(f"Loaded existing filtered data: {len(filtered_df):,} tracks")
+
+            if args.dry_run:
+                print("\n[DRY-RUN] Skipping process step")
+                return
             
             if not args.skip_process:
                 print("\nRunning process_data (in-memory)...")
@@ -340,6 +356,7 @@ def main():
                     output_path=ENCODED_DATASET,
                     max_songs=args.max_songs,
                     max_artists=args.max_artists,
+                    max_international_pct=args.max_international_pct,
                     smear_strength=args.smear_strength,
                     verbose=args.verbose,
                     dev=args.dev,
