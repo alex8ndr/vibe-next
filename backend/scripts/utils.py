@@ -1239,10 +1239,10 @@ def search_artist(
     expected_track: Optional[str] = None,
 ) -> Optional[ArtistSearchResult]:
     """Unified artist search: ReccoBeats direct search, then Deezer fallback.
-    
+
     This is the canonical search function. All discovery scripts should use this
     or functions that call it (like add_discovered_artist).
-    
+
     Args:
         name: Artist name to search for
         limit: Max results from ReccoBeats search (default 20, API can return up to 1000)
@@ -1250,7 +1250,7 @@ def search_artist(
         quiet: Suppress output
         verbose: Print extra details
         expected_track: Optional track name to validate the artist (e.g., chart top track)
-        
+
     Returns:
         ArtistSearchResult with recco_uuid and confirmed name, or None if not found
     """
@@ -1367,15 +1367,15 @@ def search_artist_via_reccobeats(
     quiet: bool = False
 ) -> Optional[Tuple[str, str]]:
     """Search for artist via ReccoBeats only (no Deezer fallback).
-    
+
     DEPRECATED: Prefer search_artist() for full fallback handling.
-    
+
     Args:
         artist_name: Artist to search for
         limit: Max search results (default 20)
         verbose: Print extra details
         quiet: Suppress output
-        
+
     Returns:
         Tuple of (recco_artist_uuid, confirmed_name) or None if not found
     """
@@ -1403,10 +1403,10 @@ def add_discovered_artist(
     expected_track: Optional[str] = None,
 ) -> Optional[pl.DataFrame]:
     """Fetch and add tracks for a discovered artist.
-    
+
     This is the canonical function for the full artist→tracks pipeline.
     Uses search_artist() for unified ReccoBeats → Deezer fallback.
-    
+
     Args:
         artist_name: Artist name to search for
         existing_track_ids: Set of track IDs already in dataset
@@ -1419,7 +1419,7 @@ def add_discovered_artist(
         lastfm_client: Optional Last.fm client for genre inference
         use_deezer_fallback: Allow fallback to Deezer if ReccoBeats fails
         expected_track: Optional expected track name (e.g., from chart) for validation
-        
+
     Returns:
         DataFrame of new tracks, or None if artist should be skipped.
     """

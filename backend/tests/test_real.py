@@ -7,9 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 from logic import MusicData, ParquetDataSource, generate_recommendations
 
-data = MusicData(ParquetDataSource(Path(__file__).parent.parent / "data" / "data_encoded.parquet"))
+data = MusicData(
+    ParquetDataSource(
+        Path(__file__).parent.parent / "data" / "tracks.parquet",
+        Path(__file__).parent.parent / "data" / "artists.parquet",
+    )
+)
 data.load()
-print(f"Loaded {len(data.df)} tracks, {len(data.artists_list)} artists\n")
+print(f"Loaded {data.track_count} tracks, {len(data.artists_list)} artists\n")
 
 def test_query(artists, track_ids=None, label=""):
     print(f"{'='*60}")

@@ -1,7 +1,7 @@
 # Data Processing Scripts
 
 These scripts are for **offline data processing** - they are NOT run by the production server.
-Run them locally or on a dev machine, then deploy the updated `data_encoded.parquet`.
+Run them locally or on a dev machine, then deploy the updated `tracks.parquet` and `artists.parquet`.
 
 ## Structure
 
@@ -59,7 +59,7 @@ cd backend/scripts/pipeline
 python process_data.py -v
 
 # With explicit paths
-python process_data.py -i ../../data/data_filtered.parquet -o ../../data/data_encoded.parquet -v
+python process_data.py -i ../../data/data_filtered.parquet --tracks-output ../../data/tracks.parquet --artists-output ../../data/artists.parquet -v
 ```
 
 ## Discovery Scripts
@@ -221,7 +221,7 @@ Path configuration using `VIBE_DATA_DIR` environment variable.
    ```bash
    cd backend/scripts/pipeline
    python filter_data.py -v       # Creates data_filtered.parquet
-   python process_data.py -v      # Creates data_encoded.parquet
+   python process_data.py -v      # Creates tracks.parquet + artists.parquet
    ```
 
 4. **Commit and redeploy** to pick up the new data.

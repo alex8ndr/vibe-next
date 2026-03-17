@@ -111,24 +111,39 @@ def _trim_process_memory() -> None:
 
 
 class DataSource(Protocol):
-    def get_column_names(self) -> list[str]:
+    def get_track_column_names(self) -> list[str]:
         ...
 
-    def load(self, columns: list[str] | None = None) -> pl.DataFrame:
+    def get_artist_column_names(self) -> list[str]:
+        ...
+
+    def load_tracks(self, columns: list[str] | None = None) -> pl.DataFrame:
+        ...
+
+    def load_artists(self, columns: list[str] | None = None) -> pl.DataFrame:
         ...
 
 
 class ParquetDataSource:
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self, tracks_path: Path, artists_path: Path):
+        self.tracks_path = tracks_path
+        self.artists_path = artists_path
 
-    def get_column_names(self) -> list[str]:
-        return pl.scan_parquet(self.path).collect_schema().names()
-    
-    def load(self, columns: list[str] | None = None) -> pl.DataFrame:
+    def get_track_column_names(self) -> list[str]:
+        return pl.scan_parquet(self.tracks_path).collect_schema().names()
+
+    def get_artist_column_names(self) -> list[str]:
+        return pl.scan_parquet(self.artists_path).collect_schema().names()
+
+    def load_tracks(self, columns: list[str] | None = None) -> pl.DataFrame:
         if columns is not None:
-            return pl.scan_parquet(self.path).select(columns).collect()
-        return pl.read_parquet(self.path)
+            return pl.scan_parquet(self.tracks_path).select(columns).collect()
+        return pl.read_parquet(self.tracks_path)
+
+    def load_artists(self, columns: list[str] | None = None) -> pl.DataFrame:
+        if columns is not None:
+            return pl.scan_parquet(self.artists_path).select(columns).collect()
+        return pl.read_parquet(self.artists_path)
 
 
 class MusicData:
@@ -153,71 +168,102 @@ class MusicData:
         self.track_popularity: np.ndarray | None = None
         self.track_name_blob: bytearray | None = None
         self.track_name_offsets: np.ndarray | None = None
-        self.track_genre_codes: np.ndarray | None = None
-        self.track_language_codes: np.ndarray | None = None
         self.genre_names_by_code: list[str | None] = [None]
         self.language_names_by_code: list[str | None] = [None]
+        self.artist_genre_codes_by_artist_code: np.ndarray | None = None
+        self.artist_language_codes_by_artist_code: np.ndarray | None = None
         self.artist_track_offsets: np.ndarray | None = None
         self.artist_track_row_indices: np.ndarray | None = None
         self.artist_popularity_by_code: np.ndarray | None = None  # Per-artist popularity (0-1)
         self.artist_track_count_by_code: np.ndarray | None = None  # Per-artist log track count (0-1)
         self.popularity_median: float = 0.5  # Median artist popularity for centering
-        # Debug cache is filled lazily, only when debug mode is requested.
-        self.genre_profile_cache: dict[str, list[tuple[str, float]]] = {}
-        self.language_profile_cache: dict[str, list[tuple[str, float]]] = {}
     
     def load(self) -> None:
         t0 = perf_counter()
-        print("[startup] Inspecting parquet schema...")
-        all_columns = self.source.get_column_names()
+        print("[startup] Inspecting split parquet schemas...")
+        track_columns = self.source.get_track_column_names()
+        artist_columns = self.source.get_artist_column_names()
 
-        required = ['artist_name', 'track_name', 'track_id']
-        for col in required:
-            if col not in all_columns:
-                raise ValueError(f"Missing required column: {col}")
+        track_required = ['artist_name', 'track_name', 'track_id']
+        artist_required = ['artist_name', 'genre', 'language']
 
-        self.genre_cols = [c for c in all_columns if c.startswith('genre_')]
-        self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in all_columns]
+        for col in track_required:
+            if col not in track_columns:
+                raise ValueError(f"Missing required tracks column: {col}")
+        for col in artist_required:
+            if col not in artist_columns:
+                raise ValueError(f"Missing required artists column: {col}")
+
+        self.genre_cols = [c for c in artist_columns if c.startswith('genre_')]
+        if not self.genre_cols:
+            raise ValueError("artists dataset is missing genre_* embedding columns")
+
+        self.audio_cols = [c for c in FEATURE_WEIGHTS.keys() if c in track_columns]
+        if not self.audio_cols:
+            raise ValueError("tracks dataset is missing required audio feature columns")
         self.audio_col_indices = {col: idx for idx, col in enumerate(self.audio_cols)}
 
-        meta_cols = required[:]
-        for col in ['popularity', 'genre', 'language']:
-            if col in all_columns and col not in meta_cols:
-                meta_cols.append(col)
+        track_meta_cols = track_required[:]
+        if 'popularity' in track_columns:
+            track_meta_cols.append('popularity')
+
+        artist_meta_cols = ['artist_name', 'genre', 'language'] + self.genre_cols
 
         print(
-            f"[startup] Loading metadata ({len(meta_cols)} cols), audio ({len(self.audio_cols)} cols), "
-            f"and genre ({len(self.genre_cols)} cols) separately..."
+            f"[startup] Loading artists ({len(artist_meta_cols)} cols incl {len(self.genre_cols)} genre dims)..."
         )
-        meta_df = self.source.load(meta_cols)
-        print(f"[startup] Loaded parquet rows: {len(meta_df):,}")
-        
-        # Filter out rows with null required fields (data quality safeguard)
+        artist_df = self.source.load_artists(artist_meta_cols)
+        artist_df = artist_df.unique(subset=['artist_name'], keep='first')
+        for col in artist_required:
+            null_count = int(artist_df[col].null_count())
+            if null_count > 0:
+                raise ValueError(f"artists dataset has {null_count:,} rows with null {col}")
+
+        artist_df = artist_df.with_row_index('artist_code')
+        self.artist_names_by_code = artist_df['artist_name'].to_list()
+        self._build_artist_lookup(self.artist_names_by_code)
+        self.artist_genre_codes_by_artist_code = self._build_artist_genres(artist_df['genre'])
+        self.artist_language_codes_by_artist_code = self._build_artist_languages(artist_df['language'])
+
+        matrix_genre_f32 = artist_df.select(self.genre_cols).to_numpy().astype(np.float32, copy=False)
+        self.genre_norms = np.einsum('ij,ij->i', matrix_genre_f32, matrix_genre_f32, dtype=np.float32)
+        np.sqrt(self.genre_norms, out=self.genre_norms)
+        self.genre_norms[self.genre_norms == 0] = 1.0
+        self.matrix_genre = matrix_genre_f32.astype(np.float16)
+        del matrix_genre_f32
+
+        print(
+            f"[startup] Loading track metadata ({len(track_meta_cols)} cols) and audio ({len(self.audio_cols)} cols)..."
+        )
+        meta_df = self.source.load_tracks(track_meta_cols).with_row_index('_source_row')
+        print(f"[startup] Loaded tracks rows: {len(meta_df):,}")
+
         valid_mask = np.ones(len(meta_df), dtype=bool)
-        for col in required:
+        for col in track_required:
             col_mask = meta_df[col].is_not_null().to_numpy()
             null_count = int((~col_mask).sum())
             if null_count > 0:
                 print(f"Warning: Filtering {null_count} rows with null {col}")
                 valid_mask &= col_mask
-
         if not valid_mask.all():
             meta_df = meta_df.filter(pl.Series(valid_mask))
 
+        artist_catalog = artist_df.select(['artist_name', 'artist_code'])
+        meta_df = meta_df.join(artist_catalog, on='artist_name', how='left')
+        unknown_artist_rows = meta_df['artist_code'].null_count()
+        if unknown_artist_rows > 0:
+            print(f"Warning: Filtering {unknown_artist_rows:,} tracks without matching artist metadata")
+            meta_df = meta_df.filter(pl.col('artist_code').is_not_null())
+
+        source_row_indices = (
+            meta_df['_source_row']
+            .cast(pl.UInt32)
+            .to_numpy()
+            .astype(np.uint32, copy=False)
+        )
+
+        meta_df = meta_df.with_row_index('row_idx')
         self.track_count = len(meta_df)
-
-        artist_catalog = (
-            meta_df.select('artist_name')
-            .unique(maintain_order=True)
-            .with_row_index('artist_code')
-        )
-        self.artist_names_by_code = artist_catalog['artist_name'].to_list()
-        self._build_artist_lookup(self.artist_names_by_code)
-
-        meta_df = (
-            meta_df.join(artist_catalog, on='artist_name', how='left')
-            .with_row_index('row_idx')
-        )
 
         row_indices = (
             meta_df['row_idx']
@@ -225,13 +271,13 @@ class MusicData:
             .to_numpy()
             .astype(np.uint32, copy=False)
         )
-
         self.track_artist_codes = (
             meta_df['artist_code']
             .cast(pl.UInt32)
             .to_numpy()
             .astype(np.uint32, copy=False)
         )
+
         if 'popularity' in meta_df.columns:
             self.track_popularity = (
                 meta_df['popularity']
@@ -245,25 +291,21 @@ class MusicData:
 
         self._build_track_lookup(meta_df['track_id'])
         self._build_track_names(meta_df['track_name'])
-        if 'genre' in meta_df.columns:
-            self._build_track_genres(meta_df['genre'])
-        else:
-            self.track_genre_codes = np.zeros(self.track_count, dtype=np.uint16)
-
-        language_col = meta_df['language'] if 'language' in meta_df.columns else None
-        self._build_track_languages(language_col)
-
         self._build_artist_track_index(self.track_artist_codes, row_indices, self.track_popularity)
-
-        # Precompute artist-level popularity (avg track popularity per artist)
         self._build_artist_popularity(meta_df)
 
-        # Sort artists by popularity
-        artist_popularity = (
-            meta_df.group_by('artist_code')
-            .agg(pl.col('popularity').sum().alias('popularity'))
-            .sort('popularity', descending=True)
-        )
+        if 'popularity' in meta_df.columns:
+            artist_popularity = (
+                meta_df.group_by('artist_code')
+                .agg(pl.col('popularity').sum().alias('popularity'))
+                .sort('popularity', descending=True)
+            )
+        else:
+            artist_popularity = (
+                meta_df.group_by('artist_code')
+                .agg(pl.len().alias('popularity'))
+                .sort('popularity', descending=True)
+            )
         self.artists_list = [
             self.artist_names_by_code[int(code)]
             for code in artist_popularity['artist_code'].to_list()
@@ -277,42 +319,23 @@ class MusicData:
         ) / 1024**2
         print(f"[startup] Built compact track lookup ({lookup_mb:.0f}MB)")
 
-        # Free metadata before loading large matrices to reduce peak memory
-        del artist_catalog, artist_popularity, meta_df, row_indices
+        del artist_popularity, artist_catalog, row_indices
         _trim_process_memory()
 
         print(f"[startup] Building audio matrix ({len(self.audio_cols)} cols)...")
-        
-        # Audio Matrix (Weighted for Euclidean)
-        audio_df = self.source.load(self.audio_cols)
+        audio_df = self.source.load_tracks(self.audio_cols)
         audio_data = audio_df.to_numpy().astype(np.float32, copy=False)
-        if not valid_mask.all():
-            audio_data = audio_data[valid_mask]
+        audio_data = audio_data[source_row_indices]
         weights = np.array([FEATURE_WEIGHTS[c] for c in self.audio_cols], dtype=np.float32)
         audio_data *= weights
         self.matrix_audio = audio_data
-        
-        # Precompute squared norms for fast Euclidean distance
         self.audio_norms_sq = np.einsum('ij,ij->i', self.matrix_audio, self.matrix_audio, dtype=np.float32)
-        
-        del audio_df, audio_data, weights
 
-        # Genre Matrix (Unweighted for Cosine)
-        genre_df = self.source.load(self.genre_cols)
-        matrix_genre_f32 = genre_df.to_numpy().astype(np.float32, copy=False)
-        if not valid_mask.all():
-            matrix_genre_f32 = matrix_genre_f32[valid_mask]
-        
-        # Precompute genre norms 
-        self.genre_norms = np.einsum('ij,ij->i', matrix_genre_f32, matrix_genre_f32, dtype=np.float32)
-        np.sqrt(self.genre_norms, out=self.genre_norms)
-        self.genre_norms[self.genre_norms == 0] = 1.0
-        self.matrix_genre = matrix_genre_f32.astype(np.float16)
-        del matrix_genre_f32, genre_df, valid_mask
-        
+        del audio_df, audio_data, weights, source_row_indices, meta_df, artist_df, valid_mask
+
         audio_mb = self.matrix_audio.nbytes / 1024**2
         genre_mb = self.matrix_genre.nbytes / 1024**2
-        print(f"[startup] Matrices ready (audio {audio_mb:.0f}MB f32 + genre {genre_mb:.0f}MB f16)")
+        print(f"[startup] Matrices ready (audio {audio_mb:.0f}MB f32 + genre {genre_mb:.0f}MB f16 @ artist-level)")
 
         _trim_process_memory()
 
@@ -378,14 +401,31 @@ class MusicData:
         self.track_name_blob = blob
         self.track_name_offsets = offsets
 
-    def _build_track_genres(self, genres: pl.Series) -> None:
+    def _build_artist_genres(self, genres: pl.Series) -> np.ndarray:
         unique_genres = genres.drop_nulls().unique(maintain_order=True).to_list()
         genre_values = [None] + unique_genres
         dtype = np.uint16 if len(genre_values) <= np.iinfo(np.uint16).max else np.uint32
         mapping = pl.Series(unique_genres)
-        codes_series = genres.replace_strict(mapping, pl.Series(range(1, len(unique_genres) + 1), dtype=pl.UInt32), default=0)
+        codes_series = genres.replace_strict(
+            mapping,
+            pl.Series(range(1, len(unique_genres) + 1), dtype=pl.UInt32),
+            default=0,
+        )
         self.genre_names_by_code = genre_values
-        self.track_genre_codes = codes_series.to_numpy().astype(dtype, copy=False)
+        return codes_series.to_numpy().astype(dtype, copy=False)
+
+    def _build_artist_languages(self, language_col: pl.Series) -> np.ndarray:
+        unique_langs = language_col.drop_nulls().unique(maintain_order=True).to_list()
+        lang_values = [None] + unique_langs
+        dtype = np.uint16 if len(lang_values) <= np.iinfo(np.uint16).max else np.uint32
+        mapping = pl.Series(unique_langs)
+        codes_series = language_col.replace_strict(
+            mapping,
+            pl.Series(range(1, len(unique_langs) + 1), dtype=pl.UInt32),
+            default=0,
+        )
+        self.language_names_by_code = lang_values
+        return codes_series.to_numpy().astype(dtype, copy=False)
 
     def _build_artist_track_index(
         self,
@@ -405,15 +445,24 @@ class MusicData:
     
     def _build_artist_popularity(self, df: pl.DataFrame) -> None:
         """Build per-artist popularity and track count arrays for the popularity slider."""
-        # Compute mean popularity and track count per artist
-        artist_stats = (
-            df.group_by('artist_code')
-            .agg([
-                pl.col('popularity').cast(pl.Float32).mean().alias('avg_pop'),
-                pl.len().alias('track_count')
-            ])
-            .sort('artist_code')
-        )
+        if 'popularity' in df.columns:
+            artist_stats = (
+                df.group_by('artist_code')
+                .agg([
+                    pl.col('popularity').cast(pl.Float32).mean().alias('avg_pop'),
+                    pl.len().alias('track_count')
+                ])
+                .sort('artist_code')
+            )
+        else:
+            artist_stats = (
+                df.group_by('artist_code')
+                .agg([
+                    pl.lit(0.5).cast(pl.Float32).alias('avg_pop'),
+                    pl.len().alias('track_count')
+                ])
+                .sort('artist_code')
+            )
         artist_codes = artist_stats['artist_code'].to_numpy().astype(np.int32, copy=False)
         avg_pops = artist_stats['avg_pop'].to_numpy().astype(np.float32, copy=False)
         track_counts = artist_stats['track_count'].to_numpy().astype(np.float32, copy=False)
@@ -432,108 +481,24 @@ class MusicData:
         self.artist_popularity_by_code[artist_codes] = avg_pops
         self.artist_track_count_by_code[artist_codes] = norm_counts.astype(np.float32, copy=False)
 
-    def _build_track_languages(self, language_col: pl.Series | None) -> None:
-        if language_col is None:
-            self.track_language_codes = np.zeros(self.track_count, dtype=np.uint16)
-            self.language_names_by_code = [None]
-            return
-
-        unique_langs = language_col.drop_nulls().unique(maintain_order=True).to_list()
-        lang_values = [None] + unique_langs
-        dtype = np.uint16 if len(lang_values) <= np.iinfo(np.uint16).max else np.uint32
-        mapping = pl.Series(unique_langs)
-        codes_series = language_col.replace_strict(
-            mapping,
-            pl.Series(range(1, len(unique_langs) + 1), dtype=pl.UInt32),
-            default=0,
-        )
-        self.language_names_by_code = lang_values
-        self.track_language_codes = codes_series.to_numpy().astype(dtype, copy=False)
-
-    def _compute_top_profile(
+    def _profile_for_artist_code(
         self,
-        code_values: np.ndarray,
-        code_names: list[str | None],
+        artist_code: int,
         *,
-        drop_zero_code: bool,
-        top_n: int = 3,
-        min_percent: float = 1.0,
+        code_values: np.ndarray | None,
+        code_names: list[str | None],
     ) -> list[tuple[str, float]]:
-        if len(code_values) == 0:
+        if code_values is None:
             return []
-
-        codes = code_values.astype(np.int64, copy=False)
-        if drop_zero_code:
-            codes = codes[codes > 0]
-            if len(codes) == 0:
-                return []
-
-        counts = np.bincount(codes, minlength=len(code_names))
-        total = int(counts.sum())
-        if total == 0:
+        if artist_code < 0 or artist_code >= len(code_values):
             return []
-
-        ranked_codes = np.argsort(counts)[::-1]
-        profile: list[tuple[str, float]] = []
-        for code in ranked_codes:
-            if drop_zero_code and code == 0:
-                continue
-            count = int(counts[code])
-            if count == 0:
-                continue
-
-            label = code_names[int(code)] if int(code) < len(code_names) else None
-            if label is None:
-                continue
-
-            pct = round((count * 100.0) / total, 1)
-            if pct <= min_percent:
-                break
-
-            profile.append((label, pct))
-            if len(profile) >= top_n:
-                break
-
-        return profile
-
-    def _get_artist_profiles(
-        self,
-        artist_names: list[str],
-        *,
-        track_codes: np.ndarray | None,
-        code_names: list[str | None],
-        cache: dict[str, list[tuple[str, float]]],
-        drop_zero_code: bool,
-    ) -> dict[str, list[tuple[str, float]]]:
-        if track_codes is None or len(code_names) == 0:
-            return {artist: [] for artist in artist_names}
-
-        ordered_artists = [artist for artist in dict.fromkeys(artist_names) if artist]
-        missing = [artist for artist in ordered_artists if artist not in cache]
-
-        for artist in missing:
-            artist_code = self.get_artist_code(artist)
-            if artist_code is None:
-                cache[artist] = []
-                continue
-
-            row_indices = self.get_artist_track_indices(artist_code)
-            if len(row_indices) == 0:
-                cache[artist] = []
-                continue
-
-            cache[artist] = self._compute_top_profile(
-                track_codes[row_indices],
-                code_names,
-                drop_zero_code=drop_zero_code,
-            )
-
-            if len(cache) > 10_000:
-                keep = {name: cache.get(name, []) for name in ordered_artists}
-                cache.clear()
-                cache.update(keep)
-
-        return {artist: cache.get(artist, []) for artist in ordered_artists}
+        code = int(code_values[artist_code])
+        if code <= 0 or code >= len(code_names):
+            return []
+        label = code_names[code]
+        if not label:
+            return []
+        return [(label, 100.0)]
 
     def get_track_index(self, track_id: str) -> int | None:
         if self.track_ids_sorted is None or self.track_row_indices_sorted is None:
@@ -559,17 +524,23 @@ class MusicData:
         return self.track_name_blob[start:end].decode('utf-8')
 
     def get_track_genre(self, row_idx: int) -> str | None:
-        if self.track_genre_codes is None:
+        if self.track_artist_codes is None or self.artist_genre_codes_by_artist_code is None:
             return None
-        code = int(self.track_genre_codes[row_idx])
+        artist_code = int(self.track_artist_codes[row_idx])
+        if artist_code < 0 or artist_code >= len(self.artist_genre_codes_by_artist_code):
+            return None
+        code = int(self.artist_genre_codes_by_artist_code[artist_code])
         if code == 0:
             return None
         return self.genre_names_by_code[code]
 
     def get_track_language(self, row_idx: int) -> str | None:
-        if self.track_language_codes is None:
+        if self.track_artist_codes is None or self.artist_language_codes_by_artist_code is None:
             return None
-        code = int(self.track_language_codes[row_idx])
+        artist_code = int(self.track_artist_codes[row_idx])
+        if artist_code < 0 or artist_code >= len(self.artist_language_codes_by_artist_code):
+            return None
+        code = int(self.artist_language_codes_by_artist_code[artist_code])
         if code < 0 or code >= len(self.language_names_by_code):
             return None
         return self.language_names_by_code[code]
@@ -596,22 +567,34 @@ class MusicData:
         return self.artist_track_row_indices[start:end]
 
     def get_artist_genre_profiles(self, artist_names: list[str]) -> dict[str, list[tuple[str, float]]]:
-        return self._get_artist_profiles(
-            artist_names,
-            track_codes=self.track_genre_codes,
-            code_names=self.genre_names_by_code,
-            cache=self.genre_profile_cache,
-            drop_zero_code=True,
-        )
+        ordered_artists = [artist for artist in dict.fromkeys(artist_names) if artist]
+        profiles: dict[str, list[tuple[str, float]]] = {}
+        for artist in ordered_artists:
+            artist_code = self.get_artist_code(artist)
+            if artist_code is None:
+                profiles[artist] = []
+                continue
+            profiles[artist] = self._profile_for_artist_code(
+                artist_code,
+                code_values=self.artist_genre_codes_by_artist_code,
+                code_names=self.genre_names_by_code,
+            )
+        return profiles
 
     def get_artist_language_profiles(self, artist_names: list[str]) -> dict[str, list[tuple[str, float]]]:
-        return self._get_artist_profiles(
-            artist_names,
-            track_codes=self.track_language_codes,
-            code_names=self.language_names_by_code,
-            cache=self.language_profile_cache,
-            drop_zero_code=False,
-        )
+        ordered_artists = [artist for artist in dict.fromkeys(artist_names) if artist]
+        profiles: dict[str, list[tuple[str, float]]] = {}
+        for artist in ordered_artists:
+            artist_code = self.get_artist_code(artist)
+            if artist_code is None:
+                profiles[artist] = []
+                continue
+            profiles[artist] = self._profile_for_artist_code(
+                artist_code,
+                code_values=self.artist_language_codes_by_artist_code,
+                code_names=self.language_names_by_code,
+            )
+        return profiles
     
 
 
@@ -854,7 +837,8 @@ def generate_recommendations(
 
     seed_index_arr = np.asarray(seed_indices, dtype=np.int32)
     seeds_audio_stack = matrix_audio[seed_index_arr]
-    seeds_genre_stack = matrix_genre[seed_index_arr].astype(np.float32)
+    seed_artist_codes = data.track_artist_codes[seed_index_arr].astype(np.int32, copy=False)
+    seeds_genre_stack = matrix_genre[seed_artist_codes].astype(np.float32)
     seeds_genre_norms = np.linalg.norm(seeds_genre_stack, axis=1, keepdims=True)
     seeds_genre_norms[seeds_genre_norms == 0] = 1.0
     seeds_genre_stack = seeds_genre_stack / seeds_genre_norms
@@ -905,8 +889,9 @@ def generate_recommendations(
     
     t_audio = perf_counter()
     # Genre distance (cosine) computed ONLY on candidate subset (upcast from f16)
-    cand_genre = matrix_genre[candidates].astype(np.float32)
-    cand_genre_norms = data.genre_norms[candidates]
+    candidate_artist_codes = data.track_artist_codes[candidates].astype(np.int32, copy=False)
+    cand_genre = matrix_genre[candidate_artist_codes].astype(np.float32)
+    cand_genre_norms = data.genre_norms[candidate_artist_codes]
     genre_dots = seeds_genre_stack @ cand_genre.T
     with np.errstate(divide='ignore', invalid='ignore'):
         cosine_sim = genre_dots / (seeds_genre_norms * cand_genre_norms)
@@ -933,15 +918,15 @@ def generate_recommendations(
     # Language distance term: d_lang = 0 when candidate language matches query language, else 1.
     # Query language is inferred from weighted seed-language profile.
     query_language_code: int | None = None
-    if effective_language_weight > 0 and data.track_language_codes is not None:
-        seed_lang_codes = data.track_language_codes[seed_index_arr].astype(np.int64, copy=False)
+    if effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
+        seed_lang_codes = data.artist_language_codes_by_artist_code[seed_artist_codes].astype(np.int64, copy=False)
         if len(seed_lang_codes) > 0:
             weighted_votes = np.bincount(seed_lang_codes, weights=weights_arr)
             if len(weighted_votes) > 0:
                 query_language_code = int(np.argmax(weighted_votes))
 
-    if query_language_code is not None and effective_language_weight > 0 and data.track_language_codes is not None:
-        candidate_lang_codes = data.track_language_codes[candidates].astype(np.int64, copy=False)
+    if query_language_code is not None and effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
+        candidate_lang_codes = data.artist_language_codes_by_artist_code[candidate_artist_codes].astype(np.int64, copy=False)
         d_lang = (candidate_lang_codes != query_language_code).astype(np.float32, copy=False)
         d_total = np.sqrt(d_total**2 + (d_lang * effective_language_weight)**2)
     t_language = perf_counter()
@@ -950,7 +935,6 @@ def generate_recommendations(
     if popularity != 0 and data.artist_popularity_by_code is not None:
         pop_weight = 0.6
         track_weight = 0.2
-        candidate_artist_codes = data.track_artist_codes[candidates].astype(np.int32, copy=False)
         pop_adjustment = (data.artist_popularity_by_code[candidate_artist_codes] - data.popularity_median) * popularity * pop_weight
         track_adjustment = (data.artist_track_count_by_code[candidate_artist_codes] - 0.5) * popularity * track_weight
         d_total = d_total - pop_adjustment - track_adjustment
@@ -1149,7 +1133,7 @@ def generate_recommendations(
             meta["num_seeds"] = len(seed_indices)  # Show how many seeds are being used
         
         # Include search vector genre profile using actual text genres
-        if debug_audio and data.track_genre_codes is not None:
+        if debug_audio and data.artist_genre_codes_by_artist_code is not None:
             # Build genre profile from input artists' tracks
             input_artist_codes = [
                 code

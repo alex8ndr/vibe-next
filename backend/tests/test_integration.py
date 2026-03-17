@@ -8,11 +8,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 from logic import MusicData, ParquetDataSource, generate_recommendations
 
-data_path = Path(__file__).parent.parent / 'data' / 'data_encoded.parquet'
-source = ParquetDataSource(data_path)
+tracks_path = Path(__file__).parent.parent / 'data' / 'tracks.parquet'
+artists_path = Path(__file__).parent.parent / 'data' / 'artists.parquet'
+source = ParquetDataSource(tracks_path, artists_path)
 data = MusicData(source)
 data.load()
-print(f'Loaded {len(data.df):,} tracks')
+print(f'Loaded {data.track_count:,} tracks')
 
 # Test single artist
 recs, meta = generate_recommendations(data, ['Taylor Swift'], max_artists=3)

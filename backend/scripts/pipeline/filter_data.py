@@ -39,6 +39,7 @@ from artist_reassignments import get_reassigned_artists, get_artist_genre
 from schema import normalize_for_merge
 from genre_families import GENRE_DEFINITIONS
 from genre_mapping import build_artist_genre_map, apply_artist_genre_map, enrich_genres, map_raw_genre
+from pipeline.utils.artist_identity import filter_external_by_overlap
 
 # Artists to exclude entirely (not reassign)
 EXCLUDED_ARTISTS: set[str] = set()
@@ -160,29 +161,49 @@ def filter_data(
     if merge_paths:
         df_primary = normalize_for_merge(df)
         n_primary = len(df_primary)
-        dfs_to_merge = [df_primary]
-        source_counts = {"primary": n_primary}
+
+        # Build trusted base: primary + added_artists (hand-curated, always trusted)
+        trusted_parts = [df_primary]
+        if added_artists_path and added_artists_path.exists():
+            df_added = read_input_file(added_artists_path, normalize_schema=True)
+            df_added = normalize_for_merge(df_added)
+            trusted_parts.append(df_added)
+            if verbose:
+                print(f"  Trusted added_artists: {len(df_added):,} rows")
+
+        trusted_df = pl.concat(trusted_parts, how="diagonal") if len(trusted_parts) > 1 else df_primary
+        trusted_df = trusted_df.unique(subset=["track_id"], keep="first")
+
+        dfs_to_merge = [trusted_df]
+        source_counts = {"trusted": len(trusted_df)}
+
+        # Merge external datasets with overlap-based safety gate
         for mp in merge_paths:
+            if added_artists_path and mp.resolve() == added_artists_path.resolve():
+                continue  # already included in trusted base
             if mp.exists():
-                print(f"Merging {mp}...")
+                print(f"Merging {mp.name} (overlap-gated)...")
                 df_ext = read_input_file(mp, normalize_schema=True)
                 df_ext = normalize_for_merge(df_ext)
                 source_counts[mp.name] = len(df_ext)
+                df_ext, overlap_stats = filter_external_by_overlap(
+                    trusted_df, df_ext, verbose=verbose,
+                )
                 dfs_to_merge.append(df_ext)
-                if verbose:
-                    print(f"  {len(df_ext):,} rows from {mp.name}")
             else:
                 print(f"Warning: merge file not found: {mp}")
         if len(dfs_to_merge) > 1:
             n_total_pre_dedup = sum(len(d) for d in dfs_to_merge)
             df = pl.concat(dfs_to_merge, how="diagonal")
-            # Deduplicate on track_id, keeping primary dataset entries (first)
+            # Deduplicate on track_id, keeping trusted dataset entries (first)
             df = df.unique(subset=["track_id"], keep="first")
             n_trackid_dedup = n_total_pre_dedup - len(df)
             print(f"After merge + track_id dedup: {len(df):,} tracks ({n_trackid_dedup:,} exact track_id duplicates removed)")
             if verbose:
                 for src, cnt in source_counts.items():
                     print(f"  Source {src}: {cnt:,} input tracks")
+        else:
+            df = trusted_df
     
     original_count = len(df)
     original_artists = df['artist_name'].n_unique() if 'artist_name' in df.columns else 0

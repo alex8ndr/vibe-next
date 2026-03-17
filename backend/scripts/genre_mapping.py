@@ -2,10 +2,10 @@
 Map external genre tags to the internal Vibe genre vocabulary.
 
 Two-pass architecture:
-  Pass 1 (this module): Tag mapping returns (genre, tag_lang).
-    - Locale-compound tags get the locale stripped, genre kept, language recorded.
-    - No blocking — every artist that has a mappable tag gets a genre.
-  Pass 2 (process_data.py): Language resolution cascade per artist.
+    Pass 1 (this module): Tag mapping returns (genre, tag_lang).
+        - Locale-compound tags get the locale stripped, genre kept, language recorded.
+        - No blocking — every artist that has a mappable tag gets a genre.
+    Pass 2 (process_data.py): Language resolution cascade per artist.
 
 Used by filter-time artist genre enrichment.
 """
@@ -317,6 +317,8 @@ def map_artist_tags_with_lang_signal(tags: list[str]) -> tuple[str | None, str |
     first_mapped_is_locale: bool | None = None
     all_langs: list[str] = []
     has_locale_signal = False
+    explicit_valid_genre_votes: Counter[str] = Counter()
+    first_explicit_valid_genre: str | None = None
 
     for raw_tag in tags:
         tag = (raw_tag or "").lower().strip()
@@ -346,8 +348,30 @@ def map_artist_tags_with_lang_signal(tags: list[str]) -> tuple[str | None, str |
             if first_mapped_is_locale is None:
                 first_mapped_is_locale = False
 
+            if tag in _VALID_GENRES:
+                explicit_valid_genre_votes[mapped_genre] += 1
+                if first_explicit_valid_genre is None:
+                    first_explicit_valid_genre = mapped_genre
+
+    if locale_count == 1 and first_mapped_is_locale is False:
+        has_locale_signal = False
+
+    explicit_valid_choice: str | None = None
+    if explicit_valid_genre_votes:
+        top_count = max(explicit_valid_genre_votes.values())
+        top_genres = {
+            genre for genre, count in explicit_valid_genre_votes.items() if count == top_count
+        }
+        single_vote_ambiguous = top_count == 1 and len(explicit_valid_genre_votes) > 1
+        if not single_vote_ambiguous:
+            if first_explicit_valid_genre in top_genres:
+                explicit_valid_choice = first_explicit_valid_genre
+            else:
+                explicit_valid_choice = sorted(top_genres)[0]
+
     return (
-        _choose_artist_genre(
+        explicit_valid_choice
+        or _choose_artist_genre(
             first_standard,
             first_locale_genre,
             locale_count,
@@ -365,10 +389,11 @@ def map_artist_tags_with_lang_signal(tags: list[str]) -> tuple[str | None, str |
 
 def explain_artist_tags(tags: list[str]) -> dict[str, object]:
     """Return a structured explanation of artist-level tag mapping."""
+    result, tag_lang_selected, _has_locale_signal = map_artist_tags_with_lang_signal(tags)
     analysis = _analyze_artist_tags(tags, include_details=True)
     return {
-        "result": analysis["result"],
-        "tag_lang": analysis["tag_lang"],
+        "result": result,
+        "tag_lang": tag_lang_selected,
         "details": analysis["details"],
         "votes": analysis["votes"],
     }

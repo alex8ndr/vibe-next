@@ -139,8 +139,8 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'acoustic':         {'acoustic_folk': 0.95, 'chill_ambient': 0.15},
     'folk':             {'acoustic_folk': 0.8, 'alternative': 0.3},
-    'singer-songwriter': {'acoustic_folk': 0.7, 'pop': 0.35, 'alternative': 0.15},
-    'country':          {'acoustic_folk': 0.5, 'jazz_blues': 0.2, 'pop': 0.1, 'rock': 0.1},
+    'singer-songwriter': {'acoustic_folk': 0.7, 'pop': 0.4, 'alternative': 0.2},
+    'country':          {'acoustic_folk': 0.5, 'jazz_blues': 0.3, 'rock': 0.3, 'pop': 0.2},
     'guitar':           {'acoustic_folk': 0.5, 'rock': 0.5, 'jazz_blues': 0.2},
     
     # =========================================================================

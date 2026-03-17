@@ -37,7 +37,7 @@ from paths import MANIFEST_FILE, get_temp_path
 def write_lock(target_path: Path, timeout_seconds: int = 30):
     """
     Context manager for exclusive write access using a lock file.
-    
+
     Prevents two concurrent pipeline runs from corrupting data.
     Uses O_CREAT|O_EXCL for atomic lock acquisition.
     """
@@ -327,26 +327,69 @@ def update_manifest(
 # Validation Functions
 # =============================================================================
 
-def validate_encoded_dataset(df: pl.DataFrame) -> bool:
-    """Validate an encoded dataset has required columns and reasonable data."""
+def validate_tracks_dataset(df: pl.DataFrame) -> bool:
+    """Validate split tracks.parquet output."""
     required_cols = ['artist_name', 'track_name', 'track_id']
-    
+    for col in required_cols:
+        if col not in df.columns:
+            print(f"  ✗ Missing required tracks column: {col}")
+            return False
+
+    has_track_level_genre_language = (
+        'genre' in df.columns
+        or 'language' in df.columns
+        or any(c.startswith('genre_') for c in df.columns)
+    )
+    if has_track_level_genre_language:
+        print("  ✗ tracks dataset should not contain genre/language or genre_* embedding columns")
+        return False
+
+    if df['artist_name'].null_count() > 0 or df['track_name'].null_count() > 0 or df['track_id'].null_count() > 0:
+        print("  ✗ tracks dataset contains nulls in required identifier columns")
+        return False
+
+    if len(df) < 1000:
+        print(f"  ⚠ Warning: Only {len(df)} track rows (expected 100k+)")
+
+    return True
+
+
+def validate_artists_dataset(df: pl.DataFrame) -> bool:
+    """Validate split artists.parquet output."""
+    required_cols = ['artist_name', 'genre', 'language']
+    for col in required_cols:
+        if col not in df.columns:
+            print(f"  ✗ Missing required artists column: {col}")
+            return False
+
+    genre_cols = [c for c in df.columns if c.startswith('genre_')]
+    if len(genre_cols) == 0:
+        print("  ✗ artists dataset has no genre_* embedding columns")
+        return False
+
+    if any(df[col].null_count() > 0 for col in required_cols):
+        print("  ✗ artists dataset contains nulls in artist_name/genre/language")
+        return False
+
+    if len(df) < 100:
+        print(f"  ⚠ Warning: Only {len(df)} artist rows (expected thousands)")
+
+    return True
+
+
+def validate_encoded_dataset(df: pl.DataFrame) -> bool:
+    """Legacy validator for deprecated single-file encoded output."""
+    required_cols = ['artist_name', 'track_name', 'track_id']
     for col in required_cols:
         if col not in df.columns:
             print(f"  ✗ Missing required column: {col}")
             return False
-    
-    # Check for genre columns
+
     genre_cols = [c for c in df.columns if c.startswith('genre_')]
     if len(genre_cols) == 0:
-        print(f"  ✗ No genre columns found")
+        print("  ✗ No genre columns found")
         return False
-    
-    # Check for reasonable row count (prevent accidental truncation)
-    if len(df) < 1000:
-        print(f"  ⚠ Warning: Only {len(df)} rows (expected 100k+)")
-        # Don't fail, just warn - might be intentional for testing
-    
+
     return True
 
 

@@ -35,8 +35,9 @@ from logic import (
     MAX_ARTISTS,
 )
 
-# Data path - configurable via environment in production
-DATA_PATH = Path(__file__).parent.parent / "data" / "data_encoded.parquet"
+# Data paths - configurable via environment in production
+TRACKS_PATH = Path(__file__).parent.parent / "data" / "tracks.parquet"
+ARTISTS_PATH = Path(__file__).parent.parent / "data" / "artists.parquet"
 ANALYTICS_PATH = Path(__file__).parent.parent / "data" / "analytics.jsonl"
 CACHE_PATH = Path(__file__).parent.parent / "data" / ".music_data_cache.pkl"
 
@@ -51,16 +52,18 @@ def _load_cached_data() -> MusicData:
     """Load data from cache if valid and enabled, otherwise reload from parquet."""
     global music_data
     t0 = perf_counter()
-    print(f"[startup] Data load start: {DATA_PATH}")
+    print(f"[startup] Data load start: tracks={TRACKS_PATH}, artists={ARTISTS_PATH}")
     
-    if not DATA_PATH.exists():
-        raise RuntimeError(f"Data file not found: {DATA_PATH}")
+    if not TRACKS_PATH.exists():
+        raise RuntimeError(f"Tracks file not found: {TRACKS_PATH}")
+    if not ARTISTS_PATH.exists():
+        raise RuntimeError(f"Artists file not found: {ARTISTS_PATH}")
     
     # Check cache if enabled
     if ENABLE_DATA_CACHE and CACHE_PATH.exists():
         print(f"[startup] Cache enabled, checking {CACHE_PATH}")
         cache_mtime = CACHE_PATH.stat().st_mtime
-        data_mtime = DATA_PATH.stat().st_mtime
+        data_mtime = max(TRACKS_PATH.stat().st_mtime, ARTISTS_PATH.stat().st_mtime)
         
         if cache_mtime >= data_mtime:
             try:
@@ -73,7 +76,7 @@ def _load_cached_data() -> MusicData:
                 print(f"[startup] Cache load failed: {e}, reloading from parquet...")
     
     # Load fresh data
-    source = ParquetDataSource(DATA_PATH)
+    source = ParquetDataSource(TRACKS_PATH, ARTISTS_PATH)
     music_data = MusicData(source)
     print("[startup] Building in-memory structures from parquet...")
     music_data.load()

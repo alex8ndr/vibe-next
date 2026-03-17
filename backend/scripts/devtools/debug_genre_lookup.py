@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import sys
 import time
 from pathlib import Path
@@ -25,9 +26,19 @@ from genre_mapping import (
     explain_artist_tags,
     explain_raw_genre,
 )
-from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE, ENCODED_DATASET
+from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE, TRACKS_DATASET
 from language_detection import load_fasttext_model, clean_track_title, detect_language
-from language_config import TAG_FASTTEXT_THRESHOLD
+from language_config import (
+    GENRE_LANG_OVERRIDES,
+    LANGUAGE_MAX_TITLES,
+    TAG_FASTTEXT_THRESHOLD,
+    CJK_TAG_FASTTEXT_THRESHOLD,
+    LOCALE_SIGNAL_FASTTEXT_THRESHOLD,
+    FALLBACK_FASTTEXT_THRESHOLD,
+    VOTE_FALLBACK_CONF_FLOOR,
+    VOTE_FALLBACK_MIN_VOTES,
+    VOTE_FALLBACK_DOMINANCE,
+)
 from track_dedup import normalize_artist_name
 
 
@@ -116,7 +127,7 @@ def summarize_rows(df: pl.DataFrame, label: str, *, all_matches: bool = False) -
                 print(f"        {tag} -> None ({reason})")
 
 
-def _build_filtered_lookup(normalized_names: set[str]) -> dict[str, str]:
+def _build_filtered_lookup(normalized_names: set[str]) -> tuple[dict[str, str], dict[str, str], dict[str, bool]]:
     """Build genre lookup for specific normalized names only (fast path for debug).
 
     Uses the same sequential source priority as load_artist_genre_lookup:
@@ -124,10 +135,12 @@ def _build_filtered_lookup(normalized_names: set[str]) -> dict[str, str]:
     """
     from genre_mapping import (
         _map_standard_genre,
-        map_artist_tags,
+        map_artist_tags_with_lang_signal,
     )
 
     lookup: dict[str, str] = {}
+    tag_lang_lookup: dict[str, str] = {}
+    tag_signal_lookup: dict[str, bool] = {}
 
     for path in [YAMAC_GENRE, VECTORQL_GENRE, SERKAN_GENRE]:
         if not path.exists():
@@ -161,15 +174,19 @@ def _build_filtered_lookup(normalized_names: set[str]) -> dict[str, str]:
             norm_name = row["_norm"]
             tags = row.get("genres") or []
 
-            genre, tag_lang = map_artist_tags(tags)
+            genre, tag_lang, has_locale_signal = map_artist_tags_with_lang_signal(tags)
             if not genre:
                 fallback = row.get("fallback")
                 if fallback and isinstance(fallback, str):
                     genre = _map_standard_genre(fallback.strip().lower())
             if genre:
                 lookup[norm_name] = genre
+            if tag_lang:
+                tag_lang_lookup[norm_name] = tag_lang
+            if has_locale_signal or tag_lang is not None:
+                tag_signal_lookup[norm_name] = True
 
-    return lookup
+    return lookup, tag_lang_lookup, tag_signal_lookup
 
 
 # ---- Language detection helpers ----
@@ -194,9 +211,36 @@ def _detect(model, text: str | None) -> tuple[str, float | None]:
     if not code:
         return "unknown", None
     conf = round(float(conf), 4)
-    if conf < 0.5:
-        return "unknown", conf
     return code, conf
+
+
+def _vote_language_from_title_results(
+    title_results: list[tuple[str, str, float | None]],
+    *,
+    conf_floor: float,
+    min_votes: int,
+    dominance: float,
+) -> str | None:
+    votes: Counter[str] = Counter()
+    for _title, lang, conf in title_results:
+        if lang == "unknown":
+            continue
+        if conf is None or conf < conf_floor:
+            continue
+        votes[lang] += 1
+
+    if not votes:
+        return None
+
+    top_lang, top_count = votes.most_common(1)[0]
+    total_votes = sum(votes.values())
+    if top_count < min_votes:
+        return None
+    if total_votes <= 0:
+        return None
+    if (top_count / total_votes) < dominance:
+        return None
+    return top_lang
 
 
 def run_language_detection(
@@ -204,12 +248,15 @@ def run_language_detection(
     normalized: set[str],
     *,
     max_titles: int,
+    genre_lookup: dict[str, str] | None = None,
+    tag_lang_lookup: dict[str, str] | None = None,
+    tag_signal_lookup: dict[str, bool] | None = None,
 ) -> None:
     """Run language detection on track titles for the given artists."""
     from collections import Counter
 
-    if not ENCODED_DATASET.exists():
-        print(f"\n  Language detection skipped: {ENCODED_DATASET} not found")
+    if not TRACKS_DATASET.exists():
+        print(f"\n  Language detection skipped: {TRACKS_DATASET} not found")
         return
 
     print("\n" + "=" * 60)
@@ -219,10 +266,14 @@ def run_language_detection(
     model, load_s = _load_fasttext_model()
     print(f"  Model loaded in {load_s:.2f}s")
 
+    genre_lookup = genre_lookup or {}
+    tag_lang_lookup = tag_lang_lookup or {}
+    tag_signal_lookup = tag_signal_lookup or {}
+
     # Load tracks for these artists
     norm_list = list(normalized)
     df = (
-        pl.scan_parquet(ENCODED_DATASET)
+        pl.scan_parquet(TRACKS_DATASET)
         .filter(pl.col("artist_name").is_not_null())
         .select(["artist_name", "track_name", "popularity"])
         .collect()
@@ -277,6 +328,56 @@ def run_language_detection(
         combined_lang, combined_conf = _detect(model, combined)
         total_texts += 1
 
+        resolved_genre = genre_lookup.get(norm)
+        tag_lang = tag_lang_lookup.get(norm)
+        has_tag_signal = bool(tag_lang) or bool(tag_signal_lookup.get(norm))
+        override_lang = GENRE_LANG_OVERRIDES.get(resolved_genre) if resolved_genre else None
+
+        voted_lang = _vote_language_from_title_results(
+            title_results,
+            conf_floor=VOTE_FALLBACK_CONF_FLOOR,
+            min_votes=VOTE_FALLBACK_MIN_VOTES,
+            dominance=VOTE_FALLBACK_DOMINANCE,
+        )
+
+        final_lang = "en"
+        decision_path = "fallback-default-en"
+        effective_threshold = FALLBACK_FASTTEXT_THRESHOLD
+
+        if override_lang:
+            final_lang = override_lang
+            decision_path = f"genre-override ({resolved_genre})"
+            effective_threshold = None
+        elif tag_lang:
+            effective_threshold = (
+                CJK_TAG_FASTTEXT_THRESHOLD if tag_lang in {"ja", "ko", "zh"} else TAG_FASTTEXT_THRESHOLD
+            )
+            if combined_lang != "unknown" and combined_conf is not None and combined_conf >= effective_threshold:
+                final_lang = combined_lang
+                decision_path = "tag-signal + fasttext override"
+            else:
+                final_lang = tag_lang
+                decision_path = "tag-lang fallback"
+        elif has_tag_signal:
+            effective_threshold = LOCALE_SIGNAL_FASTTEXT_THRESHOLD
+            if combined_lang != "unknown" and combined_conf is not None and combined_conf >= LOCALE_SIGNAL_FASTTEXT_THRESHOLD:
+                final_lang = combined_lang
+                decision_path = "locale-signal + fasttext override"
+            elif voted_lang:
+                final_lang = voted_lang
+                decision_path = "locale-signal + vote fallback"
+            else:
+                final_lang = "en"
+                decision_path = "locale-signal fallback"
+        else:
+            effective_threshold = FALLBACK_FASTTEXT_THRESHOLD
+            if combined_lang != "unknown" and combined_conf is not None and combined_conf >= FALLBACK_FASTTEXT_THRESHOLD:
+                final_lang = combined_lang
+                decision_path = "fallback fasttext override"
+            elif voted_lang:
+                final_lang = voted_lang
+                decision_path = "fallback vote override"
+
         # Determine dominant language
         # Filter out 'unknown' for dominant calc
         known_votes = {k: v for k, v in title_votes.items() if k != "unknown"}
@@ -290,7 +391,14 @@ def run_language_detection(
         print(f"\n  {name} ({track_count} tracks in dataset)")
         print(f"    Artist name language: {name_lang} (conf={name_conf})")
         print(f"    Combined titles:      {combined_lang} (conf={combined_conf})")
-        print(f"    Pipeline threshold:   conf >= {TAG_FASTTEXT_THRESHOLD} to override tag_lang")
+        print(f"    Resolved genre:       {resolved_genre}")
+        print(f"    tag_lang:             {tag_lang}")
+        print(f"    tag_signal:           {has_tag_signal}")
+        if effective_threshold is not None:
+            print(f"    Effective threshold:  conf >= {effective_threshold}")
+        else:
+            print("    Effective threshold:  n/a (genre override)")
+        print(f"    Pipeline final lang:  {final_lang} ({decision_path})")
         print(f"    Title sample size:    top {max_titles} by popularity")
         print(f"    Dominant from votes:  {dominant} ({dominant_pct}%)")
         print(f"    Title votes: {dict(title_votes.most_common())}")
@@ -324,8 +432,8 @@ def main() -> None:
     parser.add_argument(
         "--max-titles",
         type=int,
-        default=30,
-        help="Top N titles to sample for --lang (pipeline default is 15)",
+        default=LANGUAGE_MAX_TITLES,
+        help="Top N titles to sample for --lang (shared resolver default)",
     )
     args = parser.parse_args()
 
@@ -338,7 +446,7 @@ def main() -> None:
 
     # Fast path: build lookup only for requested artists instead of
     # iterating all ~1.5M rows across 3 parquets (which takes 30+ seconds).
-    lookup = _build_filtered_lookup(normalized)
+    lookup, tag_lang_lookup, tag_signal_lookup = _build_filtered_lookup(normalized)
 
     print("Resolved override genres:")
     for name in names:
@@ -357,7 +465,14 @@ def main() -> None:
     summarize_rows(vectorql_rows, "Vectorql", all_matches=args.all_matches)
 
     if args.lang:
-        run_language_detection(names, normalized, max_titles=max(1, int(args.max_titles)))
+        run_language_detection(
+            names,
+            normalized,
+            max_titles=max(1, int(args.max_titles)),
+            genre_lookup=lookup,
+            tag_lang_lookup=tag_lang_lookup,
+            tag_signal_lookup=tag_signal_lookup,
+        )
 
 
 if __name__ == "__main__":

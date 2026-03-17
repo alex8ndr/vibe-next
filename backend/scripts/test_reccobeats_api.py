@@ -5,17 +5,17 @@ Test ReccoBeats API search functionality.
 Usage:
     # Run full test suite
     python test_reccobeats_api.py
-    
+
     # Quick search test for specific artist(s)
     python test_reccobeats_api.py "Radiohead"
     python test_reccobeats_api.py "Far Caspian, Japanese Breakfast"
-    
+
     # Adjust search limit (default: 20)
     python test_reccobeats_api.py "Radiohead" --limit 50
-    
+
     # Run full pipeline test for an artist
     python test_reccobeats_api.py "Radiohead" --pipeline
-    
+
     # Quiet mode (less output)
     python test_reccobeats_api.py "Radiohead" -q
 """

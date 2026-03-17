@@ -9,7 +9,7 @@ Schema flow:
     1. Discovery scripts (add_artist.py) → added_artists.parquet (RAW_SCHEMA)
     2. convert_to_parquet.py → data.parquet (RAW_SCHEMA)
     3. filter_data.py → data_filtered.parquet (RAW_SCHEMA)
-    4. process_data.py → data_encoded.parquet (ENCODED_SCHEMA)
+    4. process_data.py → tracks.parquet + artists.parquet (SPLIT_OUTPUT_SCHEMA)
 
 Type Philosophy:
     - Strings: pl.String (UTF-8)
@@ -75,17 +75,39 @@ RAW_COLUMN_ORDER: List[str] = [name for name, _, _, _ in RAW_COLUMNS]
 
 
 # =============================================================================
-# Encoded Data Schema (after process_data.py)
+# Split Serving Schema (after process_data.py)
 # =============================================================================
 
-# process_data.py adds genre embedding columns (genre_*) and scaled features
-# The exact genre columns depend on GENRE_DEFINITIONS in genre_families.py
-# Base columns remain the same, plus normalized versions
-
-ENCODED_ADDITIONAL_COLUMNS: List[str] = [
-    # These are added by process_data.py - prefixed with 'genre_'
-    # Actual columns depend on GENRE_DEFINITIONS
+TRACKS_REQUIRED_COLUMNS: List[str] = [
+    "artist_name",
+    "track_name",
+    "track_id",
 ]
+
+TRACKS_FEATURE_COLUMNS: List[str] = [
+    "popularity",
+    "year",
+    "duration_ms",
+    "acousticness",
+    "danceability",
+    "energy",
+    "instrumentalness",
+    "liveness",
+    "loudness",
+    "speechiness",
+    "tempo",
+    "valence",
+]
+
+ARTISTS_REQUIRED_COLUMNS: List[str] = [
+    "artist_name",
+    "genre",
+    "language",
+]
+
+
+def is_genre_embedding_column(column: str) -> bool:
+    return column.startswith("genre_")
 
 
 # =============================================================================

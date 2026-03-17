@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process raw Spotify data into a cleaned, encoded parquet file.
+Process filtered Spotify data into split serving datasets.
 
 Pure Polars implementation - optimized for 800MB RAM VPS.
 No Pandas conversion = ~2-3x lower peak memory.
@@ -11,7 +11,8 @@ Usage:
     python process_data.py
     
     # Custom paths
-    python process_data.py -i filtered.parquet -o encoded.parquet
+    python process_data.py -i filtered.parquet
+    python process_data.py --tracks-output tracks.parquet --artists-output artists.parquet
 
 Memory profile:
     - Previous (Polars→Pandas→Polars): ~500-600MB peak
@@ -30,13 +31,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paths import (
     FILTERED_DATASET,
-    ENCODED_DATASET,
+    TRACKS_DATASET,
+    ARTISTS_DATASET,
     get_filtered_dataset,
 )
 from io_utils import (
     read_input_file,
     atomic_write_parquet,
-    validate_encoded_dataset,
+    validate_tracks_dataset,
+    validate_artists_dataset,
     update_manifest,
     save_scaler_params,
 )
@@ -51,7 +54,7 @@ from track_dedup import deduplicate_tracks_polars
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Process and encode Spotify song data (Pure Polars).",
+        description="Process filtered Spotify song data into split serving datasets (Pure Polars).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -61,10 +64,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to input file (parquet or csv). Default: auto from paths.py",
     )
     parser.add_argument(
-        "-o", "--output",
+        "--tracks-output",
         type=Path,
         default=None,
-        help="Path to output parquet file. Default: data_encoded.parquet",
+        help="Path to tracks output parquet file. Default: tracks.parquet",
+    )
+    parser.add_argument(
+        "--artists-output",
+        type=Path,
+        default=None,
+        help="Path to artists output parquet file. Default: artists.parquet",
     )
     parser.add_argument(
         "--max-songs",
@@ -143,7 +152,8 @@ def load_and_merge_data(
 
 def process_data(
     input_path: Path | None,
-    output_path: Path,
+    tracks_output_path: Path,
+    artists_output_path: Path,
     max_songs: int,
     max_artists: int,
     max_international_pct: float | None,
@@ -300,10 +310,7 @@ def process_data(
         n_artists_final = df["artist_name"].n_unique()
         log(f"  Artists: {n_artists_final:,} unique artists in final output", verbose)
 
-    # Core Metadata columns
-    meta_cols = ["artist_name", "track_name", "track_id", "genre", "language"]
-    
-    # Audio Features (Scaled 0-1)
+    # Audio features (scaled 0-1, retained in tracks.parquet)
     feature_cols = [
         "popularity", "year", "duration_ms",
         "acousticness", "danceability", "energy", "instrumentalness",
@@ -373,65 +380,101 @@ def process_data(
                 verbose,
             )
 
-    df = df.with_columns(
-        pl.col("_language_iso")
-        .cast(pl.Utf8)
-        .alias("language")
-    )
+    df = df.with_columns(pl.col("_language_iso").fill_null("en").cast(pl.Utf8).alias("language"))
     df = df.drop("_language_iso")
 
-    langs = sorted(df["language"].drop_nulls().unique().to_list())
+    # Enforce no null genre/language in artist-level output source rows
+    n_before_artist_null_guard = len(df)
+    df = df.filter(pl.col("genre").is_not_null() & pl.col("language").is_not_null())
+    n_removed_artist_null_guard = n_before_artist_null_guard - len(df)
+    if n_removed_artist_null_guard > 0:
+        log(
+            f"Dropped {n_removed_artist_null_guard:,} track rows due to null genre/language before split",
+            verbose,
+        )
 
-    # Select final columns
-    final_cols = meta_cols + [c for c in feature_cols if c in df.columns] + genre_cols
-    final_cols = [c for c in final_cols if c in df.columns]
-    
-    if not all(c in final_cols for c in meta_cols[:3]):  # artist, track, id
-        print("Warning: Missing core columns.", file=sys.stderr)
+    # Build artist-level table (single row per artist)
+    artist_agg_exprs = [
+        pl.col("genre")
+        .drop_nulls()
+        .sort_by("popularity", descending=True)
+        .first()
+        .alias("genre"),
+        pl.col("language").drop_nulls().first().alias("language"),
+    ]
+    artist_agg_exprs.extend(pl.col(c).mean().alias(c) for c in genre_cols)
 
-    df = df.select(final_cols)
-    log(f"Pruned columns. Keeping {len(genre_cols)} genre columns.", verbose)
+    artists_df = df.group_by("artist_name").agg(artist_agg_exprs)
+    artists_df = artists_df.filter(pl.col("genre").is_not_null() & pl.col("language").is_not_null())
 
-    # Normalize all float columns to float32 for consistent runtime memory/precision
-    float_cols = [c for c in df.columns if df[c].dtype in [pl.Float32, pl.Float64]]
-    df = df.with_columns([pl.col(c).cast(pl.Float32) for c in float_cols])
-    
+    # Keep only tracks that have a valid artist row (strict non-null artist metadata policy)
+    tracks_df = (
+        df.join(
+            artists_df.select("artist_name"),
+            on="artist_name",
+            how="semi",
+        )
+    )
+
+    # Build final tracks table (no per-track genre/language embeddings)
+    tracks_cols = ["artist_name", "track_name", "track_id"] + [c for c in feature_cols if c in tracks_df.columns]
+    tracks_df = tracks_df.select(tracks_cols)
+
+    # Cast numeric outputs to float32 for memory efficiency
+    track_float_cols = [c for c in tracks_df.columns if tracks_df[c].dtype in [pl.Float32, pl.Float64]]
+    if track_float_cols:
+        tracks_df = tracks_df.with_columns([pl.col(c).cast(pl.Float32) for c in track_float_cols])
+    if genre_cols:
+        artists_df = artists_df.with_columns([pl.col(c).cast(pl.Float32) for c in genre_cols])
+
+    langs = sorted(artists_df["language"].drop_nulls().unique().to_list())
+
     if verbose:
-        mem_mb = df.estimated_size() / (1024 * 1024)
-        print(f"Memory usage (final): {mem_mb:.1f} MB")
-        print("\nColumn types:")
-        for dtype in df.dtypes:
-            print(f"  {dtype}")
+        tracks_mem_mb = tracks_df.estimated_size() / (1024 * 1024)
+        artists_mem_mb = artists_df.estimated_size() / (1024 * 1024)
+        print(f"Memory usage (final): tracks={tracks_mem_mb:.1f} MB, artists={artists_mem_mb:.1f} MB")
 
-    # Atomic write with validation
+    # Atomic writes with validation
     compression_level = 1 if dev else 22
     if dev:
         print("[DEV MODE] Using fast compression (zstd level 1)")
-    log(f"Writing to {output_path}...", verbose)
+    log(f"Writing tracks to {tracks_output_path}...", verbose)
     atomic_write_parquet(
-        df,
-        output_path,
+        tracks_df,
+        tracks_output_path,
         compression="zstd",
         compression_level=compression_level,
-        validate=validate_encoded_dataset,
+        validate=validate_tracks_dataset,
+        verbose=verbose,
+    )
+    log(f"Writing artists to {artists_output_path}...", verbose)
+    atomic_write_parquet(
+        artists_df,
+        artists_output_path,
+        compression="zstd",
+        compression_level=compression_level,
+        validate=validate_artists_dataset,
         verbose=verbose,
     )
     
     # Update manifest
     update_manifest(
         operation="full_process",
-        track_count=len(df),
-        artist_count=df["artist_name"].n_unique(),
+        track_count=len(tracks_df),
+        artist_count=len(artists_df),
         extra={
             "language_codebook": None,
             "language_count": len(langs),
+            "serving_tracks_file": tracks_output_path.name,
+            "serving_artists_file": artists_output_path.name,
         },
     )
 
     # Summary
-    print(f"\nProcessed {n_initial:,} -> {len(df):,} songs")
-    print(f"Artists: {df['artist_name'].n_unique():,}")
-    print(f"Output: {output_path}")
+    print(f"\nProcessed {n_initial:,} -> {len(tracks_df):,} songs")
+    print(f"Artists: {len(artists_df):,}")
+    print(f"Tracks output:  {tracks_output_path}")
+    print(f"Artists output: {artists_output_path}")
 
 
 def main() -> None:
@@ -452,12 +495,14 @@ def main() -> None:
         print(f"Error: Input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
     
-    # Resolve output path
-    output_path = args.output or ENCODED_DATASET
+    # Resolve output paths
+    tracks_output_path = args.tracks_output or TRACKS_DATASET
+    artists_output_path = args.artists_output or ARTISTS_DATASET
     
     process_data(
         input_path=input_path,
-        output_path=output_path,
+        tracks_output_path=tracks_output_path,
+        artists_output_path=artists_output_path,
         max_songs=args.max_songs,
         max_artists=args.max_artists,
         max_international_pct=args.max_international_pct,

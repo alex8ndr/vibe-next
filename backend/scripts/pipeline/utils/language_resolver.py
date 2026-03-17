@@ -9,6 +9,7 @@ from language_config import (
     GENRE_LANG_OVERRIDES,
     LANGUAGE_MAX_TITLES,
     TAG_FASTTEXT_THRESHOLD,
+    CJK_TAG_FASTTEXT_THRESHOLD,
     LOCALE_SIGNAL_FASTTEXT_THRESHOLD,
     FALLBACK_FASTTEXT_THRESHOLD,
     VOTE_FALLBACK_CONF_FLOOR,
@@ -132,17 +133,13 @@ def resolve_artist_languages(
         has_tag_signal = bool(tag_lang) or bool(tag_signal_lookup.get(norm_name))
 
         if tag_lang:
-            if detected_lang and detected_conf >= tag_fasttext_threshold:
+            tag_threshold = (
+                CJK_TAG_FASTTEXT_THRESHOLD if tag_lang in {"ja", "ko", "zh"} else tag_fasttext_threshold
+            )
+            if detected_lang and detected_conf >= tag_threshold:
                 artist_lang[artist_name] = detected_lang
             else:
-                voted_lang = _vote_language_from_titles(
-                    model,
-                    cleaned_titles,
-                    conf_floor=vote_fallback_conf_floor,
-                    min_votes=vote_fallback_min_votes,
-                    dominance=vote_fallback_dominance,
-                )
-                artist_lang[artist_name] = voted_lang or tag_lang
+                artist_lang[artist_name] = tag_lang
             explicit_tag_count += 1
             continue
 

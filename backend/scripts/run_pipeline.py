@@ -1,34 +1,19 @@
 #!/usr/bin/env python3
 """
-Run the full discovery pipeline: add artists → filter → process.
+Run the dataset pipeline: filter -> process.
 
 Usage:
-    # Add artists interactively, then process
+    # Filter + process with defaults
     python run_pipeline.py
-    
-    # Add specific artists, then process
-    python run_pipeline.py --names "Radiohead, Coldplay"
-    
-    # Add from URL, then process
-    python run_pipeline.py --url "https://open.spotify.com/album/xxx"
-    
-    # Skip add step, just run filter + process
-    python run_pipeline.py --process-only
 
     # Unified dataset selection: pick specific datasets by name
-    python run_pipeline.py --process-only --datasets data yamac_tracks
+    python run_pipeline.py --datasets data yamac_tracks
 
     # Use all available datasets (core + external)
-    python run_pipeline.py --process-only --all-datasets
+    python run_pipeline.py --all-datasets
 
     # Use all except the original dataset
-    python run_pipeline.py --process-only --all-datasets --exclude-datasets data
-
-    # Incremental update only (fastest, lowest memory)
-    python run_pipeline.py --incremental
-    
-    # Dry-run: preview changes without saving
-    python run_pipeline.py --names "Radiohead" --dry-run
+    python run_pipeline.py --all-datasets --exclude-datasets data
 """
 import argparse
 import subprocess
@@ -36,14 +21,14 @@ import sys
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent
-DISCOVERY_DIR = SCRIPTS_DIR / "discovery"
 PIPELINE_DIR = SCRIPTS_DIR / "pipeline"
 
 # Import paths for proper path resolution
 sys.path.insert(0, str(SCRIPTS_DIR))
 from paths import (
     FILTERED_DATASET,
-    ENCODED_DATASET,
+    TRACKS_DATASET,
+    ARTISTS_DATASET,
     get_input_dataset,
     get_all_track_datasets,
     get_added_artists,
@@ -62,27 +47,16 @@ def run_script(script_path: Path, args: list[str], dry_run: bool = False) -> int
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the full discovery pipeline",
+        description="Run the dataset pipeline (filter -> process)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     
-    # Add artist options (passed through to add_artist.py)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--track", help="Spotify track URL")
-    group.add_argument("--album", help="Spotify album URL")
-    group.add_argument("--url", help="Spotify URL (auto-detect track/album)")
-    group.add_argument("--file", help="File with Spotify URLs")
-    group.add_argument("--names", help="Comma-separated artist names")
-    group.add_argument("--process-only", action="store_true", help="Skip add step, just filter + process")
-    
-    # Incremental can be combined with add options
-    parser.add_argument("--incremental", action="store_true", 
-                        help="Use incremental update instead of full reprocess (faster, lower memory)")
-    
-    parser.add_argument("--limit", type=int, default=15, help="Max tracks per artist")
-    parser.add_argument("--genre", help="Override genre")
-    parser.add_argument("--expand", type=int, nargs="?", const=5, help="Expand to N similar artists")
+    parser.add_argument(
+        "--process-only",
+        action="store_true",
+        help="Deprecated no-op: filter+process is now the default and only behavior",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without saving")
     parser.add_argument("--skip-filter", action="store_true", help="Skip filter_data.py step")
     parser.add_argument("--skip-process", action="store_true", help="Skip process_data.py step")
@@ -168,201 +142,148 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
-    
-    # Step 1: Add artists (unless --process-only)
-    if not args.process_only:
-        add_args = []
-        
-        if args.track:
-            add_args.extend(["--track", args.track])
-        elif args.album:
-            add_args.extend(["--album", args.album])
-        elif args.url:
-            add_args.extend(["--url", args.url])
-        elif args.file:
-            add_args.extend(["--file", args.file])
-        elif args.names:
-            add_args.extend(["--names", args.names])
-        # else: interactive mode
-        
-        add_args.extend(["--limit", str(args.limit)])
-        
-        if args.genre:
-            add_args.extend(["--genre", args.genre])
-        if args.expand:
-            add_args.extend(["--expand", str(args.expand)])
-        if args.dry_run:
-            add_args.append("--dry-run")
-        if args.verbose:
-            add_args.append("--verbose")
-        
-        ret = run_script(DISCOVERY_DIR / "add_artist.py", add_args, args.dry_run)
-        if ret != 0:
-            print(f"\nadd_artist.py failed with exit code {ret}")
-            sys.exit(ret)
-        
-        if args.dry_run:
-            print("\n[DRY-RUN] Skipping filter + process steps")
-            return
-    
-    # Step 2: Process the data
-    if args.incremental:
-        # Incremental mode: use incremental_update.py (fastest, lowest memory)
-        inc_args = []
-        if args.dry_run:
-            inc_args.append("--dry-run")
-        if args.verbose:
-            inc_args.append("--verbose")
-        
-        ret = run_script(SCRIPTS_DIR / "incremental_update.py", inc_args, args.dry_run)
-        if ret != 0:
-            print(f"\nincremental_update.py failed with exit code {ret}")
-            sys.exit(ret)
+
+    # Determine input file and merge paths based on dataset selection mode
+    if args.datasets or args.all_datasets:
+        available = get_all_track_datasets()
+        if args.datasets:
+            selected_names = []
+            selected_paths = []
+            for name in args.datasets:
+                if name not in available:
+                    print(f"Unknown dataset: {name}")
+                    print("Available:", ", ".join(sorted(available.keys())))
+                    sys.exit(1)
+                selected_names.append(name)
+                selected_paths.append(available[name])
+        else:
+            exclude = set(args.exclude_datasets or [])
+            selected_names = [n for n in available if n not in exclude]
+            selected_paths = [available[n] for n in selected_names]
+
+        if not selected_paths:
+            print("Error: No datasets selected.")
+            sys.exit(1)
+
+        print(f"Datasets: {', '.join(selected_names)}")
+        input_file = selected_paths[0]
+        merge_paths = selected_paths[1:]
     else:
-        # Full reprocess mode
-        
-        # Determine input file and merge paths based on dataset selection mode
-        if args.datasets or args.all_datasets:
-            # Unified dataset selection
-            available = get_all_track_datasets()
-            if args.datasets:
-                selected_names = []
-                selected_paths = []
-                for name in args.datasets:
-                    if name not in available:
-                        print(f"Unknown dataset: {name}")
-                        print("Available:", ", ".join(sorted(available.keys())))
-                        sys.exit(1)
-                    selected_names.append(name)
-                    selected_paths.append(available[name])
-            else:
-                # --all-datasets
-                exclude = set(args.exclude_datasets or [])
-                selected_names = [n for n in available if n not in exclude]
-                selected_paths = [available[n] for n in selected_names]
+        try:
+            input_file = get_input_dataset()
+        except FileNotFoundError:
+            print("Error: No input dataset found. Run convert_to_parquet.py first.")
+            sys.exit(1)
 
-            if not selected_paths:
-                print("Error: No datasets selected.")
-                sys.exit(1)
+        merge_paths = []
+        added = get_added_artists()
+        if added:
+            merge_paths.append(added)
 
-            print(f"Datasets: {', '.join(selected_names)}")
-            input_file = selected_paths[0]
-            merge_paths = selected_paths[1:]
-        else:
-            # Default behavior (backward compatible)
-            try:
-                input_file = get_input_dataset()
-            except FileNotFoundError:
-                print("Error: No input dataset found. Run convert_to_parquet.py first.")
-                sys.exit(1)
-            
-            # Auto-merge added_artists if present
-            merge_paths = []
-            added = get_added_artists()
-            if added:
-                merge_paths.append(added)
-        
-        added_artists_path = get_added_artists()
-        
-        if args.subprocess:
-            # Legacy subprocess mode: writes intermediate data_filtered.parquet
-            if not args.skip_filter:
-                filter_args = ["-i", str(input_file), "-o", str(FILTERED_DATASET)]
-                if merge_paths:
-                    filter_args.append("--merge")
-                    filter_args.extend(str(p) for p in merge_paths)
-                if args.verbose:
-                    filter_args.append("--verbose")
-                if args.override_genres:
-                    filter_args.append("--override-genres")
-                if args.override_genres_only:
-                    filter_args.append("--override-genres-only")
-                if args.no_enrich:
-                    filter_args.append("--no-enrich")
-                if args.min_songs is not None:
-                    filter_args.extend(["--min-songs", str(args.min_songs)])
-                if args.keep_remixes:
-                    filter_args.append("--keep-remixes")
-                if args.keep_live:
-                    filter_args.append("--keep-live")
-                if args.dry_run:
-                    filter_args.append("--dry-run")
-                
-                ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
-                if ret != 0:
-                    print(f"\nfilter_data.py failed with exit code {ret}")
-                    sys.exit(ret)
+    added_artists_path = get_added_artists()
 
+    if args.subprocess:
+        if not args.skip_filter:
+            filter_args = ["-i", str(input_file), "-o", str(FILTERED_DATASET)]
+            if merge_paths:
+                filter_args.append("--merge")
+                filter_args.extend(str(p) for p in merge_paths)
+            if args.verbose:
+                filter_args.append("--verbose")
+            if args.override_genres:
+                filter_args.append("--override-genres")
+            if args.override_genres_only:
+                filter_args.append("--override-genres-only")
+            if args.no_enrich:
+                filter_args.append("--no-enrich")
+            if args.min_songs is not None:
+                filter_args.extend(["--min-songs", str(args.min_songs)])
+            if args.keep_remixes:
+                filter_args.append("--keep-remixes")
+            if args.keep_live:
+                filter_args.append("--keep-live")
             if args.dry_run:
-                print("\n[DRY-RUN] Skipping process step")
-                return
-            
-            if not args.skip_process:
-                process_args = ["-i", str(FILTERED_DATASET), "-o", str(ENCODED_DATASET)]
-                if args.verbose:
-                    process_args.append("--verbose")
-                if args.dev:
-                    process_args.append("--dev")
-                if args.max_artists > 0:
-                    process_args.extend(["--max-artists", str(args.max_artists)])
-                if args.max_songs != 50:
-                    process_args.extend(["--max-songs", str(args.max_songs)])
-                if args.smear_strength != 0.6:
-                    process_args.extend(["--smear-strength", str(args.smear_strength)])
-                if args.max_international_pct is not None:
-                    process_args.extend(["--max-international-pct", str(args.max_international_pct)])
-                ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
-                if ret != 0:
-                    print(f"\nprocess_data.py failed with exit code {ret}")
-                    sys.exit(ret)
-        else:
-            # Default in-memory mode: no intermediate files written to disk
-            sys.path.insert(0, str(PIPELINE_DIR))
-            from filter_data import filter_data as _run_filter
-            from process_data import process_data as _run_process
-            
-            if not args.skip_filter:
-                print("\nRunning filter_data (in-memory)...")
-                print("=" * 60)
-                stats, filtered_df = _run_filter(
-                    input_path=input_file,
-                    output_path=None,
-                    keep_remixes=args.keep_remixes,
-                    keep_live=args.keep_live,
-                    min_songs=args.min_songs if args.min_songs is not None else 2,
-                    verbose=args.verbose,
-                    merge_paths=merge_paths or None,
-                    enrich=not args.no_enrich,
-                    override=args.override_genres,
-                    override_only=args.override_genres_only,
-                    added_artists_path=added_artists_path,
-                )
-                print("=" * 60)
-                print(f"Filtered: {stats['original_tracks']:,} -> {stats['final_tracks']:,} tracks")
-            else:
-                from io_utils import read_input_file
-                filtered_df = read_input_file(FILTERED_DATASET)
-                print(f"Loaded existing filtered data: {len(filtered_df):,} tracks")
+                filter_args.append("--dry-run")
 
-            if args.dry_run:
-                print("\n[DRY-RUN] Skipping process step")
-                return
-            
-            if not args.skip_process:
-                print("\nRunning process_data (in-memory)...")
-                print("=" * 60)
-                _run_process(
-                    input_path=None,
-                    output_path=ENCODED_DATASET,
-                    max_songs=args.max_songs,
-                    max_artists=args.max_artists,
-                    max_international_pct=args.max_international_pct,
-                    smear_strength=args.smear_strength,
-                    verbose=args.verbose,
-                    dev=args.dev,
-                    input_df=filtered_df,
-                )
-                print("=" * 60)
+            ret = run_script(PIPELINE_DIR / "filter_data.py", filter_args)
+            if ret != 0:
+                print(f"\nfilter_data.py failed with exit code {ret}")
+                sys.exit(ret)
+
+        if args.dry_run:
+            print("\n[DRY-RUN] Skipping process step")
+            return
+
+        if not args.skip_process:
+            process_args = [
+                "-i", str(FILTERED_DATASET),
+                "--tracks-output", str(TRACKS_DATASET),
+                "--artists-output", str(ARTISTS_DATASET),
+            ]
+            if args.verbose:
+                process_args.append("--verbose")
+            if args.dev:
+                process_args.append("--dev")
+            if args.max_artists > 0:
+                process_args.extend(["--max-artists", str(args.max_artists)])
+            if args.max_songs != 50:
+                process_args.extend(["--max-songs", str(args.max_songs)])
+            if args.smear_strength != 0.6:
+                process_args.extend(["--smear-strength", str(args.smear_strength)])
+            if args.max_international_pct is not None:
+                process_args.extend(["--max-international-pct", str(args.max_international_pct)])
+            ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
+            if ret != 0:
+                print(f"\nprocess_data.py failed with exit code {ret}")
+                sys.exit(ret)
+    else:
+        # Default in-memory mode: no intermediate files written to disk
+        from pipeline.filter_data import filter_data as _run_filter
+        from pipeline.process_data import process_data as _run_process
+
+        if not args.skip_filter:
+            print("\nRunning filter_data (in-memory)...")
+            print("=" * 60)
+            stats, filtered_df = _run_filter(
+                input_path=input_file,
+                output_path=None,
+                keep_remixes=args.keep_remixes,
+                keep_live=args.keep_live,
+                min_songs=args.min_songs if args.min_songs is not None else 2,
+                verbose=args.verbose,
+                merge_paths=merge_paths or None,
+                enrich=not args.no_enrich,
+                override=args.override_genres,
+                override_only=args.override_genres_only,
+                added_artists_path=added_artists_path,
+            )
+            print("=" * 60)
+            print(f"Filtered: {stats['original_tracks']:,} -> {stats['final_tracks']:,} tracks")
+        else:
+            from io_utils import read_input_file
+            filtered_df = read_input_file(FILTERED_DATASET)
+            print(f"Loaded existing filtered data: {len(filtered_df):,} tracks")
+
+        if args.dry_run:
+            print("\n[DRY-RUN] Skipping process step")
+            return
+
+        if not args.skip_process:
+            print("\nRunning process_data (in-memory)...")
+            print("=" * 60)
+            _run_process(
+                input_path=None,
+                tracks_output_path=TRACKS_DATASET,
+                artists_output_path=ARTISTS_DATASET,
+                max_songs=args.max_songs,
+                max_artists=args.max_artists,
+                max_international_pct=args.max_international_pct,
+                smear_strength=args.smear_strength,
+                verbose=args.verbose,
+                dev=args.dev,
+                input_df=filtered_df,
+            )
+            print("=" * 60)
     
     print("\nPipeline complete!")
 

@@ -37,8 +37,8 @@
     }>();
 
     function formatStat(n: number): string {
-        if (n >= 1_000_000) return `${Math.floor(n / 100_000) / 10}M+`;
-        if (n >= 1_000) return `${Math.floor(n / 1_000)}K+`;
+        if (n >= 1_000_000) return `${Math.floor(n / 100_0000)}M+`;
+        if (n >= 1_000) return `${Math.floor(n / 1_0000) * 10}K+`;
         return `${n}`;
     }
 

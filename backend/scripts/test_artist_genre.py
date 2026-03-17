@@ -11,13 +11,13 @@ Shows:
 
 Usage:
     python test_artist_genre.py "Artist Name" ["Artist 2"] ...
-    
+
     # List all valid dataset genres
     python test_artist_genre.py --list-genres
-    
+
     # Show unmapped TheAudioDB/Last.fm tags (for improving AUDIODB_GENRE_MAP)
     python test_artist_genre.py --check-mapping "Artist Name"
-    
+
     # Test Last.fm similar artist discovery
     python test_artist_genre.py --similar "Artist 1" ["Artist 2"] ...
 """
@@ -38,7 +38,7 @@ from utils import (
 )
 
 # --- CONFIG ---
-DATA_PATH = Path("backend/data/data_encoded.parquet")
+DATA_PATH = Path("backend/data/artists.parquet")
 REASSIGNMENT_DIR = Path("backend/data/reassignments")
 # --------------
 
@@ -69,7 +69,7 @@ def get_valid_genres():
 
 
 def check_dataset(artist_name, df):
-    """Checks exact matches in the encoded parquet."""
+    """Checks exact matches in the artists parquet."""
     print("\n1. CURRENT IN DATASET:")
     subset = df.filter(pl.col("artist_name").cast(pl.String).str.to_lowercase() == artist_name.lower())
     
@@ -77,9 +77,8 @@ def check_dataset(artist_name, df):
         print("   NOT FOUND")
         return None
     else:
-        counts = subset.group_by("genre").len().sort("len", descending=True)
-        for row in counts.iter_rows(named=True):
-            print(f"   {row['genre']}: {row['len']} track(s)")
+        for row in subset.select(["artist_name", "genre", "language"]).iter_rows(named=True):
+            print(f"   genre={row['genre']}, language={row['language']}")
         return subset
 
 
@@ -146,7 +145,7 @@ def show_final_genre(artist_name, reassignment, audiodb_genre, lastfm_genre, dat
         final_genre = reassignment
         source = "reassignment"
     elif dataset_rows is not None and dataset_rows.height > 0:
-        final_genre = dataset_rows.group_by("genre").len().sort("len", descending=True).row(0)[0]
+        final_genre = dataset_rows.select("genre").row(0)[0]
         source = "dataset"
     elif lastfm_genre:
         final_genre = lastfm_genre
@@ -188,7 +187,7 @@ def list_all_genres():
         # Group by category (rough heuristic based on name)
         categories = {}
         for g in genres:
-            if 'metal' in g or g in ['goth', 'grindcore']:
+            if 'metal' in g or g in ['goth-rock', 'darkwave', 'grindcore']:
                 cat = 'Metal'
             elif 'punk' in g or g in ['emo', 'hardcore', 'grunge']:
                 cat = 'Punk/Emo'
@@ -200,7 +199,7 @@ def list_all_genres():
                 cat = 'Hip-Hop/R&B'
             elif 'electro' in g or g in ['house', 'techno', 'trance', 'dubstep', 'edm', 'ambient', 'chill', 'disco', 'breakbeat']:
                 cat = 'Electronic'
-            elif 'folk' in g or g in ['acoustic', 'country', 'singer-songwriter', 'songwriter']:
+            elif 'folk' in g or g in ['acoustic', 'country', 'singer-songwriter']:
                 cat = 'Acoustic/Folk'
             elif 'jazz' in g or 'blues' in g:
                 cat = 'Jazz/Blues'
@@ -214,7 +213,7 @@ def list_all_genres():
                 cat = 'Asian Pop'
             elif 'christian' in g or g in ['ccm', 'gospel']:
                 cat = 'Christian'
-            elif any(x in g for x in ['german', 'french', 'spanish', 'swedish', 'indian', 'romance']):
+            elif any(x in g for x in ['german', 'french', 'spanish', 'swedish', 'indian']):
                 cat = 'Regional'
             else:
                 cat = 'Other'
