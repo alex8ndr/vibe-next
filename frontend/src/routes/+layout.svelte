@@ -1,15 +1,26 @@
 <script lang="ts">
 	import "../app.css";
-	import { hasResults, settings, themePreference } from "$lib/stores";
+	import {
+		hasResults,
+		settings,
+		themePreference,
+		recommendations,
+	} from "$lib/stores";
+	import { goto } from "$app/navigation";
 	import { onMount } from "svelte";
+	import { page } from "$app/state";
+
+	const DEV_MODE = import.meta.env.DEV;
 
 	let { children } = $props();
 	let settingsOpen = $state(false);
+	let settingsDropdown = $state<HTMLDivElement | null>(null);
 	let mounted = $state(false);
 
 	onMount(() => {
 		mounted = true;
 		applyTheme($themePreference);
+		syncBackgroundAttr($settings.showBackground);
 	});
 
 	function applyTheme(pref: "light" | "dark" | "system") {
@@ -22,28 +33,51 @@
 		}
 	}
 
+	function syncBackgroundAttr(show: boolean) {
+		if (typeof document === "undefined") return;
+		if (show) {
+			document.documentElement.removeAttribute("data-no-bg");
+		} else {
+			document.documentElement.setAttribute("data-no-bg", "");
+		}
+	}
+
 	$effect(() => {
 		if (mounted) applyTheme($themePreference);
 	});
 
-	function cycleTheme() {
-		const order: ("light" | "dark" | "system")[] = [
-			"system",
-			"light",
-			"dark",
-		];
-		const idx = order.indexOf($themePreference);
-		themePreference.set(order[(idx + 1) % 3]);
+	$effect(() => {
+		if (mounted) syncBackgroundAttr($settings.showBackground);
+	});
+
+	function getActualTheme(): "light" | "dark" {
+		if (typeof window === "undefined") return "dark";
+		return window.matchMedia("(prefers-color-scheme: dark)").matches
+			? "dark"
+			: "light";
 	}
 
-	const themeIcon = $derived(
-		$themePreference === "light"
-			? "☀️"
-			: $themePreference === "dark"
-				? "🌙"
-				: "⚙️",
-	);
+	function setTheme(pref: "light" | "dark" | "system") {
+		themePreference.set(pref);
+	}
+
+	function handleOutsideClick(e: MouseEvent) {
+		if (
+			settingsOpen &&
+			settingsDropdown &&
+			!settingsDropdown.contains(e.target as Node)
+		) {
+			const btn = (e.target as HTMLElement).closest(
+				'.icon-btn[aria-label="Settings"]',
+			);
+			if (!btn) settingsOpen = false;
+		}
+	}
+
+
 </script>
+
+<svelte:window on:click={handleOutsideClick} />
 
 <svelte:head>
 	<title>Vibe</title>
@@ -57,14 +91,39 @@
 
 <div class="app" class:has-results={$hasResults}>
 	<header class="header">
-		<a
-			href="https://alext.dev"
-			class="author"
-			target="_blank"
-			rel="noopener">alext.dev</a
-		>
+		<div class="author-links">
+			<a
+				href="https://alext.dev"
+				class="author"
+				target="_blank"
+				rel="noopener">alext.dev</a
+			>
+			<a
+				href="https://ko-fi.com/alextdev"
+				class="author author-kofi"
+				target="_blank"
+				rel="noopener"
+				aria-label="Support on Ko-fi"
+				title="Support on Ko-fi"
+			>
+				<svg viewBox="0 0 24 24" fill="currentColor" fill-opacity="0.75">
+					<path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.311zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"/>
+				</svg>
+			</a>
+		</div>
 
-		<div class="brand">
+		<a
+			href="/"
+			class="brand"
+			onclick={(e) => {
+				e.preventDefault();
+				recommendations.set({});
+				// Navigate to home if not already there (handles 404 pages)
+				if (page.url.pathname !== "/") {
+					goto("/");
+				}
+			}}
+		>
 			<svg class="logo" viewBox="0 0 40 40" fill="none">
 				<circle
 					cx="20"
@@ -81,17 +140,45 @@
 				/>
 			</svg>
 			<span class="name">Vibe</span>
-		</div>
+		</a>
 
 		<div class="header-actions">
-			<button
-				class="icon-btn"
-				onclick={cycleTheme}
-				title="Theme: {$themePreference}"
-			>
-				{themeIcon}
-			</button>
+			<div class="theme-toggle" title="Theme">
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "light"}
+					onclick={() => setTheme("light")}
+					aria-label="Light theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="5"/>
+						<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+					</svg>
+				</button>
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "system"}
+					onclick={() => setTheme("system")}
+					aria-label="System theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+						<path d="M8 21h8M12 17v4"/>
+					</svg>
+				</button>
+				<button
+					class="theme-btn"
+					class:active={$themePreference === "dark"}
+					onclick={() => setTheme("dark")}
+					aria-label="Dark theme"
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+					</svg>
+				</button>
+			</div>
 
+			<!-- Settings button hidden for now
 			<button
 				class="icon-btn"
 				onclick={() => (settingsOpen = !settingsOpen)}
@@ -111,49 +198,28 @@
 			</button>
 
 			{#if settingsOpen}
-				<div class="dropdown">
+				<div class="dropdown" bind:this={settingsDropdown}>
 					<h4>Settings</h4>
 
-					<label class="setting">
-						<span>Variety</span>
-						<select bind:value={$settings.variety}>
-							<option value={1}>Low</option>
-							<option value={2}>Medium</option>
-							<option value={3}>High</option>
-						</select>
-					</label>
-
-					<label class="setting">
-						<span>Genre Weight</span>
-						<input
-							type="range"
-							min="0"
-							max="5"
-							step="0.5"
-							bind:value={$settings.genreWeight}
-						/>
-						<span class="val">{$settings.genreWeight}</span>
-					</label>
-
-					<label class="setting">
-						<span>Max Results</span>
-						<input
-							type="number"
-							min="3"
-							max="12"
-							bind:value={$settings.maxResults}
-						/>
-					</label>
-
-					<label class="setting">
-						<span>Show Background</span>
-						<input
-							type="checkbox"
-							bind:checked={$settings.showBackground}
-						/>
-					</label>
+					{#if DEV_MODE}
+						<label class="setting dev">
+							<span>Show Background</span>
+							<input
+								type="checkbox"
+								checked={$settings.showBackground}
+								onchange={() =>
+									settings.update((s) => ({
+										...s,
+										showBackground: !s.showBackground,
+									}))}
+							/>
+						</label>
+					{:else}
+						<p class="empty-msg">No global settings</p>
+					{/if}
 				</div>
 			{/if}
+			-->
 		</div>
 	</header>
 
@@ -188,8 +254,25 @@
 		text-decoration: none;
 	}
 
+	.author-links {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+	}
+
 	.author:hover {
 		color: var(--gold);
+	}
+
+	.author-kofi {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.author-kofi svg {
+		width: 1.4rem;
+		height: 1.4rem;
 	}
 
 	.brand {
@@ -199,6 +282,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.brand:hover {
+		text-decoration: none;
 	}
 
 	.logo {
@@ -221,25 +310,47 @@
 		position: relative;
 	}
 
-	.icon-btn {
-		width: 32px;
-		height: 32px;
-		padding: 5px;
-		background: none;
-		border: none;
-		color: var(--text-3);
+	/* Theme toggle segmented control */
+	.theme-toggle {
+		display: flex;
+		background: var(--bg-alt);
 		border-radius: 6px;
+		padding: 2px;
+		gap: 2px;
+	}
+
+	.theme-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 1rem;
+		width: 28px;
+		height: 24px;
+		padding: 3px;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--text-3);
+		cursor: pointer;
+		transition: all 0.15s ease;
 	}
 
-	.icon-btn:hover {
+	.theme-btn:hover {
 		color: var(--text);
-		background: var(--bg-alt);
+		background: var(--surface);
 	}
 
+	.theme-btn.active {
+		background: var(--surface);
+		color: var(--gold);
+		box-shadow: 0 1px 2px var(--shadow);
+	}
+
+	.theme-btn svg {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* 
 	.icon-btn svg {
 		width: 18px;
 		height: 18px;
@@ -279,36 +390,22 @@
 		color: var(--text-2);
 	}
 
-	.setting span:first-child {
-		flex: 1;
-	}
-
-	.setting select,
-	.setting input[type="number"] {
-		padding: 0.25rem 0.4rem;
-		background: var(--bg-alt);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text);
-		font-size: 0.75rem;
-		width: 70px;
-	}
-
-	.setting input[type="range"] {
-		width: 60px;
-		accent-color: var(--gold);
+	.setting.dev {
+		color: #e55;
 	}
 
 	.setting input[type="checkbox"] {
 		accent-color: var(--gold);
 	}
 
-	.setting .val {
-		font-size: 0.7rem;
+	.empty-msg {
+		font-size: 0.75rem;
 		color: var(--text-3);
-		width: 24px;
-		text-align: right;
+		font-style: italic;
+		text-align: center;
+		padding: 0.5rem 0;
 	}
+	*/
 
 	.main {
 		flex: 1;
@@ -325,11 +422,13 @@
 			display: none;
 		}
 
+		/* 
 		.dropdown {
 			position: fixed;
 			left: 1rem;
 			right: 1rem;
 			width: auto;
 		}
+		*/
 	}
 </style>

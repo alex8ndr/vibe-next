@@ -1,0 +1,65 @@
+{
+  "last_updated": "2026-02-04T23:26:54.591315",
+  "last_operation": "full_process",
+  "platform": "Windows",
+  "track_count": 782855,
+  "artist_count": 63067,
+  "scaler_params": {
+    "year": {
+      "min": 2000.0,
+      "max": 2023.0
+    },
+    "key": {
+      "min": 0.0,
+      "max": 11.0
+    },
+    "popularity": {
+      "min": 0.0,
+      "max": 100.0
+    },
+    "acousticness": {
+      "min": 0.0,
+      "max": 0.9959999918937683
+    },
+    "danceability": {
+      "min": 0.0,
+      "max": 0.9929999709129333
+    },
+    "duration_ms": {
+      "min": 2073.0,
+      "max": 6000495.0
+    },
+    "energy": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "instrumentalness": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "liveness": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "loudness": {
+      "min": -58.099998474121094,
+      "max": 6.171999931335449
+    },
+    "speechiness": {
+      "min": 0.0,
+      "max": 0.9710000157356262
+    },
+    "tempo": {
+      "min": 0.0,
+      "max": 249.9929962158203
+    },
+    "valence": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "time_signature": {
+      "min": 0.0,
+      "max": 5.0
+    }
+  }
+}

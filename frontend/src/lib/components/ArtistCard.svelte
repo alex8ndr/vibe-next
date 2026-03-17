@@ -1,19 +1,89 @@
 <script lang="ts">
-    import type { Track } from "$lib/stores";
-    import { nowPlaying } from "$lib/stores";
+    import type { Track, ArtistDebugInfo } from "$lib/stores";
+    import { nowPlaying, sidebarPlaying, loadingTrackId, devSettings, favoriteTracks } from "$lib/stores";
+    import { trackPlayTrack, trackAddFavorite, trackRemoveFavorite } from "$lib/analytics";
     import { onMount } from "svelte";
 
     interface Props {
         artist: string;
         tracks: Track[];
+        onAddToKnown?: () => void;
+        onAddToSearch?: () => void;
+        showFavoriteButton?: boolean;
+        isKnown?: boolean;
+        isAdded?: boolean;
+        debugInfo?: ArtistDebugInfo;
+        staggerIndex?: number;
     }
 
-    let { artist, tracks }: Props = $props();
+    let {
+        artist,
+        tracks,
+        onAddToKnown,
+        onAddToSearch,
+        showFavoriteButton = false,
+        isKnown = false,
+        isAdded = false,
+        debugInfo,
+        staggerIndex = 0,
+    }: Props = $props();
+    
+    function isFavorite(trackId: string): boolean {
+        return $favoriteTracks.some(f => f.track_id === trackId);
+    }
+    
+    function toggleFavorite(track: Track) {
+        const existing = $favoriteTracks.find(f => f.track_id === track.track_id);
+        if (existing) {
+            favoriteTracks.update(list => list.filter(f => f.track_id !== track.track_id));
+            trackRemoveFavorite(track.track_id, track.track_name, artist);
+        } else {
+            favoriteTracks.update(list => [...list, {
+                track_id: track.track_id,
+                track_name: track.track_name,
+                artist_name: artist
+            }]);
+            trackAddFavorite(track.track_id, track.track_name, artist);
+        }
+    }
+    
+    // Format genre profile for display
+    function formatGenreProfile(): string {
+        if (!debugInfo?.genre_profile?.length) return '';
+        return debugInfo.genre_profile
+            .map(g => `${Math.round(g.pct)}% ${g.genre}`)
+            .join(', ');
+    }
+
+    function formatLanguageProfile(): string {
+        if (!debugInfo?.language_profile?.length) return '';
+        return debugInfo.language_profile
+            .map(l => `${Math.round(l.pct)}% ${l.language}`)
+            .join(', ');
+    }
+    
+    const genreProfile = $derived(formatGenreProfile());
+    const languageProfile = $derived(formatLanguageProfile());
+    const showDebug = $derived($devSettings.debugMode && $devSettings.showGenreProfiles);
+    const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
+    const hasTrackFeatures = $derived(tracks.some(t => t.audio_features));
+
+    // Stagger config: delay between each card's iframe init (ms)
+    const STAGGER_DELAY_MS = 150;
 
     let playerEl: HTMLDivElement;
     let controller: any = null;
     let isReady = $state(false);
+    let embedStatus = $state<"loading" | "ready" | "unavailable">("loading");
     let firstTrack = "";
+    let currentTrackId = "";
+    let showActions = $state(false);
+    let isActuallyPlaying = $state(false);
+    let playerMessage = $state<string | null>(null);
+    let loadingTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let initTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let staggerTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let playGeneration = 0;
 
     function getHue(name: string): number {
         let hash = 0;
@@ -23,16 +93,64 @@
         return Math.abs(hash) % 360;
     }
 
-    const hue = getHue(artist);
-    const isPlaying = $derived($nowPlaying?.artist === artist);
-    const playingTrackId = $derived(isPlaying ? $nowPlaying?.trackId : null);
+    const hue = $derived(getHue(artist));
+    const isThisArtist = $derived($nowPlaying?.artist === artist);
+    const playingTrackId = $derived(isThisArtist ? $nowPlaying?.trackId : null);
+    const isLoadingTrack = $derived((id: string) => $loadingTrackId === id);
+    const canUseEmbed = $derived(embedStatus === "ready");
+
+    function clearLoadingTimeout() {
+        if (loadingTimeoutId) {
+            clearTimeout(loadingTimeoutId);
+            loadingTimeoutId = null;
+        }
+    }
+
+    function startLoadingTimeout(trackId: string) {
+        clearLoadingTimeout();
+        loadingTimeoutId = setTimeout(() => {
+            if ($loadingTrackId === trackId) {
+                loadingTrackId.set(null);
+            }
+            if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === trackId && !isActuallyPlaying) {
+                nowPlaying.set(null);
+            }
+            playerMessage = "Spotify preview timed out. Try again or use the embed controls.";
+        }, 10000);
+    }
+
+    function stopSidebarPlayback() {
+        const sidebarCtrl = (window as any).vibeSidebarController;
+        if (sidebarCtrl) {
+            try {
+                sidebarCtrl.pause();
+            } catch {}
+        }
+        sidebarPlaying.set(null);
+    }
 
     onMount(() => {
         firstTrack = tracks[0]?.track_id || "";
+        currentTrackId = firstTrack;
+        embedStatus = "loading";
+        playerMessage = null;
 
         const tryInit = () => {
             const api = (window as any).SpotifyIframeApi;
             if (!api || !playerEl || controller) return;
+
+            if (initTimeoutId) {
+                clearTimeout(initTimeoutId);
+            }
+            initTimeoutId = setTimeout(() => {
+                if (!isReady) {
+                    embedStatus = "unavailable";
+                    playerMessage = "Spotify preview did not initialize for this card.";
+                    if ($loadingTrackId === currentTrackId) {
+                        loadingTrackId.set(null);
+                    }
+                }
+            }, 15000);
 
             api.createController(
                 playerEl,
@@ -51,85 +169,296 @@
 
                     c.addListener("ready", () => {
                         isReady = true;
+                        embedStatus = "ready";
+                        playerMessage = null;
+                        if (initTimeoutId) {
+                            clearTimeout(initTimeoutId);
+                            initTimeoutId = null;
+                        }
                     });
-                    c.addListener("playback_update", () => {
-                        isReady = true;
+                    c.addListener("playback_update", (e: any) => {
+                        const wasPlaying = isActuallyPlaying;
+                        const hasEnded =
+                            Boolean(e.data.isPaused) &&
+                            Number(e.data.duration || 0) > 0 &&
+                            Number(e.data.position || 0) >= Math.max(Number(e.data.duration || 0) - 750, 0);
+
+                        isActuallyPlaying = !e.data.isPaused;
+                        
+                        // Clear loading state when playback starts for this card's current track
+                        if (!e.data.isPaused && $loadingTrackId === currentTrackId) {
+                            loadingTrackId.set(null);
+                            clearLoadingTimeout();
+                            playerMessage = null;
+                        }
+                        
+                        // Sync nowPlaying when user clicks directly on embed's play/pause button
+                        if (!e.data.isPaused && !wasPlaying) {
+                            // Started playing - pause other cards and sidebar, set nowPlaying
+                            const prev = $nowPlaying;
+                            if (prev && prev.artist !== artist) {
+                                window.dispatchEvent(new CustomEvent("vibeReset", { detail: prev.artist }));
+                            }
+                            stopSidebarPlayback();
+                            
+                            const track = tracks.find(t => t.track_id === currentTrackId);
+                            nowPlaying.set({ artist, trackId: currentTrackId, trackName: track?.track_name || "" });
+                        }
+
+                        if (hasEnded) {
+                            isActuallyPlaying = false;
+                            loadingTrackId.set(null);
+                            clearLoadingTimeout();
+                            if ($nowPlaying?.artist === artist && $nowPlaying?.trackId === currentTrackId) {
+                                nowPlaying.set(null);
+                            }
+                        }
                     });
-                    setTimeout(() => {
-                        isReady = true;
-                    }, 3000);
                 },
             );
         };
 
+        const staggeredInit = () => {
+            const delay = staggerIndex * STAGGER_DELAY_MS;
+            if (delay > 0) {
+                staggerTimeoutId = setTimeout(tryInit, delay);
+            } else {
+                tryInit();
+            }
+        };
+
         if ((window as any).SpotifyIframeApi) {
-            tryInit();
+            staggeredInit();
         } else {
             const h = () => {
-                tryInit();
+                staggeredInit();
                 window.removeEventListener("SpotifyIframeApiReady", h);
             };
             window.addEventListener("SpotifyIframeApiReady", h);
         }
 
         const resetHandler = (e: CustomEvent) => {
-            if (e.detail === artist && controller) {
-                controller.pause();
-                if (firstTrack)
-                    controller.loadUri(`spotify:track:${firstTrack}`);
+            if (e.detail === artist) {
+                playGeneration++;
+                if (controller) {
+                    controller.pause();
+                    if (currentTrackId) {
+                        controller.loadUri(`spotify:track:${currentTrackId}`);
+                    }
+                }
+                isActuallyPlaying = false;
+                // Clear loading state if it was for this card
+                if ($loadingTrackId === currentTrackId) {
+                    loadingTrackId.set(null);
+                }
+                clearLoadingTimeout();
             }
         };
         window.addEventListener("vibeReset", resetHandler as EventListener);
-        return () =>
+        return () => {
+            clearLoadingTimeout();
+            if (initTimeoutId) {
+                clearTimeout(initTimeoutId);
+            }
+            if (staggerTimeoutId) {
+                clearTimeout(staggerTimeoutId);
+            }
             window.removeEventListener(
                 "vibeReset",
                 resetHandler as EventListener,
             );
+        };
     });
 
-    function play(trackId: string) {
-        if (!controller) return;
-
-        const prev = $nowPlaying;
-
-        if (prev?.artist === artist && prev?.trackId === trackId) {
-            controller.togglePlay();
-            nowPlaying.set(null);
+    function play(trackId: string, trackName: string) {
+        if (!controller || !isReady || embedStatus !== "ready") {
             return;
         }
 
+        // If another track is loading, cancel it and proceed with the new one
+        if ($loadingTrackId && $loadingTrackId !== trackId) {
+            loadingTrackId.set(null);
+        }
+        clearLoadingTimeout();
+        playerMessage = null;
+
+        const prev = $nowPlaying;
+
+        // Track is already loaded in THIS embed - just toggle play/pause
+        if (currentTrackId === trackId) {
+            if (isActuallyPlaying) {
+                controller.pause();
+                // Don't clear nowPlaying - keep track highlighted (green) when paused
+            } else {
+                // Reset other cards first
+                if (prev && prev.artist !== artist) {
+                    window.dispatchEvent(
+                        new CustomEvent("vibeReset", { detail: prev.artist }),
+                    );
+                }
+                stopSidebarPlayback();
+                controller.resume();
+                nowPlaying.set({ artist, trackId, trackName });
+            }
+            return;
+        }
+
+        // Different track - need to load it
+        
+        // Reset other artist's card if playing
         if (prev && prev.artist !== artist) {
             window.dispatchEvent(
                 new CustomEvent("vibeReset", { detail: prev.artist }),
             );
         }
 
+        stopSidebarPlayback();
+
+        // Set loading state before starting to load
+        loadingTrackId.set(trackId);
+        startLoadingTimeout(trackId);
+        
+        // Load and play new track (small delay helps with embed race conditions)
+        currentTrackId = trackId;
+        const gen = ++playGeneration;
         controller.loadUri(`spotify:track:${trackId}`);
-        controller.play();
-        nowPlaying.set({ artist, trackId });
+        setTimeout(() => {
+            if (playGeneration === gen) controller.play();
+        }, 50);
+        nowPlaying.set({ artist, trackId, trackName });
+        trackPlayTrack(trackId, trackName, artist);
     }
 </script>
 
-<article class="card" style:--hue={hue}>
-    <h3 class="title">{artist}</h3>
+<article
+    class="card"
+    class:known={isKnown}
+    style:--hue={hue}
+    onmouseenter={() => (showActions = true)}
+    onmouseleave={() => (showActions = false)}
+>
+    <div class="card-header">
+        <div class="title-row">
+            <h3 class="title">{artist}</h3>
+            {#if showDebug && (genreProfile || languageProfile)}
+                <span class="genre-profile">
+                    {#if genreProfile}{genreProfile}{/if}
+                    {#if genreProfile && languageProfile} • {/if}
+                    {#if languageProfile}{languageProfile}{/if}
+                </span>
+            {/if}
+        </div>
+        <div class="card-actions" class:visible={showActions}>
+            {#if onAddToKnown}
+                <button
+                    class="action-btn"
+                    class:active={isKnown}
+                    onclick={onAddToKnown}
+                    title={isKnown
+                        ? "Remove from known list"
+                        : "Add to known list"}
+                >
+                    {isKnown ? "✓" : "👁"}
+                </button>
+            {/if}
+            {#if onAddToSearch}
+                <button
+                    class="action-btn"
+                    onclick={onAddToSearch}
+                    class:active={isAdded}
+                    title={isAdded ? "Remove from search" : "Add to search"}
+                >
+                    {isAdded ? "-" : "+"}
+                </button>
+            {/if}
+        </div>
+    </div>
 
     <div class="embed-wrap">
         <div class="embed" bind:this={playerEl}></div>
         <div class="skeleton" class:hide={isReady}></div>
     </div>
+    {#if playerMessage}
+        <p class="embed-message">{playerMessage}</p>
+    {/if}
 
     <div class="tracks">
         {#each tracks as t (t.track_id)}
-            <button
-                class="trk"
-                class:playing={playingTrackId === t.track_id}
-                onclick={() => play(t.track_id)}
-            >
-                <span class="ico"
-                    >{playingTrackId === t.track_id ? "❚❚" : "♪"}</span
+            {@const isSelected = playingTrackId === t.track_id}
+            {@const isLoading = isLoadingTrack(t.track_id)}
+            <div class="trk-row">
+                <button
+                    class="trk"
+                    class:playing={isSelected}
+                    class:loading={isLoading}
+                    disabled={!canUseEmbed}
+                    title={canUseEmbed ? "Play preview" : embedStatus === "loading" ? "Spotify preview is still loading" : "Spotify preview is unavailable"}
+                    onclick={() => play(t.track_id, t.track_name)}
                 >
-                <span class="txt">{t.track_name}</span>
-            </button>
+                    <span class="ico">
+                        {#if isLoading}
+                            <!-- Loading spinner -->
+                            <svg class="spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+                            </svg>
+                        {:else if isSelected && isActuallyPlaying}
+                            <!-- Pause Icon -->
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5V19M16 5V19" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+                        {:else if isSelected && !isActuallyPlaying}
+                            <!-- Play Icon (paused state) -->
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        {:else}
+                            <!-- Note Icon -->
+                            <svg class="note" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                            <!-- Play Icon on hover -->
+                            <svg class="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        {/if}
+                    </span>
+                    <span class="txt">{t.track_name}</span>
+                </button>
+                {#if showFavoriteButton}
+                    <button
+                        class="fav-btn"
+                        class:is-favorite={isFavorite(t.track_id)}
+                        onclick={() => toggleFavorite(t)}
+                        title={isFavorite(t.track_id) ? "Remove from favourites" : "Add to favourites"}
+                    >
+                        ♥
+                    </button>
+                {/if}
+            </div>
+            
+            {#if showAudioFeatures && t.audio_features}
+                <div class="audio-features">
+                    <div class="audio-features-label">Song features:</div>
+                    {#each Object.entries(t.audio_features) as [key, value]}
+                        {#if key === 'genre'}
+                            <div class="feature genre-feature">
+                                <span class="feature-name">genre</span>
+                                <span class="feature-value-text">{value}</span>
+                            </div>
+                        {:else if typeof value === 'number'}
+                            <div class="feature">
+                                <span class="feature-name">{key}</span>
+                                <div class="feature-bar">
+                                    <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
+                                </div>
+                                <span class="feature-value">{(value as number).toFixed(2)}</span>
+                            </div>
+                        {:else}
+                            <div class="feature genre-feature">
+                                <span class="feature-name">{key}</span>
+                                <span class="feature-value-text">{String(value)}</span>
+                            </div>
+                        {/if}
+                    {/each}
+                </div>
+            {:else if showAudioFeatures}
+                <div class="audio-features audio-features-missing">
+                    <span class="audio-features-label">No audio data - run new search with debug enabled</span>
+                </div>
+            {/if}
         {/each}
     </div>
 </article>
@@ -141,16 +470,87 @@
         border-radius: 10px;
         padding: 0.85rem;
         overflow: hidden;
+        transition: border-color 0.15s;
+    }
+
+    .card.known {
+        border-color: var(--gold);
+        opacity: 0.7;
+    }
+
+    .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.6rem;
+        min-height: 24px;
+    }
+
+    .title-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        min-width: 0;
+        flex: 1;
     }
 
     .title {
         font-size: 1rem;
         font-weight: 600;
-        margin-bottom: 0.6rem;
         color: var(--text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    
+    .genre-profile {
+        font-size: 0.65rem;
+        color: var(--text-3);
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .card-actions {
+        display: flex;
+        gap: 0.25rem;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+
+    .card-actions.visible {
+        opacity: 1;
+    }
+
+    .action-btn {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        color: var(--text-2);
+        transition: all 0.15s;
+    }
+
+    .action-btn:hover:not(:disabled) {
+        border-color: var(--gold);
+        color: var(--text);
+    }
+
+    .action-btn.active {
+        background: var(--gold-glow);
+        border-color: var(--gold);
+        color: var(--gold);
+    }
+
+    .action-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
     }
 
     .embed-wrap {
@@ -199,6 +599,12 @@
         opacity: 0;
     }
 
+    .embed-message {
+        margin: -0.15rem 0 0.5rem 0;
+        font-size: 0.68rem;
+        color: var(--text-3);
+    }
+
     @keyframes shimmer {
         from {
             background-position: 200% 0;
@@ -214,7 +620,18 @@
         gap: 0.25rem;
     }
 
+    .trk-row {
+        display: flex;
+        gap: 0.25rem;
+    }
+
     .trk {
+        --trk-sat: 26%;
+        --trk-lit: 24%;
+        --trk-sat2: 20%;
+        --trk-lit2: 18%;
+        flex: 1;
+        min-width: 0;
         display: flex;
         align-items: center;
         gap: 0.45rem;
@@ -223,8 +640,8 @@
         border-radius: 5px;
         background: linear-gradient(
             135deg,
-            hsl(var(--hue), 26%, 24%) 0%,
-            hsl(calc(var(--hue) + 20), 20%, 18%) 100%
+            hsl(var(--hue), var(--trk-sat), var(--trk-lit)) 0%,
+            hsl(calc(var(--hue) + 20), var(--trk-sat2), var(--trk-lit2)) 100%
         );
         color: #ddd;
         font-size: 0.78rem;
@@ -249,25 +666,55 @@
         filter: brightness(1.1);
     }
 
-    .trk.playing {
-        background: linear-gradient(135deg, #1db954, #169c46);
-        color: #fff;
+    .trk:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+        filter: none;
     }
 
-    .trk.playing::before {
-        background: #fff;
+    .trk:disabled:hover {
+        filter: none;
+    }
+
+
+
+    .spinner {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
     }
 
     .ico {
-        width: 0.85rem;
-        text-align: center;
-        font-size: 0.65rem;
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         opacity: 0.7;
+    }
+
+    .trk:hover .ico {
+        opacity: 1;
     }
 
     .trk.playing .ico {
         opacity: 1;
-        letter-spacing: -2px;
+    }
+
+    /* Show play icon on hover if not playing */
+    .trk:hover .note {
+        display: none;
+    }
+    
+    .trk .play-icon {
+        display: none;
+    }
+
+    .trk:hover .play-icon {
+        display: block;
     }
 
     .txt {
@@ -277,8 +724,43 @@
         white-space: nowrap;
     }
 
+    .fav-btn {
+        width: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(
+            135deg,
+            hsl(var(--hue), 26%, 24%) 0%,
+            hsl(calc(var(--hue) + 20), 20%, 18%) 100%
+        );
+        border: none;
+        border-radius: 5px;
+        font-size: 0.7rem;
+        color: #ddd;
+        opacity: 0.7;
+        transition: opacity 0.12s;
+    }
+
+    .fav-btn:hover {
+        opacity: 1;
+        color: #ff6b8a;
+    }
+    
+    .fav-btn.is-favorite {
+        opacity: 1;
+        color: #ff6b8a;
+    }
+
     @media (prefers-color-scheme: light) {
         .trk {
+            --trk-sat: 20%;
+            --trk-lit: 38%;
+            --trk-sat2: 16%;
+            --trk-lit2: 32%;
+        }
+
+        .fav-btn {
             background: linear-gradient(
                 135deg,
                 hsl(var(--hue), 20%, 38%) 0%,
@@ -288,10 +770,125 @@
     }
 
     :global([data-theme="light"]) .trk {
+        --trk-sat: 20%;
+        --trk-lit: 38%;
+        --trk-sat2: 16%;
+        --trk-lit2: 32%;
+    }
+
+    :global([data-theme="light"]) .fav-btn {
         background: linear-gradient(
             135deg,
             hsl(var(--hue), 20%, 38%) 0%,
             hsl(calc(var(--hue) + 20), 16%, 32%) 100%
         );
+    }
+
+    /* Playing/loading states MUST come after theme blocks to win specificity */
+    .trk.playing {
+        --trk-sat: 60%;
+        --trk-lit: 30%;
+        --trk-sat2: 30%;
+        --trk-lit2: 24%;
+        color: #fff;
+    }
+
+    .trk.playing::before {
+        background: hsl(var(--hue), 60%, 58%);
+        width: 3px;
+    }
+
+    .trk.loading {
+        --trk-sat: 35%;
+        --trk-lit: 28%;
+        --trk-sat2: 30%;
+        --trk-lit2: 22%;
+        color: #fff;
+        animation: pulse-loading 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-loading {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+    }
+
+    @media (hover: none) {
+        .card-actions {
+            opacity: 1;
+        }
+    }
+    
+    /* Audio features debug display */
+    .audio-features {
+        margin-top: 0.25rem;
+        margin-bottom: 0.25rem;
+        padding: 0.4rem 0.5rem;
+        background: var(--bg-alt);
+        border-radius: 5px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+    
+    .audio-features-missing {
+        opacity: 0.5;
+        font-style: italic;
+    }
+    
+    .audio-features-label {
+        font-size: 0.6rem;
+        color: var(--text-3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.1rem;
+    }
+    
+    .feature {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.65rem;
+    }
+    
+    .feature-name {
+        width: 80px;
+        color: var(--text-3);
+        text-transform: capitalize;
+    }
+    
+    .feature-bar {
+        flex: 1;
+        height: 4px;
+        background: var(--bg-alt);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    
+    .feature-fill {
+        height: 100%;
+        background: var(--gold);
+        border-radius: 2px;
+    }
+    
+    .feature-value {
+        width: 35px;
+        text-align: right;
+        color: var(--text-2);
+        font-family: monospace;
+    }
+    
+    .genre-feature {
+        display: flex;
+        gap: 0.5rem;
+        font-size: 0.7rem;
+        padding: 0.25rem 0;
+        border-top: 1px solid var(--border);
+        margin-top: 0.25rem;
+    }
+    
+    .feature-value-text {
+        flex: 1;
+        color: var(--text-2);
+        font-style: italic;
     }
 </style>

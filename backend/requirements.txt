@@ -3,3 +3,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
 polars[rtcompat]>=1.37.0
 numpy>=2.2.0
+python-dotenv>=1.0.0
+
+# Backblaze B2 sync (auto-pull data in container)
+b2sdk>=1.20.0
