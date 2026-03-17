@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
-from logic import (
+from .logic import (
     MusicData,
     ParquetDataSource,
     generate_recommendations,
