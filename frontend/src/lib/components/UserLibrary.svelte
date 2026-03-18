@@ -414,8 +414,7 @@
         margin: 0 0 0.5rem 0;
     }
 
-    .player-status-note,
-    .copy-status {
+    .player-status-note {
         font-size: 0.65rem;
         color: var(--text-3);
     }

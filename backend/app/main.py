@@ -24,16 +24,28 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
-from .logic import (
-    MusicData,
-    ParquetDataSource,
-    generate_recommendations,
-    GENRE_FOCUS,
-    LANGUAGE_FOCUS,
-    TRACKS_PER_ARTIST,
-    VARIETY,
-    MAX_ARTISTS,
-)
+try:
+    from .logic import (
+        MusicData,
+        ParquetDataSource,
+        generate_recommendations,
+        GENRE_FOCUS,
+        LANGUAGE_FOCUS,
+        TRACKS_PER_ARTIST,
+        VARIETY,
+        MAX_ARTISTS,
+    )
+except ImportError:
+    from logic import (
+        MusicData,
+        ParquetDataSource,
+        generate_recommendations,
+        GENRE_FOCUS,
+        LANGUAGE_FOCUS,
+        TRACKS_PER_ARTIST,
+        VARIETY,
+        MAX_ARTISTS,
+    )
 
 # Data paths - configurable via environment in production
 TRACKS_PATH = Path(__file__).parent.parent / "data" / "tracks.parquet"
@@ -138,7 +150,8 @@ security = HTTPBasic()
 
 def get_admin(credentials: HTTPBasicCredentials = Depends(security)):
     """Check basic auth credentials."""
-    correct_username = secrets.compare_digest(credentials.username, "admin")
+    username = os.getenv("ANALYTICS_USERNAME", "admin")
+    correct_username = secrets.compare_digest(credentials.username, username)
     password = os.getenv("ANALYTICS_PASSWORD", "admin")
     
     # Reject default password in non-local environments
@@ -154,7 +167,7 @@ def get_admin(credentials: HTTPBasicCredentials = Depends(security)):
     if not (correct_username and correct_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
@@ -650,4 +663,4 @@ async def analytics_data(username: str = Depends(get_admin)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

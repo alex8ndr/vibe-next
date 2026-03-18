@@ -4,11 +4,7 @@ from __future__ import annotations
 
 # Genre-level language overrides.
 GENRE_LANG_OVERRIDES: dict[str, str] = {
-    "k-pop": "ko",
     "sertanejo": "pt",
-    "j-pop": "ja",
-    "j-rock": "ja",
-    "cantopop": "zh",
     "schlager": "de",
     "forro": "pt",
     "samba": "pt",

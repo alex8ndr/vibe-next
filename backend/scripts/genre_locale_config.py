@@ -45,9 +45,9 @@ LOCALE_TO_LANG: dict[str, str | None] = {
 
     # Asian — East
     "chinese": "zh", "taiwanese": "zh", "taiwan": "zh",
-    "mandarin": "zh", "cantonese": "zh",
-    "korean": "ko",
-    "japanese": "ja",
+    "mandarin": "zh", "cantonese": "zh", "c-": "zh",
+    "korean": "ko", "k-": "ko",
+    "japanese": "ja", "j-": "ja",
 
     # Asian — Southeast
     "indonesian": "id", "thai": "th", "vietnamese": "vi",
@@ -109,6 +109,18 @@ LOCALE_PHRASE_RULES: dict[str, tuple[str | None, str | None]] = {
     "latin jazz": ("salsa", None),
     "latin soul": ("soul", None),
     "taiwanese indigenous": ("folk", "zh"),
+    # CJK genre aliases that aren't prefix-strippable
+    "jpop": ("pop", "ja"),
+    "kpop": ("pop", "ko"),
+    "cantopop": ("pop", "zh"),
+    "mandopop": ("pop", "zh"),
+    "anime": ("pop", "ja"),
+    "anime score": ("pop", "ja"),
+    "otacore": ("pop", "ja"),
+    "vocaloid": ("pop", "ja"),
+    "utaite": ("pop", "ja"),
+    "visual kei": ("rock", "ja"),
+    "j-division": ("pop", "ja"),
 }
 
 # Tokens removed after locale stripping (e.g. "rock en espanol" -> "rock").
@@ -117,27 +129,4 @@ LOCALE_CONNECTOR_TOKENS: tuple[str, ...] = (
 )
 
 # Targeted scene remaps after locale stripping resolves a broad base genre.
-LOCALE_SCENE_REMAPS: dict[str, dict[str, str]] = {
-    "japanese": {
-        "pop": "j-pop",
-        "rock": "j-rock",
-    },
-    "korean": {
-        "pop": "k-pop",
-    },
-    "chinese": {
-        "pop": "cantopop",
-    },
-    "taiwanese": {
-        "pop": "cantopop",
-    },
-    "taiwan": {
-        "pop": "cantopop",
-    },
-    "mandarin": {
-        "pop": "cantopop",
-    },
-    "cantonese": {
-        "pop": "cantopop",
-    },
-}
+LOCALE_SCENE_REMAPS: dict[str, dict[str, str]] = {}

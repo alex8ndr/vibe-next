@@ -141,12 +141,7 @@ AUDIODB_GENRE_MAP = {
     'indie poptimism': 'indie-pop', 'indie dance': 'dance', 'indietronica': 'indie-pop',
     'vapor soul': 'chill', 'indie soul': 'soul', 'indie emo': 'emo',
     'post-teen pop': 'pop', 'viral pop': 'pop',
-    
-    # === K-Pop / Asian ===
-    'k-pop': 'k-pop', 'k-rap': 'k-pop', 'j-pop': 'j-pop', 'j-dance': 'j-pop',
-    'j-rock': 'j-rock', 'visual kei': 'j-rock',
-    'c-pop': 'cantopop', 'mandopop': 'cantopop', 'cantopop': 'cantopop',
-    
+        
     # === Hip-Hop / R&B ===
     'hip hop': 'hip-hop',
     'rap': 'hip-hop', 'trap': 'hip-hop', 'g-funk': 'hip-hop', 'emo rap': 'hip-hop',
@@ -233,7 +228,8 @@ AUDIODB_GENRE_MAP = {
   'filmi': 'pop-film', 'nova mpb': 'samba',
   'francoton': 'dancehall', 'azontobeats': 'afrobeat',
   'hindi pop': 'indian', 'hindi indie': 'indian',
-  'j-division': 'j-pop', 'otacore': 'j-pop',
+
+
     
   # === Christian / Worship ===
   'christian': 'ccm', 'christian hip hop': 'ccm', 'ccm': 'ccm', 'christian rock': 'christian-rock',
@@ -263,7 +259,8 @@ AUDIODB_GENRE_MAP = {
   'chamber music': 'classical', 'rockabilly': 'rock-n-roll',
   'bhajan': 'indian', 'devotional': 'indian', 'kirtan': 'indian',
   'schlager': 'schlager',
-  'anime': 'j-pop', 'anime score': 'j-pop',
+
+
   'boom bap': 'hardcore-hip-hop', 'east coast hip hop': 'hardcore-hip-hop',
     'lo-fi': 'chill',
   'chanson': 'pop',
@@ -276,7 +273,8 @@ AUDIODB_GENRE_MAP = {
   'soca': 'dancehall', 'calypso': 'dancehall',
   'dembow': 'latin-urban', 'perreo': 'latin-urban',
   'polka': 'folk',
-  'vocaloid': 'j-pop', 'utaite': 'j-pop',
+
+
   'pc music': 'hyperpop',
   'amapiano': 'deep-house',
   'drill': 'drill', 'uk drill': 'drill', 'brooklyn drill': 'drill', 'chicago drill': 'drill',
@@ -302,7 +300,7 @@ AUDIODB_GENRE_MAP = {
   'ranchera': 'corrido', 'grupera': 'corrido',
   'musica mexicana': 'corrido',
   'lounge': 'chill', 'freestyle': 'dance',
-  'fado': 'folk', 'k-ballad': 'k-pop',
+  'fado': 'folk', 'k-ballad': 'pop',
 
     # === Merged from compound fallback layer ===
     'country hip hop': 'hip-hop', 'country rap': 'hip-hop',

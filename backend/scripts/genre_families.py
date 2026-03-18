@@ -82,7 +82,7 @@ GENRE_DEFINITIONS = {
     'power-pop':        {'emo_pop_punk': 0.5, 'pop': 0.5, 'rock': 0.3},
     
     # =========================================================================
-    # POP & K-POP
+    # POP
     # =========================================================================
     'pop':              {'pop': 1.0},
     'dance':            {'pop': 0.6, 'electronic_house': 0.6, 'hip_hop': 0.2},
@@ -90,8 +90,6 @@ GENRE_DEFINITIONS = {
     'hyperpop':         {'pop': 0.3, 'electronic_techno': 0.3, 'alternative': 0.3, 'progressive': 0.3},  # 100 gecs, SOPHIE
     'schlager':         {'pop': 0.6, 'acoustic_folk': 0.3, 'classical_cinematic': 0.1}, # German Schlager
     
-    'k-pop':            {'pop': 0.5, 'hip_hop': 0.3, 'electronic_house': 0.2, 'rnb_soul': 0.2},
-    'cantopop':         {'pop': 0.6, 'rnb_soul': 0.3, 'electronic_house': 0.2},
     
     # =========================================================================
     # HIP-HOP & R&B
@@ -223,8 +221,7 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     'latin-urban':      {'hip_hop': 0.7, 'latin_tropical': 0.6, 'pop': 0.4}, # Reggaeton/Trap
     
-    'j-pop':            {'pop': 0.6, 'electronic_house': 0.2, 'alternative': 0.2},
-    'j-rock':           {'rock': 0.6, 'alternative': 0.3, 'pop': 0.2},
+
 
     'hardcore-hip-hop': {'hip_hop': 0.6, 'rnb_soul': 0.3}, # Aggressive Rap (Wu-Tang, DMX)
     'hardcore-punk':    {'punk': 0.6, 'metal': 0.2},

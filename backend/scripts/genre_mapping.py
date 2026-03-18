@@ -317,8 +317,6 @@ def map_artist_tags_with_lang_signal(tags: list[str]) -> tuple[str | None, str |
     first_mapped_is_locale: bool | None = None
     all_langs: list[str] = []
     has_locale_signal = False
-    explicit_valid_genre_votes: Counter[str] = Counter()
-    first_explicit_valid_genre: str | None = None
 
     for raw_tag in tags:
         tag = (raw_tag or "").lower().strip()
@@ -348,30 +346,11 @@ def map_artist_tags_with_lang_signal(tags: list[str]) -> tuple[str | None, str |
             if first_mapped_is_locale is None:
                 first_mapped_is_locale = False
 
-            if tag in _VALID_GENRES:
-                explicit_valid_genre_votes[mapped_genre] += 1
-                if first_explicit_valid_genre is None:
-                    first_explicit_valid_genre = mapped_genre
-
     if locale_count == 1 and first_mapped_is_locale is False:
         has_locale_signal = False
 
-    explicit_valid_choice: str | None = None
-    if explicit_valid_genre_votes:
-        top_count = max(explicit_valid_genre_votes.values())
-        top_genres = {
-            genre for genre, count in explicit_valid_genre_votes.items() if count == top_count
-        }
-        single_vote_ambiguous = top_count == 1 and len(explicit_valid_genre_votes) > 1
-        if not single_vote_ambiguous:
-            if first_explicit_valid_genre in top_genres:
-                explicit_valid_choice = first_explicit_valid_genre
-            else:
-                explicit_valid_choice = sorted(top_genres)[0]
-
     return (
-        explicit_valid_choice
-        or _choose_artist_genre(
+        _choose_artist_genre(
             first_standard,
             first_locale_genre,
             locale_count,

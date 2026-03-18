@@ -25,6 +25,11 @@ def _b2_configured() -> bool:
     )
 
 
+def _skip_b2_sync() -> bool:
+    value = os.environ.get("VIBE_SKIP_B2_SYNC", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _all_files_present() -> bool:
     return all(path.exists() for path in SERVING_FILES)
 
@@ -94,6 +99,15 @@ def _download_data() -> None:
 
 
 def main() -> int:
+    if _skip_b2_sync():
+        if _all_files_present():
+            size_mb = _local_total_mb()
+            print(f"[ensure_data] B2 sync skipped by VIBE_SKIP_B2_SYNC, using local split data ({size_mb:.1f} MB total)")
+            return 0
+        print("[ensure_data] ERROR: VIBE_SKIP_B2_SYNC is enabled but local split data is missing")
+        print(f"[ensure_data] Missing: {_format_missing_files()}")
+        return 1
+
     if not _b2_configured():
         if _all_files_present():
             print("[ensure_data] B2 not configured, using existing local split data")
