@@ -853,6 +853,8 @@ def generate_recommendations(
                     continue
                 offset = slider_value * weight * VIBE_SLIDER_STRENGTH * FEATURE_WEIGHTS[feature]
                 seeds_audio_stack[:, feature_idx] += offset
+
+    weights_arr = np.asarray(weights, dtype=np.float32)
     
     t_prep = perf_counter()
     # Audio-only candidate generation: fast 12D matmul to find candidates before rerank,
@@ -866,8 +868,10 @@ def generate_recommendations(
         batch = seeds_audio_stack[start:start + AUDIO_CANDIDATE_BATCH_SEEDS]
         batch_norms_sq = np.sum(batch ** 2, axis=1, keepdims=True)
         batch_dots = batch @ matrix_audio.T
-        batch_d_audio_sq = data.audio_norms_sq + batch_norms_sq - 2.0 * batch_dots
-        batch_min = np.min(batch_d_audio_sq, axis=0)
+        batch_dots *= -2.0
+        batch_dots += data.audio_norms_sq
+        batch_dots += batch_norms_sq
+        batch_min = np.min(batch_dots, axis=0)
         if d_audio_sq_min is None:
             d_audio_sq_min = batch_min
         else:
@@ -876,15 +880,16 @@ def generate_recommendations(
     if fetch_k >= len(matrix_audio):
         candidates = np.arange(len(matrix_audio), dtype=np.int32)
     else:
-        top_k_idx = np.argpartition(d_audio_sq_min, fetch_k)[:fetch_k]
-        candidates = np.sort(top_k_idx)
+        top_k_idx = np.argpartition(d_audio_sq_min, fetch_k - 1)[:fetch_k]
+        candidates = top_k_idx.astype(np.int32, copy=False)
+    t_audio_scan = perf_counter()
     
     # Recompute per-seed audio distances only on the final candidate subset.
     candidate_audio = matrix_audio[candidates]
     candidate_audio_norms_sq = data.audio_norms_sq[candidates]
     seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
     dot_products_cand = seeds_audio_stack @ candidate_audio.T
-    d_audio = np.sqrt(np.maximum(candidate_audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_cand, 0))
+    d_audio_sq = np.maximum(candidate_audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_cand, 0.0)
     del d_audio_sq_min, dot_products_cand
     
     t_audio = perf_counter()
@@ -909,10 +914,9 @@ def generate_recommendations(
     effective_language_weight = LANGUAGE_WEIGHT_CURVE[language_weight]
     
     # Combined distance per seed
-    d_total_stack = np.sqrt(d_audio**2 + (d_genre * effective_genre_weight)**2)
+    d_total_stack = np.sqrt(d_audio_sq + (d_genre * effective_genre_weight)**2)
     
     # Hierarchical aggregation: low tau within artists, high tau between
-    weights_arr = np.array(weights, dtype=np.float32)
     d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
 
     # Language distance term: d_lang = 0 when candidate language matches query language, else 1.
@@ -1079,13 +1083,32 @@ def generate_recommendations(
             debug_info[artist] = artist_debug
     
     t_postprocess = perf_counter()
+    perf_info = {
+        "seeds_ms": int(1000 * (t_seeds - t_start)),
+        "prep_ms": int(1000 * (t_prep - t_seeds)),
+        "audio_ms": int(1000 * (t_audio - t_prep)),
+        "audio_scan_ms": int(1000 * (t_audio_scan - t_prep)),
+        "audio_refine_ms": int(1000 * (t_audio - t_audio_scan)),
+        "genre_ms": int(1000 * (t_genre - t_audio)),
+        "lang_ms": int(1000 * (t_language - t_genre)),
+        "adjust_ms": int(1000 * (t_adjust - t_language)),
+        "rank_ms": int(1000 * (t_rank - t_adjust)),
+        "post_ms": int(1000 * (t_postprocess - t_rank)),
+        "total_ms": int(1000 * (t_postprocess - t_start)),
+        "candidates": int(len(candidates)),
+        "seed_count": int(len(seed_indices)),
+    }
     print(f"[perf] seeds={1000*(t_seeds-t_start):.0f}ms prep={1000*(t_prep-t_seeds):.0f}ms "
-          f"audio={1000*(t_audio-t_prep):.0f}ms genre={1000*(t_genre-t_audio):.0f}ms "
-            f"lang={1000*(t_language-t_genre):.0f}ms adjust={1000*(t_adjust-t_language):.0f}ms "
-            f"rank={1000*(t_rank-t_adjust):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
-          f"TOTAL={1000*(t_postprocess-t_start):.0f}ms candidates={len(candidates)}")
+          f"audio={1000*(t_audio-t_prep):.0f}ms audio_scan={1000*(t_audio_scan-t_prep):.0f}ms "
+          f"audio_refine={1000*(t_audio-t_audio_scan):.0f}ms "
+          f"genre={1000*(t_genre-t_audio):.0f}ms "
+          f"lang={1000*(t_language-t_genre):.0f}ms adjust={1000*(t_adjust-t_language):.0f}ms "
+          f"rank={1000*(t_rank-t_adjust):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
+          f"TOTAL={1000*(t_postprocess-t_start):.0f}ms candidates={len(candidates)} "
+          f"seeds={len(seed_indices)}")
     meta = {
         "has_more_candidates": has_more_candidates,
+        "perf": perf_info,
     }
     if debug:
         meta["debug"] = debug_info
