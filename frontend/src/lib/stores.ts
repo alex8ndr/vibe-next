@@ -143,6 +143,25 @@ export const devSettings = createPersistedStore('vibe-dev-settings', {
 });
 
 // Client ID for analytics (persisted per-browser)
+function generateClientId(): string {
+    // randomUUID is unavailable on some HTTP/non-secure contexts.
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+
+    const rand = Math.random().toString(36).slice(2);
+    return `vibe-${Date.now()}-${rand}`;
+}
+
 function getOrCreateClientId(): string {
     if (!browser) return 'ssr';
     const key = 'vibe-client-id';
@@ -153,7 +172,7 @@ function getOrCreateClientId(): string {
         // Safari private mode or quota errors
     }
     if (!id) {
-        id = crypto.randomUUID();
+        id = generateClientId();
         try {
             localStorage.setItem(key, id);
         } catch {
