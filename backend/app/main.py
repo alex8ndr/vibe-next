@@ -55,6 +55,7 @@ CACHE_PATH = Path(__file__).parent.parent / "data" / ".music_data_cache.pkl"
 
 # Data caching - disabled by default (safe for production). Enable for dev with ENABLE_DATA_CACHE=true
 ENABLE_DATA_CACHE = os.getenv("ENABLE_DATA_CACHE", "").lower() == "true"
+WARMUP_RECOMMENDER_ON_STARTUP = os.getenv("WARMUP_RECOMMENDER_ON_STARTUP", "true").lower() in ("1", "true", "yes")
 
 # Global data container
 music_data: MusicData | None = None
@@ -110,12 +111,40 @@ def _load_cached_data() -> MusicData:
     return music_data
 
 
+def _warmup_recommender() -> None:
+    """Prime query-time caches so first user request avoids cold-start spikes."""
+    if not WARMUP_RECOMMENDER_ON_STARTUP:
+        return
+    if music_data is None or not music_data.artists_list:
+        return
+
+    warm_artist = music_data.artists_list[0]
+    t0 = perf_counter()
+    try:
+        generate_recommendations(
+            data=music_data,
+            input_artists=[warm_artist],
+            max_artists=1,
+            tracks_per_artist=1,
+            genre_weight=GENRE_FOCUS,
+            language_weight=LANGUAGE_FOCUS,
+            diversity=VARIETY,
+            debug=False,
+            debug_audio=False,
+        )
+        elapsed = perf_counter() - t0
+        print(f"[startup] Recommender warmup complete in {elapsed:.2f}s (seed={warm_artist})")
+    except Exception as exc:
+        print(f"[startup] Recommender warmup skipped due to error: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load data once at startup, cleanup on shutdown."""
     global music_data
     print("[startup] Entering FastAPI lifespan startup")
     _load_cached_data()
+    _warmup_recommender()
     print("[startup] Startup complete, API ready")
     
     yield

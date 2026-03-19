@@ -79,17 +79,40 @@ VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
 # Sample size for Gumbel noise distribution
 SAMPLE_SIZE = 5000
 
-# ANN overfetch multiplier: fetch K*ANN_OVERFETCH candidates from audio-only ANN
-ANN_OVERFETCH = 20
+# Dynamic overfetch and sampled percentage by genre weight.
+DYNAMIC_CANDIDATE_PLAN_BY_GENRE_WEIGHT: dict[int, dict[str, float | int | None]] = {
+    0: {"overfetch": 20, "genre_target_ratio": None},
+    1: {"overfetch": 25, "genre_target_ratio": 0.64},
+    2: {"overfetch": 30, "genre_target_ratio": 0.32},
+    3: {"overfetch": 40, "genre_target_ratio": 0.24},
+    4: {"overfetch": 50, "genre_target_ratio": 0.16},
+}
+
+# Optional language-aware prefilter.
+LANGUAGE_PREFILTER_ENABLED = True
+LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT: dict[int, float] = {
+    2: 0.50,
+    3: 0.40,
+    4: 0.30,
+}
 
 # Limit temporary query allocations when scanning the full audio matrix.
 # Each batch allocates roughly `batch_size * n_tracks * 4 bytes` for the
 # temporary squared-distance buffer before reducing to a single min vector.
-AUDIO_CANDIDATE_BATCH_SEEDS = 4
+AUDIO_SCAN_SCRATCH_TARGET_MB = 96
 
 # Spotify track IDs are typically 22 bytes; keep a lower bound so the lookup
 # array stays fixed-width and compact even on tiny dev fixtures.
 MIN_TRACK_ID_BYTES = 22
+
+
+def _get_audio_scan_seed_batch_size(n_tracks: int, n_seeds: int) -> int:
+    """Pick a seed-batch size that respects the scan scratch-memory target."""
+    if n_tracks <= 0 or n_seeds <= 0:
+        return 1
+    bytes_per_seed = n_tracks * np.dtype(np.float32).itemsize
+    max_batch = int((AUDIO_SCAN_SCRATCH_TARGET_MB * 1024 * 1024) // max(1, bytes_per_seed))
+    return max(1, min(n_seeds, max_batch))
 
 
 def _trim_process_memory() -> None:
@@ -152,6 +175,7 @@ class MusicData:
         self.track_count: int = 0
         self.matrix_audio: np.ndarray | None = None
         self.matrix_genre: np.ndarray | None = None
+        self.matrix_genre_unit: np.ndarray | None = None
         self.audio_norms_sq: np.ndarray | None = None  # Precomputed ||x||² for fast distance
         self.genre_norms: np.ndarray | None = None  # Precomputed genre vector norms
         self.artists_list: list[str] = []
@@ -229,6 +253,7 @@ class MusicData:
         self.genre_norms = np.einsum('ij,ij->i', matrix_genre_f32, matrix_genre_f32, dtype=np.float32)
         np.sqrt(self.genre_norms, out=self.genre_norms)
         self.genre_norms[self.genre_norms == 0] = 1.0
+        self.matrix_genre_unit = (matrix_genre_f32 / self.genre_norms[:, None]).astype(np.float32, copy=False)
         self.matrix_genre = matrix_genre_f32.astype(np.float16)
         del matrix_genre_f32
 
@@ -795,6 +820,158 @@ def hierarchical_soft_min_distance(
     return soft_min_distance(d_artists, w_artists, tau_between)
 
 
+def _infer_seed_language_preferences(
+    data: MusicData,
+    seed_artist_codes: np.ndarray,
+    weights_arr: np.ndarray,
+) -> tuple[np.ndarray, int | None]:
+    if data.artist_language_codes_by_artist_code is None or seed_artist_codes.size == 0:
+        return np.empty(0, dtype=np.int64), None
+
+    seed_lang_codes = data.artist_language_codes_by_artist_code[seed_artist_codes].astype(np.int64, copy=False)
+    weighted_votes = np.bincount(seed_lang_codes, weights=weights_arr)
+    if weighted_votes.size == 0:
+        return np.empty(0, dtype=np.int64), None
+
+    primary_code = int(np.argmax(weighted_votes))
+
+    valid_codes = np.flatnonzero(weighted_votes > 0).astype(np.int64, copy=False)
+    valid_codes = valid_codes[valid_codes > 0]
+    if valid_codes.size == 0:
+        return np.empty(0, dtype=np.int64), (primary_code if primary_code > 0 else None)
+
+    valid_weights = weighted_votes[valid_codes]
+    valid_total = float(np.sum(valid_weights))
+    if valid_total <= 0:
+        return np.empty(0, dtype=np.int64), (primary_code if primary_code > 0 else None)
+
+    # Keep multiple query languages when seed artists are meaningfully split.
+    valid_shares = valid_weights / valid_total
+    active_codes = valid_codes[valid_shares >= 0.25]
+    if active_codes.size == 0 and primary_code > 0:
+        active_codes = np.array([primary_code], dtype=np.int64)
+
+    if active_codes.size > 0 and (primary_code <= 0 or not np.any(active_codes == primary_code)):
+        top_idx = int(np.argmax(weighted_votes[active_codes]))
+        primary_code = int(active_codes[top_idx])
+
+    return active_codes.astype(np.int64, copy=False), (primary_code if primary_code > 0 else None)
+
+
+def _clamp_ratio(value: float | int | None) -> float | None:
+    if value is None:
+        return None
+    ratio = float(np.clip(float(value), 0.0, 1.0))
+    return ratio if ratio > 0 else None
+
+
+def _resolve_dynamic_candidate_plan(genre_weight: int) -> tuple[int, float | None]:
+    default_plan = DYNAMIC_CANDIDATE_PLAN_BY_GENRE_WEIGHT[GENRE_FOCUS]
+    plan = DYNAMIC_CANDIDATE_PLAN_BY_GENRE_WEIGHT.get(genre_weight, default_plan)
+    overfetch = max(1, int(plan.get("overfetch", default_plan["overfetch"])))
+    return overfetch, _clamp_ratio(plan.get("genre_target_ratio"))
+
+
+def _resolve_language_prefilter_target_ratio(language_weight: int) -> float | None:
+    return _clamp_ratio(LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT.get(language_weight))
+
+
+def _prefilter_artist_codes_by_genre(
+    data: MusicData,
+    seeds_genre_stack: np.ndarray,
+    weights_arr: np.ndarray,
+    target_ratio: float | None,
+) -> np.ndarray | None:
+    if (
+        data.matrix_genre_unit is None
+        or data.artist_track_offsets is None
+        or data.matrix_audio is None
+        or target_ratio is None
+    ):
+        return None
+
+    target_tracks = int(round(len(data.matrix_audio) * target_ratio))
+    if target_tracks <= 0:
+        return None
+
+    w_sum = float(weights_arr.sum())
+    if w_sum <= 0:
+        return None
+
+    query_vec = np.sum(seeds_genre_stack * (weights_arr[:, None]), axis=0) / w_sum
+    qn = float(np.linalg.norm(query_vec))
+    if qn <= 0:
+        return None
+    query_vec = query_vec / qn
+
+    sims = data.matrix_genre_unit @ query_vec
+    artist_counts = np.diff(data.artist_track_offsets).astype(np.int64, copy=False)
+    order = np.argsort(sims)[::-1]
+    cumsum = np.cumsum(artist_counts[order])
+    keep_n = int(np.searchsorted(cumsum, target_tracks, side='left') + 1)
+    keep_n = max(1, min(keep_n, len(order)))
+    return order[:keep_n].astype(np.int32, copy=False)
+
+
+def _prefilter_artist_codes_by_language(
+    data: MusicData,
+    query_language_codes: np.ndarray,
+    target_ratio: float | None,
+) -> np.ndarray | None:
+    if (
+        data.artist_language_codes_by_artist_code is None
+        or data.artist_track_offsets is None
+        or data.matrix_audio is None
+    ):
+        return None
+    if target_ratio is None or target_ratio <= 0:
+        return None
+
+    query_lang_codes = np.asarray(query_language_codes, dtype=np.int64)
+    query_lang_codes = np.unique(query_lang_codes[query_lang_codes > 0])
+    if query_lang_codes.size == 0:
+        return None
+
+    artist_lang_codes = data.artist_language_codes_by_artist_code.astype(np.int64, copy=False)
+    artist_track_counts = np.diff(data.artist_track_offsets).astype(np.int64, copy=False)
+    n_artists = min(len(artist_lang_codes), len(artist_track_counts))
+    if n_artists == 0:
+        return None
+
+    artist_lang_codes = artist_lang_codes[:n_artists]
+    artist_track_counts = artist_track_counts[:n_artists]
+
+    target_tracks = int(round(len(data.matrix_audio) * target_ratio))
+    if target_tracks <= 0:
+        return None
+
+    eligible_mask = np.isin(artist_lang_codes, query_lang_codes)
+    if not bool(np.any(eligible_mask)):
+        return None
+
+    eligible_artist_indices = np.flatnonzero(eligible_mask).astype(np.int32, copy=False)
+    eligible_track_counts = artist_track_counts[eligible_artist_indices]
+
+    if data.artist_popularity_by_code is not None:
+        artist_pop = data.artist_popularity_by_code[:n_artists].astype(np.float32, copy=False)
+        eligible_pop = artist_pop[eligible_artist_indices]
+    else:
+        eligible_pop = np.zeros(len(eligible_artist_indices), dtype=np.float32)
+
+    order = np.lexsort(
+        (
+            -eligible_track_counts.astype(np.float32, copy=False),
+            -eligible_pop,
+        )
+    )
+    ordered_artist_indices = eligible_artist_indices[order]
+    ordered_track_counts = eligible_track_counts[order]
+    cumsum = np.cumsum(ordered_track_counts)
+    keep_n = int(np.searchsorted(cumsum, target_tracks, side='left') + 1)
+    keep_n = max(1, min(keep_n, len(ordered_artist_indices)))
+    return ordered_artist_indices[:keep_n].astype(np.int32, copy=False)
+
+
 def generate_recommendations(
     data: MusicData,
     input_artists: list[str],
@@ -812,8 +989,14 @@ def generate_recommendations(
 ) -> tuple[dict[str, list[dict]], dict]:
     t_start = perf_counter()
     matrix_audio = data.matrix_audio
-    matrix_genre = data.matrix_genre
-    if matrix_audio is None or matrix_genre is None or data.track_artist_codes is None:
+    matrix_genre_unit = data.matrix_genre_unit
+    audio_norms_sq = data.audio_norms_sq
+    if (
+        matrix_audio is None
+        or matrix_genre_unit is None
+        or data.track_artist_codes is None
+        or audio_norms_sq is None
+    ):
         return {}, {"has_more_candidates": False}
     
     grouped_seeds = get_seed_indices_grouped(data, input_artists, track_ids)
@@ -838,10 +1021,8 @@ def generate_recommendations(
     seed_index_arr = np.asarray(seed_indices, dtype=np.int32)
     seeds_audio_stack = matrix_audio[seed_index_arr]
     seed_artist_codes = data.track_artist_codes[seed_index_arr].astype(np.int32, copy=False)
-    seeds_genre_stack = matrix_genre[seed_artist_codes].astype(np.float32)
-    seeds_genre_norms = np.linalg.norm(seeds_genre_stack, axis=1, keepdims=True)
-    seeds_genre_norms[seeds_genre_norms == 0] = 1.0
-    seeds_genre_stack = seeds_genre_stack / seeds_genre_norms
+    seeds_genre_stack = matrix_genre_unit[seed_artist_codes]
+    applied_vibe_offsets = False
     
     if vibe_modifiers:
         for vibe_name, slider_value in vibe_modifiers.items():
@@ -853,23 +1034,114 @@ def generate_recommendations(
                     continue
                 offset = slider_value * weight * VIBE_SLIDER_STRENGTH * FEATURE_WEIGHTS[feature]
                 seeds_audio_stack[:, feature_idx] += offset
+                applied_vibe_offsets = True
+
+    if applied_vibe_offsets:
+        seed_norms_sq_flat = np.einsum('ij,ij->i', seeds_audio_stack, seeds_audio_stack, dtype=np.float32)
+    else:
+        seed_norms_sq_flat = audio_norms_sq[seed_index_arr]
 
     weights_arr = np.asarray(weights, dtype=np.float32)
+
+    # Clamp slider inputs to valid ranges and resolve effective weights once.
+    genre_weight = int(np.clip(genre_weight, 0, len(GENRE_WEIGHT_CURVE) - 1))
+    language_weight = int(np.clip(language_weight, 0, len(LANGUAGE_WEIGHT_CURVE) - 1))
+    effective_genre_weight = GENRE_WEIGHT_CURVE[genre_weight]
+    effective_language_weight = LANGUAGE_WEIGHT_CURVE[language_weight]
+
+    query_language_code = None
+    query_language_codes = np.empty(0, dtype=np.int64)
+    if effective_language_weight > 0:
+        query_language_codes, query_language_code = _infer_seed_language_preferences(
+            data,
+            seed_artist_codes,
+            weights_arr,
+        )
+
+    overfetch_multiplier, genre_target_ratio = _resolve_dynamic_candidate_plan(genre_weight)
+
+    language_target_ratio = None
+    language_prefilter_ready = False
+    if (
+        LANGUAGE_PREFILTER_ENABLED
+        and query_language_codes.size > 0
+        and effective_language_weight > 0
+        and data.artist_language_codes_by_artist_code is not None
+    ):
+        language_target_ratio = _resolve_language_prefilter_target_ratio(language_weight)
+        language_prefilter_ready = language_target_ratio is not None
+
+    genre_prefilter_artist_codes = None
+    language_prefilter_artist_codes = None
+    genre_prefilter_artist_codes = _prefilter_artist_codes_by_genre(
+        data,
+        seeds_genre_stack,
+        weights_arr,
+        genre_target_ratio,
+    )
+    if language_prefilter_ready and language_target_ratio is not None:
+        language_prefilter_artist_codes = _prefilter_artist_codes_by_language(
+            data,
+            query_language_codes,
+            language_target_ratio,
+        )
+
+    prefilter_artist_codes = None
+    prefilter_mode = 'none'
+    if genre_prefilter_artist_codes is not None and language_prefilter_artist_codes is not None:
+        intersect_codes = np.intersect1d(
+            genre_prefilter_artist_codes,
+            language_prefilter_artist_codes,
+            assume_unique=False,
+        )
+        if len(intersect_codes) > 0:
+            prefilter_artist_codes = intersect_codes.astype(np.int32, copy=False)
+            prefilter_mode = 'genre+language'
+        else:
+            prefilter_artist_codes = genre_prefilter_artist_codes
+            prefilter_mode = 'genre-fallback'
+    elif genre_prefilter_artist_codes is not None:
+        prefilter_artist_codes = genre_prefilter_artist_codes
+        prefilter_mode = 'genre'
+    elif language_prefilter_artist_codes is not None:
+        prefilter_artist_codes = language_prefilter_artist_codes
+        prefilter_mode = 'language'
+
+    candidate_scan_indices: np.ndarray | None = None
+    if prefilter_artist_codes is not None and len(prefilter_artist_codes) > 0:
+        artist_keep_mask = np.zeros(len(data.artist_names_by_code), dtype=bool)
+        artist_keep_mask[prefilter_artist_codes] = True
+        candidate_mask = artist_keep_mask[data.track_artist_codes]
+
+        candidate_scan_indices = np.flatnonzero(candidate_mask).astype(np.int32, copy=False)
+        if len(candidate_scan_indices) == 0:
+            candidate_scan_indices = None
+
+    if candidate_scan_indices is None:
+        scan_audio = matrix_audio
+        scan_audio_norms_sq = audio_norms_sq
+        n_scan_tracks = len(matrix_audio)
+    else:
+        scan_audio = matrix_audio[candidate_scan_indices]
+        scan_audio_norms_sq = audio_norms_sq[candidate_scan_indices]
+        n_scan_tracks = len(candidate_scan_indices)
     
     t_prep = perf_counter()
-    # Audio-only candidate generation: fast 12D matmul to find candidates before rerank,
-    fetch_k = min(SAMPLE_SIZE * ANN_OVERFETCH, len(matrix_audio))
+    # Audio-only candidate generation: fast 12D matmul before full rerank.
+    fetch_k = min(SAMPLE_SIZE * overfetch_multiplier, n_scan_tracks)
     
     # Reduce audio candidates in small seed batches so we never allocate a
     # full (num_seeds x num_tracks) distance matrix. The previous approach could
     # spike request-time RSS by hundreds of MB on large seed sets.
+    scan_batch_size = _get_audio_scan_seed_batch_size(n_scan_tracks, len(seeds_audio_stack))
     d_audio_sq_min: np.ndarray | None = None
-    for start in range(0, len(seeds_audio_stack), AUDIO_CANDIDATE_BATCH_SEEDS):
-        batch = seeds_audio_stack[start:start + AUDIO_CANDIDATE_BATCH_SEEDS]
-        batch_norms_sq = np.sum(batch ** 2, axis=1, keepdims=True)
-        batch_dots = batch @ matrix_audio.T
+    for start in range(0, len(seeds_audio_stack), scan_batch_size):
+        end = start + scan_batch_size
+        batch = seeds_audio_stack[start:end]
+        batch_norms_sq = seed_norms_sq_flat[start:end, None]
+        batch_dots = batch @ scan_audio.T
         batch_dots *= -2.0
-        batch_dots += data.audio_norms_sq
+        batch_dots += scan_audio_norms_sq
         batch_dots += batch_norms_sq
         batch_min = np.min(batch_dots, axis=0)
         if d_audio_sq_min is None:
@@ -877,42 +1149,34 @@ def generate_recommendations(
         else:
             np.minimum(d_audio_sq_min, batch_min, out=d_audio_sq_min)
 
-    if fetch_k >= len(matrix_audio):
-        candidates = np.arange(len(matrix_audio), dtype=np.int32)
+    if fetch_k >= n_scan_tracks:
+        top_k_idx = np.arange(n_scan_tracks, dtype=np.int32)
     else:
-        top_k_idx = np.argpartition(d_audio_sq_min, fetch_k - 1)[:fetch_k]
+        top_k_idx = np.argpartition(d_audio_sq_min, fetch_k - 1)[:fetch_k].astype(np.int32, copy=False)
+    if candidate_scan_indices is None:
         candidates = top_k_idx.astype(np.int32, copy=False)
+    else:
+        candidates = candidate_scan_indices[top_k_idx].astype(np.int32, copy=False)
     t_audio_scan = perf_counter()
     
     # Recompute per-seed audio distances only on the final candidate subset.
     candidate_audio = matrix_audio[candidates]
-    candidate_audio_norms_sq = data.audio_norms_sq[candidates]
-    seeds_norm_sq = np.sum(seeds_audio_stack ** 2, axis=1, keepdims=True)
+    candidate_audio_norms_sq = audio_norms_sq[candidates][None, :]
+    seeds_norm_sq = seed_norms_sq_flat[:, None]
     dot_products_cand = seeds_audio_stack @ candidate_audio.T
-    d_audio_sq = np.maximum(candidate_audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_cand, 0.0)
+    d_audio_sq = candidate_audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_cand
+    np.maximum(d_audio_sq, 0.0, out=d_audio_sq)
     del d_audio_sq_min, dot_products_cand
     
     t_audio = perf_counter()
-    # Genre distance (cosine) computed ONLY on candidate subset (upcast from f16)
+    # Genre distance (cosine) computed ONLY on candidate subset.
     candidate_artist_codes = data.track_artist_codes[candidates].astype(np.int32, copy=False)
-    cand_genre = matrix_genre[candidate_artist_codes].astype(np.float32)
-    cand_genre_norms = data.genre_norms[candidate_artist_codes]
+    cand_genre = matrix_genre_unit[candidate_artist_codes]
     genre_dots = seeds_genre_stack @ cand_genre.T
-    with np.errstate(divide='ignore', invalid='ignore'):
-        cosine_sim = genre_dots / (seeds_genre_norms * cand_genre_norms)
-        cosine_sim = np.nan_to_num(cosine_sim, nan=0.0, posinf=0.0, neginf=0.0)
-    d_genre = 1.0 - cosine_sim
+    d_genre = 1.0 - np.clip(genre_dots, -1.0, 1.0)
     
     t_genre = perf_counter()
 
-    # Clamp slider inputs to valid ranges
-    genre_weight = int(np.clip(genre_weight, 0, len(GENRE_WEIGHT_CURVE) - 1))
-    language_weight = int(np.clip(language_weight, 0, len(LANGUAGE_WEIGHT_CURVE) - 1))
-
-    # Look up effective weights from curves
-    effective_genre_weight = GENRE_WEIGHT_CURVE[genre_weight]
-    effective_language_weight = LANGUAGE_WEIGHT_CURVE[language_weight]
-    
     # Combined distance per seed
     d_total_stack = np.sqrt(d_audio_sq + (d_genre * effective_genre_weight)**2)
     
@@ -920,18 +1184,9 @@ def generate_recommendations(
     d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
 
     # Language distance term: d_lang = 0 when candidate language matches query language, else 1.
-    # Query language is inferred from weighted seed-language profile.
-    query_language_code: int | None = None
-    if effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
-        seed_lang_codes = data.artist_language_codes_by_artist_code[seed_artist_codes].astype(np.int64, copy=False)
-        if len(seed_lang_codes) > 0:
-            weighted_votes = np.bincount(seed_lang_codes, weights=weights_arr)
-            if len(weighted_votes) > 0:
-                query_language_code = int(np.argmax(weighted_votes))
-
-    if query_language_code is not None and effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
+    if query_language_codes.size > 0 and effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
         candidate_lang_codes = data.artist_language_codes_by_artist_code[candidate_artist_codes].astype(np.int64, copy=False)
-        d_lang = (candidate_lang_codes != query_language_code).astype(np.float32, copy=False)
+        d_lang = (~np.isin(candidate_lang_codes, query_language_codes)).astype(np.float32, copy=False)
         d_total = np.sqrt(d_total**2 + (d_lang * effective_language_weight)**2)
     t_language = perf_counter()
     
@@ -1089,6 +1344,15 @@ def generate_recommendations(
         "audio_ms": int(1000 * (t_audio - t_prep)),
         "audio_scan_ms": int(1000 * (t_audio_scan - t_prep)),
         "audio_refine_ms": int(1000 * (t_audio - t_audio_scan)),
+        "audio_scan_seed_batch": int(scan_batch_size),
+        "overfetch": int(overfetch_multiplier),
+        "candidate_pool": int(n_scan_tracks),
+        "prefilter_mode": prefilter_mode,
+        "prefilter_artists": int(0 if prefilter_artist_codes is None else len(prefilter_artist_codes)),
+        "prefilter_genre_artists": int(0 if genre_prefilter_artist_codes is None else len(genre_prefilter_artist_codes)),
+        "prefilter_language_artists": int(0 if language_prefilter_artist_codes is None else len(language_prefilter_artist_codes)),
+        "genre_target_ratio": float(0.0 if genre_target_ratio is None else genre_target_ratio),
+        "language_target_ratio": float(0.0 if language_target_ratio is None else language_target_ratio),
         "genre_ms": int(1000 * (t_genre - t_audio)),
         "lang_ms": int(1000 * (t_language - t_genre)),
         "adjust_ms": int(1000 * (t_adjust - t_language)),
@@ -1135,6 +1399,15 @@ def generate_recommendations(
             meta["query_language_code"] = query_language_code
             if 0 <= query_language_code < len(data.language_names_by_code):
                 meta["query_language"] = data.language_names_by_code[query_language_code]
+        if query_language_codes.size > 0:
+            lang_codes = [int(code) for code in query_language_codes.tolist()]
+            meta["query_language_codes"] = lang_codes
+            meta["query_languages"] = [
+                data.language_names_by_code[code]
+                if 0 <= code < len(data.language_names_by_code)
+                else None
+                for code in lang_codes
+            ]
         meta["effective_language_weight"] = effective_language_weight
         
         # Include search vector audio features if requested (average of seeds for display)
