@@ -1117,76 +1117,118 @@ def generate_recommendations(
         if len(candidate_scan_indices) == 0:
             candidate_scan_indices = None
 
+    n_seeds = len(seeds_audio_stack)
     if candidate_scan_indices is None:
-        scan_audio = matrix_audio
-        scan_audio_norms_sq = audio_norms_sq
         n_scan_tracks = len(matrix_audio)
     else:
-        scan_audio = matrix_audio[candidate_scan_indices]
-        scan_audio_norms_sq = audio_norms_sq[candidate_scan_indices]
         n_scan_tracks = len(candidate_scan_indices)
-    
-    t_prep = perf_counter()
-    # Audio-only candidate generation: fast 12D matmul before full rerank.
-    fetch_k = min(SAMPLE_SIZE * overfetch_multiplier, n_scan_tracks)
-    
-    # Reduce audio candidates in small seed batches so we never allocate a
-    # full (num_seeds x num_tracks) distance matrix. The previous approach could
-    # spike request-time RSS by hundreds of MB on large seed sets.
-    scan_batch_size = _get_audio_scan_seed_batch_size(n_scan_tracks, len(seeds_audio_stack))
-    d_audio_sq_min: np.ndarray | None = None
-    for start in range(0, len(seeds_audio_stack), scan_batch_size):
-        end = start + scan_batch_size
-        batch = seeds_audio_stack[start:end]
-        batch_norms_sq = seed_norms_sq_flat[start:end, None]
-        batch_dots = batch @ scan_audio.T
-        batch_dots *= -2.0
-        batch_dots += scan_audio_norms_sq
-        batch_dots += batch_norms_sq
-        batch_min = np.min(batch_dots, axis=0)
-        if d_audio_sq_min is None:
-            d_audio_sq_min = batch_min
-        else:
-            np.minimum(d_audio_sq_min, batch_min, out=d_audio_sq_min)
 
-    if fetch_k >= n_scan_tracks:
-        top_k_idx = np.arange(n_scan_tracks, dtype=np.int32)
+    # Can we store full per-seed distances to avoid a second refine pass?
+    scan_buffer_bytes = n_seeds * n_scan_tracks * np.dtype(np.float32).itemsize
+    store_per_seed = scan_buffer_bytes <= AUDIO_SCAN_SCRATCH_TARGET_MB * 1024 * 1024
+
+    t_prep = perf_counter()
+    fetch_k = min(SAMPLE_SIZE * overfetch_multiplier, n_scan_tracks)
+    scan_block = 65536
+
+    if store_per_seed:
+        # Fast path: store per-seed distances during scan, skip refine.
+        d_scan = np.empty((n_seeds, n_scan_tracks), dtype=np.float32)
+        for lo in range(0, n_scan_tracks, scan_block):
+            hi = min(lo + scan_block, n_scan_tracks)
+            if candidate_scan_indices is None:
+                blk = matrix_audio[lo:hi]
+                blk_norms = audio_norms_sq[lo:hi]
+            else:
+                blk = matrix_audio[candidate_scan_indices[lo:hi]]
+                blk_norms = audio_norms_sq[candidate_scan_indices[lo:hi]]
+            dots = seeds_audio_stack @ blk.T
+            dots *= -2.0
+            dots += blk_norms[None, :]
+            dots += seed_norms_sq_flat[:, None]
+            np.maximum(dots, 0.0, out=dots)
+            d_scan[:, lo:hi] = dots
+
+        d_min = np.min(d_scan, axis=0)
+        if fetch_k >= n_scan_tracks:
+            top_k_idx = np.arange(n_scan_tracks, dtype=np.int32)
+        else:
+            top_k_idx = np.argpartition(d_min, fetch_k - 1)[:fetch_k].astype(np.int32, copy=False)
+
+        d_audio_sq = d_scan[:, top_k_idx]
+        del d_scan
     else:
-        top_k_idx = np.argpartition(d_audio_sq_min, fetch_k - 1)[:fetch_k].astype(np.int32, copy=False)
+        # Large scan pool: min-reduce per block (no bulk copy), then refine.
+        scan_batch_size = _get_audio_scan_seed_batch_size(n_scan_tracks, n_seeds)
+        d_audio_sq_min: np.ndarray | None = None
+        for start in range(0, n_seeds, scan_batch_size):
+            end = start + scan_batch_size
+            batch = seeds_audio_stack[start:end]
+            batch_norms_sq = seed_norms_sq_flat[start:end, None]
+            for lo in range(0, n_scan_tracks, scan_block):
+                hi = min(lo + scan_block, n_scan_tracks)
+                if candidate_scan_indices is None:
+                    blk = matrix_audio[lo:hi]
+                    blk_norms = audio_norms_sq[lo:hi]
+                else:
+                    blk = matrix_audio[candidate_scan_indices[lo:hi]]
+                    blk_norms = audio_norms_sq[candidate_scan_indices[lo:hi]]
+                dots = batch @ blk.T
+                dots *= -2.0
+                dots += blk_norms[None, :]
+                dots += batch_norms_sq
+                batch_min = np.min(dots, axis=0)
+                if d_audio_sq_min is None:
+                    d_audio_sq_min = np.full(n_scan_tracks, np.inf, dtype=np.float32)
+                np.minimum(d_audio_sq_min[lo:hi], batch_min, out=d_audio_sq_min[lo:hi])
+
+        if fetch_k >= n_scan_tracks:
+            top_k_idx = np.arange(n_scan_tracks, dtype=np.int32)
+        else:
+            top_k_idx = np.argpartition(d_audio_sq_min, fetch_k - 1)[:fetch_k].astype(np.int32, copy=False)
+
+        cand_global = top_k_idx if candidate_scan_indices is None else candidate_scan_indices[top_k_idx]
+        candidate_audio = matrix_audio[cand_global]
+        d_audio_sq = (
+            audio_norms_sq[cand_global][None, :]
+            + seed_norms_sq_flat[:, None]
+            - 2.0 * (seeds_audio_stack @ candidate_audio.T)
+        )
+        np.maximum(d_audio_sq, 0.0, out=d_audio_sq)
+
     if candidate_scan_indices is None:
         candidates = top_k_idx.astype(np.int32, copy=False)
     else:
         candidates = candidate_scan_indices[top_k_idx].astype(np.int32, copy=False)
     t_audio_scan = perf_counter()
-    
-    # Recompute per-seed audio distances only on the final candidate subset.
-    candidate_audio = matrix_audio[candidates]
-    candidate_audio_norms_sq = audio_norms_sq[candidates][None, :]
-    seeds_norm_sq = seed_norms_sq_flat[:, None]
-    dot_products_cand = seeds_audio_stack @ candidate_audio.T
-    d_audio_sq = candidate_audio_norms_sq + seeds_norm_sq - 2.0 * dot_products_cand
-    np.maximum(d_audio_sq, 0.0, out=d_audio_sq)
-    del d_audio_sq_min, dot_products_cand
-    
-    t_audio = perf_counter()
-    # Genre distance (cosine) computed ONLY on candidate subset.
+    t_audio = t_audio_scan
+
+    # Genre / language / popularity — deduplicate by unique artist codes.
     candidate_artist_codes = data.track_artist_codes[candidates].astype(np.int32, copy=False)
-    cand_genre = matrix_genre_unit[candidate_artist_codes]
-    genre_dots = seeds_genre_stack @ cand_genre.T
-    d_genre = 1.0 - np.clip(genre_dots, -1.0, 1.0)
-    
+    unique_artist_codes, artist_inv = np.unique(candidate_artist_codes, return_inverse=True)
+
+    artist_genre = matrix_genre_unit[unique_artist_codes]
+    d_genre_artist = 1.0 - np.clip(seeds_genre_stack @ artist_genre.T, -1.0, 1.0)
+    d_genre = d_genre_artist[:, artist_inv]
+
     t_genre = perf_counter()
 
     # Combined distance per seed
-    d_total_stack = np.sqrt(d_audio_sq + (d_genre * effective_genre_weight)**2)
-    
-    # Hierarchical aggregation: low tau within artists, high tau between
-    d_total = hierarchical_soft_min_distance(d_total_stack, artist_ranges, weights_arr)
+    if effective_genre_weight > 0:
+        np.multiply(d_genre, effective_genre_weight, out=d_genre)
+        np.square(d_genre, out=d_genre)
+        d_audio_sq += d_genre
+    np.sqrt(d_audio_sq, out=d_audio_sq)
 
-    # Language distance term: d_lang = 0 when candidate language matches query language, else 1.
+    # Hierarchical aggregation: low tau within artists, high tau between
+    d_total = hierarchical_soft_min_distance(d_audio_sq, artist_ranges, weights_arr)
+
+    # Language distance via LUT on unique artists, expanded by inverse.
     if query_language_codes.size > 0 and effective_language_weight > 0 and data.artist_language_codes_by_artist_code is not None:
-        candidate_lang_codes = data.artist_language_codes_by_artist_code[candidate_artist_codes].astype(np.int64, copy=False)
-        d_lang = (~np.isin(candidate_lang_codes, query_language_codes)).astype(np.float32, copy=False)
+        allowed = np.zeros(len(data.language_names_by_code), dtype=bool)
+        allowed[query_language_codes] = True
+        d_lang = (~allowed[data.artist_language_codes_by_artist_code[unique_artist_codes]]).astype(np.float32, copy=False)
+        d_lang = d_lang[artist_inv]
         d_total = np.sqrt(d_total**2 + (d_lang * effective_language_weight)**2)
     t_language = perf_counter()
     
@@ -1194,8 +1236,10 @@ def generate_recommendations(
     if popularity != 0 and data.artist_popularity_by_code is not None:
         pop_weight = 0.6
         track_weight = 0.2
-        pop_adjustment = (data.artist_popularity_by_code[candidate_artist_codes] - data.popularity_median) * popularity * pop_weight
-        track_adjustment = (data.artist_track_count_by_code[candidate_artist_codes] - 0.5) * popularity * track_weight
+        artist_pop = data.artist_popularity_by_code[unique_artist_codes]
+        artist_tc = data.artist_track_count_by_code[unique_artist_codes]
+        pop_adjustment = (artist_pop[artist_inv] - data.popularity_median) * popularity * pop_weight
+        track_adjustment = (artist_tc[artist_inv] - 0.5) * popularity * track_weight
         d_total = d_total - pop_adjustment - track_adjustment
     t_adjust = perf_counter()
     
@@ -1344,15 +1388,16 @@ def generate_recommendations(
         "audio_ms": int(1000 * (t_audio - t_prep)),
         "audio_scan_ms": int(1000 * (t_audio_scan - t_prep)),
         "audio_refine_ms": int(1000 * (t_audio - t_audio_scan)),
-        "audio_scan_seed_batch": int(scan_batch_size),
         "overfetch": int(overfetch_multiplier),
         "candidate_pool": int(n_scan_tracks),
+        "store_per_seed": store_per_seed,
         "prefilter_mode": prefilter_mode,
         "prefilter_artists": int(0 if prefilter_artist_codes is None else len(prefilter_artist_codes)),
         "prefilter_genre_artists": int(0 if genre_prefilter_artist_codes is None else len(genre_prefilter_artist_codes)),
         "prefilter_language_artists": int(0 if language_prefilter_artist_codes is None else len(language_prefilter_artist_codes)),
         "genre_target_ratio": float(0.0 if genre_target_ratio is None else genre_target_ratio),
         "language_target_ratio": float(0.0 if language_target_ratio is None else language_target_ratio),
+        "unique_artists": int(len(unique_artist_codes)),
         "genre_ms": int(1000 * (t_genre - t_audio)),
         "lang_ms": int(1000 * (t_language - t_genre)),
         "adjust_ms": int(1000 * (t_adjust - t_language)),
@@ -1369,7 +1414,8 @@ def generate_recommendations(
           f"lang={1000*(t_language-t_genre):.0f}ms adjust={1000*(t_adjust-t_language):.0f}ms "
           f"rank={1000*(t_rank-t_adjust):.0f}ms post={1000*(t_postprocess-t_rank):.0f}ms "
           f"TOTAL={1000*(t_postprocess-t_start):.0f}ms candidates={len(candidates)} "
-          f"seeds={len(seed_indices)}")
+          f"seeds={len(seed_indices)} unique_artists={len(unique_artist_codes)} "
+          f"stored={'Y' if store_per_seed else 'N'}")
     meta = {
         "has_more_candidates": has_more_candidates,
         "perf": perf_info,
