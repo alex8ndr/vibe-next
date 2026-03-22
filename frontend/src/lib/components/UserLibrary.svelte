@@ -24,6 +24,7 @@
     let exportDropdownRef = $state<HTMLDivElement | null>(null);
     let copyStatus = $state<"idle" | "copied" | "failed">("idle");
     let copyStatusTimeoutId = $state<ReturnType<typeof setTimeout> | null>(null);
+    let isCopyTooltipHovered = $state(false);
 
     // Persist collapsed artists to localStorage
     const COLLAPSED_STORAGE_KEY = 'vibe-collapsed-artists';
@@ -59,18 +60,39 @@
 
     const canPlaySidebar = $derived($sidebarPlayerStatus === "ready");
 
-    function setCopyStatus(status: "idle" | "copied" | "failed") {
-        copyStatus = status;
+    function scheduleCopyStatusReset(delayMs = 2500) {
         if (copyStatusTimeoutId) {
             clearTimeout(copyStatusTimeoutId);
             copyStatusTimeoutId = null;
         }
-        if (status !== "idle") {
+        if (copyStatus !== "idle") {
             copyStatusTimeoutId = setTimeout(() => {
+                if (isCopyTooltipHovered) {
+                    scheduleCopyStatusReset(500);
+                    return;
+                }
                 copyStatus = "idle";
                 copyStatusTimeoutId = null;
-            }, 2500);
+            }, delayMs);
         }
+    }
+
+    function setCopyStatus(status: "idle" | "copied" | "failed") {
+        copyStatus = status;
+        scheduleCopyStatusReset();
+    }
+
+    function onCopyTooltipEnter() {
+        isCopyTooltipHovered = true;
+        if (copyStatusTimeoutId) {
+            clearTimeout(copyStatusTimeoutId);
+            copyStatusTimeoutId = null;
+        }
+    }
+
+    function onCopyTooltipLeave() {
+        isCopyTooltipHovered = false;
+        scheduleCopyStatusReset(900);
     }
 
     function buildTuneMyMusicText(): string {
@@ -232,7 +254,7 @@
                             </svg>
                         {/if}
                     </button>
-                    <span class="tunemymusic-tooltip">
+                    <span class="tunemymusic-tooltip" role="tooltip" onmouseenter={onCopyTooltipEnter} onmouseleave={onCopyTooltipLeave}>
                         {#if copyStatus === "copied"}
                             Copied! Paste into <a href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a> → Free Text
                         {:else if copyStatus === "failed"}
@@ -439,7 +461,8 @@
         padding: 6px 10px;
         font-size: 0.65rem;
         color: var(--text-2);
-        white-space: nowrap;
+        text-align: center;
+        width: 160px;
         z-index: 10;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
@@ -454,7 +477,8 @@
     }
 
     .tunemymusic-btn-wrap:hover .tunemymusic-tooltip,
-    .tunemymusic-copy.copied ~ .tunemymusic-tooltip {
+    .tunemymusic-copy.copied ~ .tunemymusic-tooltip,
+    .tunemymusic-tooltip:hover {
         display: block;
     }
 
@@ -476,6 +500,8 @@
         gap: 0.3rem;
         max-height: 25%;
         overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
         padding-right: 0.25rem;
     }
 
@@ -507,6 +533,8 @@
     .favourites-list {
         flex: 1;
         overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
         display: flex;
         flex-direction: column;
         gap: 0.35rem;

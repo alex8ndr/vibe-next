@@ -266,6 +266,7 @@
 
 	.author-kofi {
 		display: inline-flex;
+		display: none;
 		align-items: center;
 		justify-content: center;
 	}

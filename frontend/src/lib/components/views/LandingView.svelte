@@ -54,6 +54,13 @@
         $knownArtists.length > 0 || $favoriteTracks.length > 0
     );
 
+    $effect(() => {
+        if (heroExpandedArtist && !selected.includes(heroExpandedArtist)) {
+            heroExpandedArtist = null;
+            songSearch = "";
+        }
+    });
+
 
     // Actions
     function toggleHeroExpanded(artist: string) {

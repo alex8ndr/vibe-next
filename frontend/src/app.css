@@ -62,6 +62,8 @@
 html {
 	font-family: 'Inter', system-ui, sans-serif;
 	-webkit-font-smoothing: antialiased;
+	scrollbar-width: thin;
+	scrollbar-color: var(--border) var(--bg-alt);
 }
 
 body {

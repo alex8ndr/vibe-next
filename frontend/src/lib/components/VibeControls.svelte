@@ -16,6 +16,7 @@
         return "Max";
     }
 </script>
+<!--
 
 <div class="vibe-slider">
     <div class="vibe-labels">
@@ -45,7 +46,6 @@
     />
 </div>
 
-<!--
 <div class="vibe-slider">
     <div class="vibe-labels">
         <span>Hidden Gems</span>
@@ -167,6 +167,7 @@
         background: var(--bg-alt);
         border-radius: 2px;
         appearance: none;
+        accent-color: var(--gold);
         outline: none;
     }
 
@@ -177,6 +178,21 @@
         background: var(--gold);
         border-radius: 50%;
         cursor: pointer;
+    }
+
+    .setting-mini input[type="range"]::-moz-range-track {
+        height: 3px;
+        border-radius: 2px;
+        background: var(--bg-alt);
+    }
+
+    .setting-mini input[type="range"]::-moz-range-thumb {
+        width: 10px;
+        height: 10px;
+        background: var(--gold);
+        border-radius: 50%;
+        cursor: pointer;
+        border: none;
     }
 
     .setting-label-row {
