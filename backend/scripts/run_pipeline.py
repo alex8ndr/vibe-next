@@ -29,9 +29,10 @@ from paths import (
     FILTERED_DATASET,
     TRACKS_DATASET,
     ARTISTS_DATASET,
-    get_input_dataset,
-    get_all_track_datasets,
-    get_added_artists,
+)
+from pipeline.utils.dataset_resolver import (
+    resolve_filter_inputs,
+    add_dataset_selection_args,
 )
 
 
@@ -61,14 +62,9 @@ def main():
     parser.add_argument("--skip-filter", action="store_true", help="Skip filter_data.py step")
     parser.add_argument("--skip-process", action="store_true", help="Skip process_data.py step")
     parser.add_argument(
-        "--override-genres",
+        "--preserve-genres",
         action="store_true",
-        help="Override existing genres with external data (filter step only)",
-    )
-    parser.add_argument(
-        "--override-genres-only",
-        action="store_true",
-        help="Use only external genre matches and drop everything else (filter step only)",
+        help="Keep original genres instead of overriding with external data (filter step only)",
     )
     parser.add_argument(
         "--no-enrich",
@@ -92,29 +88,23 @@ def main():
         help="Keep live tracks (filter step only)",
     )
     parser.add_argument(
-        "--max-international-pct",
+        "--english-pct",
         type=float,
-        default=None,
-        help="Maximum percentage of non-English tracks after language resolution (process step only)",
+        default=75.0,
+        help="Target English percentage after language shaping (process step only)",
     )
     parser.add_argument(
-        "--datasets",
-        nargs="+",
-        help=(
-            "Select specific datasets by name (unified selection). "
-            "Available: " + ", ".join(sorted(get_all_track_datasets().keys()))
-        ),
-    )
-    parser.add_argument(
-        "--all-datasets",
+        "--no-shaping",
         action="store_true",
-        help="Include all available datasets (core + external)",
+        help="Disable language shaping entirely (process step only)",
     )
     parser.add_argument(
-        "--exclude-datasets",
-        nargs="+",
-        help="Exclude specific datasets by name (use with --all-datasets)",
+        "--min-lang-artists",
+        type=int,
+        default=100,
+        help="Drop non-English languages with fewer than N artists (process step only)",
     )
+    add_dataset_selection_args(parser)
     parser.add_argument("--dev", action="store_true", help="Dev mode: fast compression for quicker processing")
     parser.add_argument(
         "--max-artists",
@@ -123,10 +113,16 @@ def main():
         help="Keep only the top N most popular artists (process step only)",
     )
     parser.add_argument(
-        "--max-songs",
+        "--cap",
         type=int,
         default=50,
-        help="Maximum songs per artist (process step only)",
+        help="Maximum songs for the most popular artists (process step only)",
+    )
+    parser.add_argument(
+        "--floor",
+        type=int,
+        default=20,
+        help="Maximum songs for the least popular artists (process step only)",
     )
     parser.add_argument(
         "--smear-strength",
@@ -143,44 +139,26 @@ def main():
     
     args = parser.parse_args()
 
-    # Determine input file and merge paths based on dataset selection mode
-    if args.datasets or args.all_datasets:
-        available = get_all_track_datasets()
-        if args.datasets:
-            selected_names = []
-            selected_paths = []
-            for name in args.datasets:
-                if name not in available:
-                    print(f"Unknown dataset: {name}")
-                    print("Available:", ", ".join(sorted(available.keys())))
-                    sys.exit(1)
-                selected_names.append(name)
-                selected_paths.append(available[name])
-        else:
-            exclude = set(args.exclude_datasets or [])
-            selected_names = [n for n in available if n not in exclude]
-            selected_paths = [available[n] for n in selected_names]
+    # Resolve datasets via shared resolver
+    try:
+        resolution = resolve_filter_inputs(
+            datasets=args.datasets,
+            all_datasets=args.all_datasets,
+            exclude_datasets=args.exclude_datasets,
+            primary_dataset=args.primary_dataset,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
-        if not selected_paths:
-            print("Error: No datasets selected.")
-            sys.exit(1)
+    input_file = resolution.input_path
+    merge_paths = resolution.merge_paths
+    added_artists_path = resolution.added_artists_path
 
-        print(f"Datasets: {', '.join(selected_names)}")
-        input_file = selected_paths[0]
-        merge_paths = selected_paths[1:]
-    else:
-        try:
-            input_file = get_input_dataset()
-        except FileNotFoundError:
-            print("Error: No input dataset found. Run convert_to_parquet.py first.")
-            sys.exit(1)
-
-        merge_paths = []
-        added = get_added_artists()
-        if added:
-            merge_paths.append(added)
-
-    added_artists_path = get_added_artists()
+    print(f"Primary dataset: {resolution.primary_name} ({input_file.name})")
+    if merge_paths:
+        merge_names = [p.stem for p in merge_paths]
+        print(f"Merge datasets: {', '.join(merge_names)}")
 
     if args.subprocess:
         if not args.skip_filter:
@@ -190,10 +168,8 @@ def main():
                 filter_args.extend(str(p) for p in merge_paths)
             if args.verbose:
                 filter_args.append("--verbose")
-            if args.override_genres:
-                filter_args.append("--override-genres")
-            if args.override_genres_only:
-                filter_args.append("--override-genres-only")
+            if args.preserve_genres:
+                filter_args.append("--preserve-genres")
             if args.no_enrich:
                 filter_args.append("--no-enrich")
             if args.min_songs is not None:
@@ -226,12 +202,18 @@ def main():
                 process_args.append("--dev")
             if args.max_artists > 0:
                 process_args.extend(["--max-artists", str(args.max_artists)])
-            if args.max_songs != 50:
-                process_args.extend(["--max-songs", str(args.max_songs)])
+            if args.cap != 50:
+                process_args.extend(["--cap", str(args.cap)])
+            if args.floor != 20:
+                process_args.extend(["--floor", str(args.floor)])
             if args.smear_strength != 0.6:
                 process_args.extend(["--smear-strength", str(args.smear_strength)])
-            if args.max_international_pct is not None:
-                process_args.extend(["--max-international-pct", str(args.max_international_pct)])
+            if args.english_pct != 75.0:
+                process_args.extend(["--english-pct", str(args.english_pct)])
+            if args.no_shaping:
+                process_args.append("--no-shaping")
+            if args.min_lang_artists != 10:
+                process_args.extend(["--min-lang-artists", str(args.min_lang_artists)])
             ret = run_script(PIPELINE_DIR / "process_data.py", process_args)
             if ret != 0:
                 print(f"\nprocess_data.py failed with exit code {ret}")
@@ -253,8 +235,7 @@ def main():
                 verbose=args.verbose,
                 merge_paths=merge_paths or None,
                 enrich=not args.no_enrich,
-                override=args.override_genres,
-                override_only=args.override_genres_only,
+                preserve_genres=args.preserve_genres,
                 added_artists_path=added_artists_path,
             )
             print("=" * 60)
@@ -275,13 +256,16 @@ def main():
                 input_path=None,
                 tracks_output_path=TRACKS_DATASET,
                 artists_output_path=ARTISTS_DATASET,
-                max_songs=args.max_songs,
+                cap=args.cap,
+                floor=args.floor,
                 max_artists=args.max_artists,
-                max_international_pct=args.max_international_pct,
+                english_pct=args.english_pct,
+                no_shaping=args.no_shaping,
                 smear_strength=args.smear_strength,
                 verbose=args.verbose,
                 dev=args.dev,
                 input_df=filtered_df,
+                min_lang_artists=args.min_lang_artists,
             )
             print("=" * 60)
     

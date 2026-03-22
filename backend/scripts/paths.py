@@ -71,6 +71,17 @@ def get_all_track_datasets() -> dict[str, Path]:
             datasets[name] = path
     return datasets
 
+
+def get_selectable_track_datasets() -> dict[str, Path]:
+    """Get datasets available for CLI selection (excludes added_artists overlay)."""
+    datasets = {}
+    if RAW_DATASET.exists():
+        datasets["data"] = RAW_DATASET
+    for name, path in get_external_track_datasets().items():
+        if name not in datasets:
+            datasets[name] = path
+    return datasets
+
 # Artist genre data — raw source CSVs (used by preprocess_genre_sources.py)
 SERKAN_ARTISTS_CSV = EXTERNAL_DIR / "serkan-550k-spotify" / "artists (1).csv"
 YAMAC_ARTISTS_CSV = EXTERNAL_DIR / "yamac-spotify-1920-2020" / "artists.csv"

@@ -26,8 +26,6 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paths import (
-    get_input_dataset, 
-    get_added_artists,
     FILTERED_DATASET,
 )
 from io_utils import (
@@ -40,6 +38,7 @@ from schema import normalize_for_merge
 from genre_families import GENRE_DEFINITIONS
 from genre_mapping import build_artist_genre_map, apply_artist_genre_map, enrich_genres, map_raw_genre
 from pipeline.utils.artist_identity import filter_external_by_overlap
+from pipeline.utils.dataset_resolver import resolve_filter_inputs, add_dataset_selection_args
 
 # Artists to exclude entirely (not reassign)
 EXCLUDED_ARTISTS: set[str] = set()
@@ -97,16 +96,10 @@ def parse_args() -> argparse.Namespace:
         help="Skip genre enrichment from external artist data",
     )
     parser.add_argument(
-        "--override-genres",
+        "--preserve-genres",
         action="store_true",
         default=False,
-        help="Override existing genres with external data (not just fill nulls)",
-    )
-    parser.add_argument(
-        "--override-genres-only",
-        action="store_true",
-        default=False,
-        help="Replace genres only if an external match exists and drop the rest",
+        help="Keep original genres instead of overriding with external data",
     )
     parser.add_argument(
         "--dry-run",
@@ -118,6 +111,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print detailed filtering info",
     )
+    add_dataset_selection_args(parser)
     return parser.parse_args()
 
 
@@ -131,8 +125,7 @@ def filter_data(
     verbose: bool = False,
     merge_paths: list[Path] | None = None,
     enrich: bool = True,
-    override: bool = False,
-    override_only: bool = False,
+    preserve_genres: bool = False,
     added_artists_path: Path | None = None,
 ) -> tuple[dict, pl.DataFrame]:
     """
@@ -176,6 +169,7 @@ def filter_data(
 
         dfs_to_merge = [trusted_df]
         source_counts = {"trusted": len(trusted_df)}
+        all_superseded_norms: set[str] = set()
 
         # Merge external datasets with overlap-based safety gate
         for mp in merge_paths:
@@ -190,8 +184,23 @@ def filter_data(
                     trusted_df, df_ext, verbose=verbose,
                 )
                 dfs_to_merge.append(df_ext)
+                all_superseded_norms |= overlap_stats.get("superseded_norms", set())
             else:
                 print(f"Warning: merge file not found: {mp}")
+
+        # Remove superseded artists from trusted before concat so we don't
+        # mix two different people's tracks under the same name.
+        if all_superseded_norms:
+            from track_dedup import normalize_artist_name
+            dfs_to_merge[0] = dfs_to_merge[0].filter(
+                ~pl.col("artist_name").map_elements(
+                    normalize_artist_name, return_dtype=pl.Utf8
+                ).is_in(list(all_superseded_norms))
+            )
+            n_removed = len(trusted_df) - len(dfs_to_merge[0])
+            if verbose:
+                print(f"  Removed {n_removed:,} trusted tracks for {len(all_superseded_norms):,} superseded artists")
+
         if len(dfs_to_merge) > 1:
             n_total_pre_dedup = sum(len(d) for d in dfs_to_merge)
             df = pl.concat(dfs_to_merge, how="diagonal")
@@ -258,40 +267,37 @@ def filter_data(
     else:
         stats['removed']['excluded_genres'] = 0
     
-    # Filter 3: Remixes (unless --keep-remixes)
-    if not keep_remixes and 'track_name' in df.columns:
-        # Polars regex filter - case insensitive
-        remix_mask = df['track_name'].cast(pl.Utf8).str.to_lowercase().str.contains(r'\bremix\b').fill_null(False)
-        stats['removed']['remixes'] = remix_mask.sum()
-        if verbose:
-            print(f"  Remixes: {stats['removed']['remixes']:,} tracks")
-        filters.append(~remix_mask)
-    else:
-        stats['removed']['remixes'] = 0
-    
-    # Filter 3b: TV competition performances (The Voice, etc.)
+    # Filter 3: Content-type filters on track_name (remix, performances, live)
+    # Pre-compute lowercased track_name once for all regex checks
+    stats['removed']['remixes'] = 0
+    stats['removed']['performances'] = 0
+    stats['removed']['live_versions'] = 0
     if 'track_name' in df.columns:
-        perf_mask = df['track_name'].cast(pl.Utf8).str.contains(
-            r'(?i)\s+[-–—]\s+the\s+voice(\s+performance)?\s*$'
+        track_lower = df['track_name'].cast(pl.Utf8).str.to_lowercase().fill_null("")
+
+        if not keep_remixes:
+            remix_mask = track_lower.str.contains(r'\bremix\b').fill_null(False)
+            stats['removed']['remixes'] = remix_mask.sum()
+            if verbose:
+                print(f"  Remixes: {stats['removed']['remixes']:,} tracks")
+            filters.append(~remix_mask)
+
+        perf_mask = track_lower.str.contains(
+            r'\s+[-–—]\s+the\s+voice(\s+performance)?\s*$'
         ).fill_null(False)
         stats['removed']['performances'] = perf_mask.sum()
         if verbose:
             print(f"  Performances: {stats['removed']['performances']:,} tracks")
         filters.append(~perf_mask)
-    else:
-        stats['removed']['performances'] = 0
 
-    # Filter 3c: Live recordings (unless --keep-live)
-    if not keep_live and 'track_name' in df.columns:
-        live_mask = df['track_name'].cast(pl.Utf8).str.contains(
-            r'(?i)(?:\s[-–—]\s*live(?:\s+at|\s+from|\s+in|\s*$)|\((?:[^)]*\blive\b[^)]*)\)|\[(?:[^\]]*\blive\b[^\]]*)\])'
-        ).fill_null(False)
-        stats['removed']['live_versions'] = live_mask.sum()
-        if verbose:
-            print(f"  Live versions: {stats['removed']['live_versions']:,} tracks")
-        filters.append(~live_mask)
-    else:
-        stats['removed']['live_versions'] = 0
+        if not keep_live:
+            live_mask = track_lower.str.contains(
+                r'(?:\s[-–—]\s*live(?:\s+at|\s+from|\s+in|\s*$)|\((?:[^)]*\blive\b[^)]*)\)|\[(?:[^\]]*\blive\b[^\]]*)\])'
+            ).fill_null(False)
+            stats['removed']['live_versions'] = live_mask.sum()
+            if verbose:
+                print(f"  Live versions: {stats['removed']['live_versions']:,} tracks")
+            filters.append(~live_mask)
     
     # Apply all content filters at once
     if filters:
@@ -300,9 +306,6 @@ def filter_data(
             combined_filter = combined_filter & f
         df = df.filter(combined_filter)
     
-    if override_only:
-        override = True
-
     # Apply genre reassignments AFTER content filtering
     if reassigned and 'genre' in df.columns and 'artist_name' in df.columns:
         reassign_mask = df['artist_name'].is_in(list(reassigned))
@@ -326,9 +329,10 @@ def filter_data(
     
     # Genre enrichment from external artist data
     if enrich and 'genre' in df.columns:
+        n_before_enrich = len(df)
         null_before_enrich = df['genre'].null_count()
-        if override_only:
-            # Protect added_artists from being filtered out
+        if not preserve_genres:
+            # Default: override-only mode — replace genres with external matches
             locked = reassigned | added_artist_names
             name_to_genre = build_artist_genre_map(
                 df,
@@ -336,13 +340,13 @@ def filter_data(
                 locked_artists=locked,
             )
             if name_to_genre:
+                n_matched = len(name_to_genre)
                 df = apply_artist_genre_map(
                     df,
                     name_to_genre,
                     override=True,
                     keep_ext_genre=True,
                 )
-                # Keep rows with external match OR from added/reassigned artists
                 keep_mask = pl.col("_ext_genre").is_not_null()
                 if added_artist_names:
                     keep_mask = keep_mask | pl.col("artist_name").is_in(list(added_artist_names))
@@ -350,45 +354,50 @@ def filter_data(
                     keep_mask = keep_mask | pl.col("artist_name").is_in(list(reassigned))
                 df = df.filter(keep_mask).drop("_ext_genre")
             else:
-                # No external matches — still keep added/reassigned artists
+                n_matched = 0
                 keep_names = added_artist_names | reassigned
                 if keep_names:
                     df = df.filter(pl.col("artist_name").is_in(list(keep_names)))
                 else:
                     df = df.filter(pl.lit(False))
+            stats['removed']['override_only'] = n_before_enrich - len(df)
+            stats['genres_enriched'] = n_matched
         else:
             df = enrich_genres(
                 df,
                 verbose=verbose,
-                override=override,
+                override=False,
                 locked_artists=reassigned,
             )
-        null_after_enrich = df['genre'].null_count()
-        stats['genres_enriched'] = null_before_enrich - null_after_enrich
-        if override_only:
-            stats['removed']['override_only'] = original_count - len(df)
+            null_after_enrich = df['genre'].null_count()
+            stats['genres_enriched'] = null_before_enrich - null_after_enrich
     else:
         stats['genres_enriched'] = 0
 
     # Normalize existing raw genre strings into internal vocabulary where possible.
     if 'genre' in df.columns:
-        genre_before = df['genre']
-        df = df.with_columns(
-            pl.col('genre')
-            .cast(pl.Utf8)
-            .map_elements(
-                lambda g: (map_raw_genre(g) or g) if g else g,
-                return_dtype=pl.Utf8,
+        raw_genres = df['genre'].drop_nulls().unique().to_list()
+        canon_pairs = []
+        for g in raw_genres:
+            mapped = map_raw_genre(g)
+            if mapped and mapped != g:
+                canon_pairs.append((g, mapped))
+        if canon_pairs:
+            canon_df = pl.DataFrame(
+                {"_raw_genre": [p[0] for p in canon_pairs], "_canon_genre": [p[1] for p in canon_pairs]},
             )
-            .alias('genre')
-        )
-        if verbose:
-            changed = int((genre_before != df['genre']).fill_null(False).sum())
-            if changed > 0:
-                print(f"  Canonicalized existing genre labels: {changed:,} tracks")
+            df = df.join(canon_df, left_on="genre", right_on="_raw_genre", how="left")
+            df = df.with_columns(
+                pl.when(pl.col("_canon_genre").is_not_null())
+                .then(pl.col("_canon_genre"))
+                .otherwise(pl.col("genre"))
+                .alias("genre")
+            ).drop("_canon_genre")
+            if verbose:
+                print(f"  Canonicalized existing genre labels: {len(canon_pairs):,} distinct mappings applied")
 
     # Filter 4: Drop unmapped genres when override mode is enabled
-    if override and 'genre' in df.columns:
+    if not preserve_genres and 'genre' in df.columns:
         valid_genres = list(GENRE_DEFINITIONS.keys())
         unmapped_mask = pl.col("genre").is_null() | ~pl.col("genre").is_in(valid_genres)
         unmapped_count = df.filter(unmapped_mask).height
@@ -435,40 +444,34 @@ def filter_data(
 def main() -> None:
     args = parse_args()
     
-    # Resolve input path
-    if args.input:
-        input_path = args.input
-    else:
-        try:
-            input_path = get_input_dataset()
-        except FileNotFoundError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            print("Run convert_to_parquet.py first or specify --input", file=sys.stderr)
-            sys.exit(1)
-    
+    # Resolve datasets via shared resolver
+    try:
+        resolution = resolve_filter_inputs(
+            input_path=args.input,
+            merge_paths=list(args.merge) if args.merge else None,
+            datasets=args.datasets,
+            all_datasets=args.all_datasets,
+            exclude_datasets=args.exclude_datasets,
+            primary_dataset=args.primary_dataset,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    input_path = resolution.input_path
     if not input_path.exists():
         print(f"Error: Input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
-    
+
+    print(f"Primary dataset: {resolution.primary_name} ({input_path.name})")
+    if resolution.merge_paths:
+        merge_names = [p.stem for p in resolution.merge_paths]
+        print(f"Merge datasets: {', '.join(merge_names)}")
+
     # Resolve output path
     output_path = args.output or FILTERED_DATASET
     
-    # Resolve merge paths (auto-detect added_artists if not specified)
-    merge_paths = args.merge
-    added_artists_path = None
-    if merge_paths is None:
-        added = get_added_artists()
-        if added:
-            merge_paths = [added]
-            added_artists_path = added
-            print(f"Auto-detected added_artists: {added}")
-    else:
-        # Check if any merge path looks like added_artists
-        from paths import ADDED_ARTISTS
-        for mp in merge_paths:
-            if mp.resolve() == ADDED_ARTISTS.resolve():
-                added_artists_path = mp
-                break
+    merge_paths = resolution.merge_paths or None
     
     stats, _df = filter_data(
         input_path=input_path,
@@ -480,9 +483,8 @@ def main() -> None:
         verbose=args.verbose,
         merge_paths=merge_paths,
         enrich=not args.no_enrich,
-        override=args.override_genres,
-        override_only=args.override_genres_only,
-        added_artists_path=added_artists_path,
+        preserve_genres=args.preserve_genres,
+        added_artists_path=resolution.added_artists_path,
     )
     
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Filtering Summary:")

@@ -21,98 +21,128 @@ def filter_external_by_overlap(
         "new_artists_accepted": 0,
         "colliding_accepted": 0,
         "colliding_blocked": 0,
+        "colliding_superseded": 0,
         "tracks_accepted": 0,
         "tracks_blocked": 0,
         "blocked_artists": [],
+        "superseded_norms": set(),
     }
 
     if ext_df.is_empty():
         return ext_df, stats
 
-    # Build trusted lookup: norm_artist -> (set of track_ids, set of norm_titles)
-    trusted_artist_tids: dict[str, set[str]] = {}
-    trusted_artist_titles: dict[str, set[str]] = {}
+    # Normalize artist/track names once via vectorized map_elements
+    trusted_norm = trusted_df.select(
+        pl.col("artist_name").map_elements(normalize_artist_name, return_dtype=pl.Utf8).alias("_norm_artist"),
+        pl.col("track_id"),
+        pl.col("track_name").map_elements(
+            lambda t: normalize_track_name(t) if t else "", return_dtype=pl.Utf8
+        ).alias("_norm_title"),
+    )
+    ext_norm = ext_df.select(
+        pl.col("artist_name"),
+        pl.col("artist_name").map_elements(normalize_artist_name, return_dtype=pl.Utf8).alias("_norm_artist"),
+        pl.col("track_id"),
+        pl.col("track_name").map_elements(
+            lambda t: normalize_track_name(t) if t else "", return_dtype=pl.Utf8
+        ).alias("_norm_title"),
+    )
 
-    for row in trusted_df.select("artist_name", "track_id", "track_name").iter_rows(named=True):
-        norm_a = normalize_artist_name(row["artist_name"])
-        trusted_artist_tids.setdefault(norm_a, set()).add(row["track_id"])
-        if row["track_name"]:
-            trusted_artist_titles.setdefault(norm_a, set()).add(
-                normalize_track_name(row["track_name"])
-            )
+    # Build trusted lookups as grouped DataFrames
+    trusted_tids = (
+        trusted_norm.group_by("_norm_artist")
+        .agg(pl.col("track_id").alias("_trusted_tids"))
+    )
+    trusted_titles = (
+        trusted_norm.filter(pl.col("_norm_title") != "")
+        .group_by("_norm_artist")
+        .agg(pl.col("_norm_title").alias("_trusted_titles"))
+    )
+    trusted_norm_names = set(trusted_tids["_norm_artist"].to_list())
 
-    trusted_norm_names = set(trusted_artist_tids.keys())
+    # Build external per-artist info as grouped DataFrame
+    ext_grouped = (
+        ext_norm.group_by("_norm_artist")
+        .agg([
+            pl.col("artist_name").first().alias("raw_name"),
+            pl.col("track_id").alias("_ext_tids"),
+            pl.col("_norm_title").filter(pl.col("_norm_title") != "").alias("_ext_titles"),
+        ])
+    )
 
-    # Build external per-artist info
-    ext_artists: dict[str, dict] = {}
-    for row in ext_df.select("artist_name", "track_id", "track_name").iter_rows(named=True):
-        norm_a = normalize_artist_name(row["artist_name"])
-        if norm_a not in ext_artists:
-            ext_artists[norm_a] = {
-                "raw_name": row["artist_name"],
-                "tids": set(),
-                "titles": set(),
-            }
-        ext_artists[norm_a]["tids"].add(row["track_id"])
-        if row["track_name"]:
-            ext_artists[norm_a]["titles"].add(normalize_track_name(row["track_name"]))
-
-    # Decide which artists to accept
+    # Decide which normalized artist names to accept
     accepted_norms: set[str] = set()
     blocked_norms: set[str] = set()
 
-    for norm_a, info in ext_artists.items():
+    # Pre-build trusted lookup dicts from grouped frames (much smaller than row-level)
+    trusted_tid_map: dict[str, set[str]] = {}
+    for row in trusted_tids.iter_rows(named=True):
+        trusted_tid_map[row["_norm_artist"]] = set(row["_trusted_tids"])
+
+    trusted_title_map: dict[str, set[str]] = {}
+    for row in trusted_titles.iter_rows(named=True):
+        trusted_title_map[row["_norm_artist"]] = set(row["_trusted_titles"])
+
+    for row in ext_grouped.iter_rows(named=True):
+        norm_a = row["_norm_artist"]
+
         if norm_a not in trusted_norm_names:
-            # No collision — new artist, always accept
             accepted_norms.add(norm_a)
             stats["new_artists_accepted"] += 1
             continue
 
-        # Collision detected — check for overlap evidence
-        trusted_tids = trusted_artist_tids.get(norm_a, set())
-        trusted_titles = trusted_artist_titles.get(norm_a, set())
+        # Collision detected — check overlap
+        t_tids = trusted_tid_map.get(norm_a, set())
+        t_titles = trusted_title_map.get(norm_a, set())
+        e_tids = set(row["_ext_tids"])
+        e_titles = set(row["_ext_titles"])
 
-        has_tid_overlap = bool(trusted_tids & info["tids"])
-
-        title_overlap = trusted_titles & info["titles"]
-        title_overlap.discard("")  # ignore empty matches
+        has_tid_overlap = bool(t_tids & e_tids)
+        title_overlap = t_titles & e_titles
+        title_overlap.discard("")
         has_title_overlap = len(title_overlap) >= min_title_overlap
 
         if has_tid_overlap or has_title_overlap:
             accepted_norms.add(norm_a)
             stats["colliding_accepted"] += 1
+        elif len(e_tids) > len(t_tids):
+            # Different person, but external has bigger catalog — likely the
+            # more notable artist.  Accept external & supersede trusted.
+            accepted_norms.add(norm_a)
+            stats["superseded_norms"].add(norm_a)
+            stats["colliding_superseded"] += 1
+            if verbose:
+                print(f"    Superseded: {row['raw_name']} (ext={len(e_tids)} > trusted={len(t_tids)})")
         else:
             blocked_norms.add(norm_a)
             stats["colliding_blocked"] += 1
             stats["blocked_artists"].append({
-                "name": info["raw_name"],
-                "ext_tracks": len(info["tids"]),
-                "trusted_tracks": len(trusted_tids),
+                "name": row["raw_name"],
+                "ext_tracks": len(e_tids),
+                "trusted_tracks": len(t_tids),
                 "title_overlap": len(title_overlap),
             })
 
-    # Filter ext_df to only accepted artists
-    # Build raw name -> norm lookup, then filter by accepted norms
-    all_ext_raw_names = ext_df["artist_name"].drop_nulls().unique().to_list()
-    accepted_raw_names = {
-        name for name in all_ext_raw_names
-        if normalize_artist_name(name) in accepted_norms
-    }
-
-    accepted_df = ext_df.filter(pl.col("artist_name").is_in(list(accepted_raw_names)))
+    # Filter ext_df using the normalized artist column
+    ext_with_norm = ext_df.with_columns(
+        pl.col("artist_name").map_elements(normalize_artist_name, return_dtype=pl.Utf8).alias("_norm_artist")
+    )
+    accepted_df = ext_with_norm.filter(
+        pl.col("_norm_artist").is_in(list(accepted_norms))
+    ).drop("_norm_artist")
 
     stats["tracks_accepted"] = len(accepted_df)
     stats["tracks_blocked"] = len(ext_df) - len(accepted_df)
 
     if verbose:
         print(f"  Overlap merge: {stats['ext_total_artists']:,} ext artists")
-        print(f"    New (no collision): {stats['new_artists_accepted']:,}")
-        print(f"    Colliding accepted: {stats['colliding_accepted']:,}")
-        print(f"    Colliding blocked:  {stats['colliding_blocked']:,}")
+        print(f"    New (no collision):   {stats['new_artists_accepted']:,}")
+        print(f"    Colliding accepted:   {stats['colliding_accepted']:,}")
+        print(f"    Colliding superseded: {stats['colliding_superseded']:,}")
+        print(f"    Colliding blocked:    {stats['colliding_blocked']:,}")
         print(f"    Tracks accepted: {stats['tracks_accepted']:,} / {stats['ext_total_tracks']:,}")
 
         if stats["blocked_artists"]:
-            # Show top blocked by ext track count
             top_blocked = sorted(
                 stats["blocked_artists"],
                 key=lambda x: x["ext_tracks"],

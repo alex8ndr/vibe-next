@@ -76,10 +76,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to artists output parquet file. Default: artists.parquet",
     )
     parser.add_argument(
-        "--max-songs",
+        "--cap",
         type=int,
         default=50,
-        help="Maximum songs per artist (keeps most popular)",
+        help="Maximum songs for the most popular artists",
+    )
+    parser.add_argument(
+        "--floor",
+        type=int,
+        default=20,
+        help="Maximum songs for the least popular artists",
     )
     parser.add_argument(
         "--max-artists",
@@ -104,10 +110,21 @@ def parse_args() -> argparse.Namespace:
         help="Dev mode: use fast compression (zstd level 1 instead of 22)",
     )
     parser.add_argument(
-        "--max-international-pct",
+        "--english-pct",
         type=float,
-        default=None,
-        help="Maximum percentage of non-English tracks based on resolved language (e.g., 15 for 15%%)",
+        default=75.0,
+        help="Target English percentage after language shaping (e.g., 75 for 75%%)",
+    )
+    parser.add_argument(
+        "--no-shaping",
+        action="store_true",
+        help="Disable language shaping entirely (keep original distribution)",
+    )
+    parser.add_argument(
+        "--min-lang-artists",
+        type=int,
+        default=100,
+        help="Drop non-English languages with fewer than N artists (too few for useful recommendations)",
     )
     return parser.parse_args()
 
@@ -115,6 +132,218 @@ def parse_args() -> argparse.Namespace:
 def log(msg: str, verbose: bool) -> None:
     if verbose:
         print(msg)
+
+
+def _allocate_language_counts(
+    scaled: np.ndarray,
+    upper_bounds: np.ndarray,
+    target_total: int,
+) -> np.ndarray:
+    """Allocate integer per-language keeps with 1..upper_bounds and exact target sum."""
+    alloc = np.floor(np.clip(scaled, 1.0, upper_bounds)).astype(np.int64)
+    current_total = int(alloc.sum())
+
+    if current_total < target_total:
+        need = target_total - current_total
+        room = upper_bounds.astype(np.int64, copy=False) - alloc
+        frac = scaled - np.floor(scaled)
+        frac = np.where(room > 0, frac, -np.inf)
+        while need > 0 and np.any(room > 0):
+            order = np.argsort(frac)[::-1]
+            progressed = False
+            for idx in order:
+                if need == 0:
+                    break
+                if room[idx] <= 0:
+                    continue
+                alloc[idx] += 1
+                room[idx] -= 1
+                need -= 1
+                progressed = True
+            if not progressed:
+                break
+            frac = np.where(room > 0, frac, -np.inf)
+    elif current_total > target_total:
+        need = current_total - target_total
+        removable = alloc - 1
+        penalty = alloc - scaled
+        penalty = np.where(removable > 0, penalty, np.inf)
+        while need > 0 and np.any(removable > 0):
+            order = np.argsort(penalty)
+            progressed = False
+            for idx in order:
+                if need == 0:
+                    break
+                if removable[idx] <= 0:
+                    continue
+                alloc[idx] -= 1
+                removable[idx] -= 1
+                need -= 1
+                progressed = True
+            if not progressed:
+                break
+            penalty = np.where(removable > 0, penalty, np.inf)
+
+    return alloc
+
+
+def _shape_non_english_by_artist(
+    df: pl.DataFrame,
+    english_pct: float,
+    verbose: bool,
+    min_lang_artists: int = 10,
+) -> pl.DataFrame:
+    """Reduce non-English share by removing whole non-English artists.
+
+    This preserves per-artist track cohorts (instead of trimming individual tracks),
+    which avoids collapsing artists toward very low post-shaping track counts.
+
+    Languages with fewer than min_lang_artists artists are dropped entirely
+    (too few for useful recommendations).
+    """
+    intl_mask = pl.col("_language_iso") != "en"
+    n_total = len(df)
+    if n_total == 0:
+        return df
+
+    n_en = df.filter(~intl_mask).height
+    n_intl = n_total - n_en
+    current_en_pct = (n_en / n_total * 100.0) if n_total else 100.0
+
+    # Drop languages with too few artists before shaping
+    if min_lang_artists > 1:
+        lang_artist_counts = (
+            df.filter(intl_mask)
+            .group_by("_language_iso")
+            .agg(pl.col("artist_name").n_unique().alias("_n_artists"))
+        )
+        small_langs = (
+            lang_artist_counts
+            .filter(pl.col("_n_artists") < min_lang_artists)
+            .select("_language_iso")
+        )
+        if small_langs.height > 0:
+            small_lang_list = small_langs["_language_iso"].to_list()
+            n_before_lang_prune = len(df)
+            df = df.filter(
+                (~intl_mask) | ~pl.col("_language_iso").is_in(small_lang_list)
+            )
+            n_lang_pruned = n_before_lang_prune - len(df)
+            kept_langs = lang_artist_counts.filter(pl.col("_n_artists") >= min_lang_artists)
+            log(
+                f"Language min-artist filter ({min_lang_artists}): dropped {len(small_lang_list)} languages "
+                f"({n_lang_pruned:,} tracks), kept {kept_langs.height} non-English languages",
+                verbose,
+            )
+            # Recompute after pruning
+            n_total = len(df)
+            n_en = df.filter(~intl_mask).height
+            n_intl = n_total - n_en
+            current_en_pct = (n_en / n_total * 100.0) if n_total else 100.0
+
+    if current_en_pct >= english_pct or n_intl <= 0:
+        log(
+            f"Language shaping not needed: English share {current_en_pct:.1f}% >= {english_pct}%",
+            verbose,
+        )
+        return df
+
+    # Keep all English tracks fixed and solve target non-English track budget.
+    target_intl_raw = n_en * (100.0 - english_pct) / english_pct
+
+    intl_artist_stats = (
+        df.filter(intl_mask)
+        .group_by(["artist_name", "_language_iso"])
+        .agg([
+            pl.len().alias("_artist_tracks"),
+            pl.col("popularity").max().alias("_artist_pop"),
+        ])
+    )
+    if intl_artist_stats.is_empty():
+        return df
+
+    # Per-language non-English track totals (artist-granular shaping budgets).
+    lang_counts = (
+        intl_artist_stats
+        .group_by("_language_iso")
+        .agg(pl.col("_artist_tracks").sum().alias("count"))
+        .sort("count", descending=True)
+    )
+    lang_names = lang_counts["_language_iso"].to_list()
+    lang_orig = np.array(lang_counts["count"].to_list(), dtype=np.int64)
+    n_languages = len(lang_names)
+
+    target_intl = int(round(target_intl_raw))
+    target_intl = max(n_languages, min(n_intl, target_intl))
+
+    lo, hi = 0.01, 1.0
+    for _ in range(64):
+        mid = (lo + hi) / 2.0
+        shaped = np.power(lang_orig.astype(np.float64), mid)
+        total_shaped = shaped.sum()
+        if total_shaped <= 0:
+            lo = mid
+            continue
+        scaled = shaped * (target_intl / total_shaped)
+        clipped = np.clip(scaled, 1.0, lang_orig)
+        predicted_total = clipped.sum()
+        if predicted_total > target_intl:
+            hi = mid
+        else:
+            lo = mid
+
+    alpha = (lo + hi) / 2.0
+    shaped = np.power(lang_orig.astype(np.float64), alpha)
+    total_shaped = shaped.sum()
+    if total_shaped > 0:
+        scaled = shaped * (target_intl / total_shaped)
+    else:
+        scaled = np.ones_like(lang_orig)
+
+    alloc = _allocate_language_counts(
+        scaled=scaled,
+        upper_bounds=lang_orig,
+        target_total=target_intl,
+    )
+
+    keep_intl_artists: set[str] = set()
+    for lang, track_budget in zip(lang_names, alloc.tolist()):
+        lang_artists = (
+            intl_artist_stats
+            .filter(pl.col("_language_iso") == lang)
+            .sort(["_artist_pop", "_artist_tracks"], descending=[True, True])
+            .with_columns(pl.col("_artist_tracks").cum_sum().alias("_cum_tracks"))
+        )
+
+        kept = lang_artists.filter(pl.col("_cum_tracks") <= track_budget).select("artist_name")
+        if kept.height == 0 and lang_artists.height > 0:
+            kept = lang_artists.head(1).select("artist_name")
+
+        keep_intl_artists.update(kept["artist_name"].to_list())
+
+    if keep_intl_artists:
+        shaped_df = df.filter((~intl_mask) | pl.col("artist_name").is_in(list(keep_intl_artists)))
+    else:
+        shaped_df = df.filter(~intl_mask)
+
+    new_n_intl = shaped_df.filter(intl_mask).height
+    new_en_pct = shaped_df.filter(~intl_mask).height / len(shaped_df) * 100.0 if len(shaped_df) else 0.0
+
+    intl_artists_before = int(intl_artist_stats.select(pl.col("artist_name").n_unique().alias("n"))["n"][0])
+    intl_artists_after = int(
+        shaped_df
+        .filter(intl_mask)
+        .select(pl.col("artist_name").n_unique().alias("n"))["n"][0]
+    )
+
+    log(
+        f"Language shaping (artist-level, α={alpha:.3f}): removed {n_intl - new_n_intl:,} non-English tracks "
+        f"and {intl_artists_before - intl_artists_after:,} non-English artists "
+        f"({current_en_pct:.1f}% -> {new_en_pct:.1f}% English)",
+        verbose,
+    )
+
+    return shaped_df
 
 
 def load_and_merge_data(
@@ -154,18 +383,27 @@ def process_data(
     input_path: Path | None,
     tracks_output_path: Path,
     artists_output_path: Path,
-    max_songs: int,
+    cap: int,
+    floor: int,
     max_artists: int,
-    max_international_pct: float | None,
+    english_pct: float,
+    no_shaping: bool,
     smear_strength: float,
     verbose: bool,
     dev: bool = False,
     input_df: pl.DataFrame | None = None,
+    min_lang_artists: int = 10,
 ) -> None:
     """Main processing pipeline - Pure Polars implementation.
     
     If input_df is provided, uses it directly instead of reading from disk.
     """
+    if cap <= 0 or floor <= 0:
+        raise ValueError("--cap and --floor must both be positive integers")
+    if floor > cap:
+        raise ValueError("--floor cannot be greater than --cap")
+    if not no_shaping and not (0.0 < english_pct < 100.0):
+        raise ValueError("--english-pct must be between 0 and 100 (exclusive)")
     
     if input_df is not None:
         n_initial = len(input_df)
@@ -271,76 +509,8 @@ def process_data(
     if verbose and n_artist_canonicalized > 0:
         log(f"Artist name canonicalization (case/spacing): {n_artist_canonicalized:,} tracks updated", verbose)
 
-    # Optional: keep only top N most popular artists
-    if max_artists > 0:
-        artist_pop = (
-            df.group_by("_artist_key")
-            .agg(pl.col("popularity").max().alias("_artist_max_pop"))
-            .sort("_artist_max_pop", descending=True)
-            .head(max_artists)
-            .select("_artist_key")
-        )
-        n_before_artist_limit = len(df)
-        df = df.join(artist_pop, on="_artist_key", how="semi")
-        log(f"Artist limit ({max_artists}): kept {df['artist_name'].n_unique():,} artists, removed {n_before_artist_limit - len(df):,} tracks", verbose)
-
     if "_artist_key" in df.columns:
         df = df.drop("_artist_key")
-
-    # Cap songs per artist using window function (Pure Polars)
-    # This replaces: df.groupby("artist_name").cumcount() < max_songs
-    n_before_cap = len(df)
-    df = (
-        df
-        .sort("popularity", descending=True)
-        .with_columns(
-            pl.col("popularity")
-            .rank("ordinal", descending=True)
-            .over("artist_name")
-            .alias("_rank")
-        )
-        .filter(pl.col("_rank") <= max_songs)
-        .drop("_rank")
-    )
-    n_cap_removed = n_before_cap - len(df)
-    
-    log(f"Artist cap ({max_songs}/artist): {n_cap_removed:,} removed, {len(df):,} remaining", verbose)
-    if verbose:
-        log(f"  Breakdown: name-dedup={n_dedup_removed:,} + artist-cap={n_cap_removed:,} = {n_dedup_removed + n_cap_removed:,} total removed from {n_initial:,}", verbose)
-        n_artists_final = df["artist_name"].n_unique()
-        log(f"  Artists: {n_artists_final:,} unique artists in final output", verbose)
-
-    # Audio features (scaled 0-1, retained in tracks.parquet)
-    feature_cols = [
-        "popularity", "year", "duration_ms",
-        "acousticness", "danceability", "energy", "instrumentalness",
-        "liveness", "loudness", "speechiness", "tempo", "valence"
-    ]
-    
-    # Process genre embeddings
-    genre_cols = []
-    if "genre" in df.columns:
-        log("Computing smart family embeddings...", verbose)
-        unique_genres = df["genre"].drop_nulls().unique().to_list()
-        
-        # Compute embedding matrix (Pure Polars)
-        embedding_df = compute_genre_embeddings_polars(unique_genres)
-        
-        # Join embeddings to main DataFrame
-        df = df.join(embedding_df, on="genre", how="left")
-        
-        # Fill NaNs for genres with no families defined
-        genre_cols = [c for c in embedding_df.columns if c.startswith("genre_")]
-        df = df.with_columns([
-            pl.col(c).fill_null(0.0).cast(pl.Float32) for c in genre_cols
-        ])
-        df = apply_inter_artist_smearing(
-            df,
-            embedding_df,
-            genre_cols,
-            smear_strength,
-            verbose=verbose,
-        )
 
     # Resolve final language per artist and attach language column
     artist_lang = resolve_artist_languages(df, verbose=verbose)
@@ -356,29 +526,134 @@ def process_data(
     df = df.join(artist_lang_df, on="artist_name", how="left")
     df = df.with_columns(pl.col("_language_iso").fill_null("en"))
 
-    # Optional: cap non-English tracks based on resolved language
-    if max_international_pct is not None:
-        intl_mask = pl.col("_language_iso") != "en"
-        n_intl = df.filter(intl_mask).height
-        n_total = len(df)
-        current_pct = (n_intl / n_total * 100.0) if n_total else 0.0
+    # Language shaping: artist-level pruning to hit target English percentage
+    if not no_shaping:
+        df = _shape_non_english_by_artist(df, english_pct, verbose, min_lang_artists=min_lang_artists)
+    else:
+        log("Language shaping disabled (--no-shaping)", verbose)
 
-        if current_pct > max_international_pct:
-            target_intl = int(n_total * max_international_pct / 100.0)
-            df_intl = df.filter(intl_mask).sort("popularity", descending=True).head(target_intl)
-            df_en = df.filter(~intl_mask)
-            removed = n_intl - target_intl
-            df = pl.concat([df_en, df_intl], how="vertical")
-            log(
-                f"Language cap ({max_international_pct}%): removed {removed:,} non-English tracks "
-                f"({current_pct:.1f}% -> {max_international_pct}%)",
-                verbose,
-            )
-        else:
-            log(
-                f"Language cap not applied: non-English share {current_pct:.1f}% <= {max_international_pct}%",
-                verbose,
-            )
+    # Keep only top N artists, allocated proportionally per language to preserve mix.
+    if max_artists > 0:
+        n_before_artist_limit = len(df)
+        artist_summary = (
+            df.group_by("artist_name")
+            .agg([
+                pl.col("popularity").max().alias("_artist_max_pop"),
+                pl.col("_language_iso").first().alias("_lang"),
+            ])
+        )
+        total_artists = len(artist_summary)
+        if total_artists > max_artists:
+            # Allocate slots proportionally to each language
+            lang_counts = artist_summary.group_by("_lang").agg(pl.len().alias("_n"))
+            lang_names_l = lang_counts["_lang"].to_list()
+            lang_n = np.array(lang_counts["_n"].to_list(), dtype=np.int64)
+            raw_alloc = lang_n * (max_artists / total_artists)
+            # Floor allocate, then distribute remainder by fractional part
+            int_alloc = np.floor(raw_alloc).astype(np.int64)
+            int_alloc = np.maximum(int_alloc, 1)  # every language keeps at least 1
+            remainder = max_artists - int(int_alloc.sum())
+            if remainder > 0:
+                fracs = raw_alloc - int_alloc
+                bump_order = np.argsort(fracs)[::-1]
+                for idx in bump_order[:remainder]:
+                    int_alloc[idx] += 1
+            elif remainder < 0:
+                # Over-allocated due to min-1 guarantees; trim from largest groups
+                excess = -remainder
+                trim_order = np.argsort(int_alloc)[::-1]
+                for idx in trim_order:
+                    if excess <= 0:
+                        break
+                    can_trim = int(int_alloc[idx]) - 1
+                    trim = min(can_trim, excess)
+                    int_alloc[idx] -= trim
+                    excess -= trim
+
+            # Select top artists per language by popularity
+            keep_parts = []
+            for lang, n_keep in zip(lang_names_l, int_alloc.tolist()):
+                lang_artists = (
+                    artist_summary.filter(pl.col("_lang") == lang)
+                    .sort("_artist_max_pop", descending=True)
+                    .head(n_keep)
+                    .select("artist_name")
+                )
+                keep_parts.append(lang_artists)
+            keep_artists = pl.concat(keep_parts)
+            df = df.join(keep_artists, on="artist_name", how="semi")
+        log(
+            f"Artist limit ({max_artists}): kept {df['artist_name'].n_unique():,} artists, "
+            f"removed {n_before_artist_limit - len(df):,} tracks",
+            verbose,
+        )
+
+    # Popularity-shaped per-artist track cap
+    # Top-popularity artists get `cap`, bottom get `floor`, smooth interpolation between
+    n_before_cap = len(df)
+    artist_pop = (
+        df.group_by("artist_name")
+        .agg(pl.col("popularity").max().alias("_artist_pop"))
+    )
+    pop_min = artist_pop["_artist_pop"].min()
+    pop_max = artist_pop["_artist_pop"].max()
+    pop_range = pop_max - pop_min if pop_max > pop_min else 1.0
+
+    artist_pop = artist_pop.with_columns(
+        (
+            pl.lit(floor)
+            + (pl.col("_artist_pop") - pl.lit(pop_min)) / pl.lit(pop_range) * pl.lit(cap - floor)
+        )
+        .round(0)
+        .cast(pl.Int32)
+        .alias("_artist_cap")
+    )
+    df = df.join(artist_pop.select("artist_name", "_artist_cap"), on="artist_name", how="left")
+    df = (
+        df
+        .sort("popularity", descending=True)
+        .with_columns(
+            pl.col("popularity")
+            .rank("ordinal", descending=True)
+            .over("artist_name")
+            .alias("_rank")
+        )
+        .filter(pl.col("_rank") <= pl.col("_artist_cap"))
+        .drop("_rank", "_artist_cap")
+    )
+    n_cap_removed = n_before_cap - len(df)
+
+    log(f"Artist cap ({floor}-{cap}/artist): {n_cap_removed:,} removed, {len(df):,} remaining", verbose)
+    if verbose:
+        n_artists_final = df["artist_name"].n_unique()
+        log(f"  Artists: {n_artists_final:,} unique artists after cap", verbose)
+
+    # Audio features (scaled 0-1, retained in tracks.parquet)
+    feature_cols = [
+        "popularity", "year", "duration_ms",
+        "acousticness", "danceability", "energy", "instrumentalness",
+        "liveness", "loudness", "speechiness", "tempo", "valence"
+    ]
+
+    # Process genre embeddings after shaping/limits to reduce work.
+    genre_cols = []
+    if "genre" in df.columns:
+        log("Computing smart family embeddings...", verbose)
+        unique_genres = df["genre"].drop_nulls().unique().to_list()
+        embedding_df = compute_genre_embeddings_polars(unique_genres)
+
+        df = df.join(embedding_df, on="genre", how="left")
+        genre_cols = [c for c in embedding_df.columns if c.startswith("genre_")]
+        df = df.with_columns([
+            pl.col(c).fill_null(0.0).cast(pl.Float32) for c in genre_cols
+        ])
+        df = apply_inter_artist_smearing(
+            df,
+            embedding_df,
+            genre_cols,
+            smear_strength,
+            verbose=verbose,
+        )
 
     df = df.with_columns(pl.col("_language_iso").fill_null("en").cast(pl.Utf8).alias("language"))
     df = df.drop("_language_iso")
@@ -503,12 +778,15 @@ def main() -> None:
         input_path=input_path,
         tracks_output_path=tracks_output_path,
         artists_output_path=artists_output_path,
-        max_songs=args.max_songs,
+        cap=args.cap,
+        floor=args.floor,
         max_artists=args.max_artists,
-        max_international_pct=args.max_international_pct,
+        english_pct=args.english_pct,
+        no_shaping=args.no_shaping,
         smear_strength=args.smear_strength,
         verbose=args.verbose,
         dev=args.dev,
+        min_lang_artists=args.min_lang_artists,
     )
 
 
