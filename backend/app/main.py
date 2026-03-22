@@ -7,6 +7,7 @@ import secrets
 import os
 import hashlib
 import pickle
+import unicodedata
 from time import time
 from time import perf_counter
 from contextlib import asynccontextmanager
@@ -275,6 +276,13 @@ RECENT_SEARCHES: dict[str, tuple[float, str]] = {}  # client_key -> (timestamp, 
 ANALYTICS_MIN_INTERVAL = 5.0  # seconds between logged searches from same client
 
 
+def _normalize_search_text(value: str) -> str:
+    """Normalize text for accent-insensitive artist search matching."""
+    normalized = unicodedata.normalize("NFKD", value)
+    no_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return no_marks.casefold().strip()
+
+
 def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_artists: list[str], valid_exclude: list[str] | None) -> bool:
     """Check if this search should be logged (rate limit + dedupe)."""
     client_key = client_id or "anonymous"
@@ -334,15 +342,18 @@ async def get_artists(q: str = "", limit: int = 1000) -> list[str]:
     artists = music_data.artists_list
     
     if q:
-        q_lower = q.lower()
+        q_norm = _normalize_search_text(q)
+        if not q_norm:
+            return artists[:limit]
+
         exact, starts, substring = [], [], []
         for a in artists:
-            a_lower = a.lower()
-            if a_lower == q_lower:
+            a_norm = _normalize_search_text(a)
+            if a_norm == q_norm:
                 exact.append(a)
-            elif a_lower.startswith(q_lower):
+            elif a_norm.startswith(q_norm):
                 starts.append(a)
-            elif q_lower in a_lower:
+            elif q_norm in a_norm:
                 substring.append(a)
         artists = exact + starts + substring
     

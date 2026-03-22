@@ -74,22 +74,28 @@ VARIETY = 0
 MAX_ARTISTS = 6
 
 # Noise strength for variety control (easy to tune)
-VARIETY_NOISE_SCALE = 0.1  # Higher = more randomness
+VARIETY_NOISE_SCALE = 0.1
 
-# Sample size for Gumbel noise distribution
-SAMPLE_SIZE = 5000
+# Overfetch base: fetch_k = OVERFETCH_BASE * overfetch_multiplier
+OVERFETCH_BASE = 5000
+
+# Artist aggregation: minimum tracks an artist must have in the candidate pool
+MIN_ARTIST_TRACKS = 2
+
+# Percentile of candidate distances used as fill penalty for artists with < tracks_per_artist tracks
+AVG_DISTANCE_FILL_PERCENTILE = 75
 
 # Dynamic overfetch and sampled percentage by genre weight.
 DYNAMIC_CANDIDATE_PLAN_BY_GENRE_WEIGHT: dict[int, dict[str, float | int | None]] = {
-    0: {"overfetch": 20, "genre_target_ratio": None},
-    1: {"overfetch": 25, "genre_target_ratio": 0.64},
-    2: {"overfetch": 30, "genre_target_ratio": 0.32},
-    3: {"overfetch": 40, "genre_target_ratio": 0.24},
-    4: {"overfetch": 50, "genre_target_ratio": 0.16},
+    0: {"overfetch": 20, "genre_target_ratio": 0.6},
+    1: {"overfetch": 25, "genre_target_ratio": 0.4},
+    2: {"overfetch": 30, "genre_target_ratio": 0.3},
+    3: {"overfetch": 40, "genre_target_ratio": 0.2},
+    4: {"overfetch": 50, "genre_target_ratio": 0.15},
 }
 
 # Optional language-aware prefilter.
-LANGUAGE_PREFILTER_ENABLED = True
+LANGUAGE_PREFILTER_ENABLED = False
 LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT: dict[int, float] = {
     2: 0.50,
     3: 0.40,
@@ -99,10 +105,10 @@ LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT: dict[int, float] = {
 # Limit temporary query allocations when scanning the full audio matrix.
 # Each batch allocates roughly `batch_size * n_tracks * 4 bytes` for the
 # temporary squared-distance buffer before reducing to a single min vector.
-AUDIO_SCAN_SCRATCH_TARGET_MB = 96
+AUDIO_SCAN_SCRATCH_TARGET_MB = 160
 
-# Spotify track IDs are typically 22 bytes; keep a lower bound so the lookup
-# array stays fixed-width and compact even on tiny dev fixtures.
+# Spotify track IDs are always 22 characters (base-62). Floor ensures the
+# fixed-width numpy lookup array uses at least S22 even with short test IDs.
 MIN_TRACK_ID_BYTES = 22
 
 
@@ -1128,7 +1134,7 @@ def generate_recommendations(
     store_per_seed = scan_buffer_bytes <= AUDIO_SCAN_SCRATCH_TARGET_MB * 1024 * 1024
 
     t_prep = perf_counter()
-    fetch_k = min(SAMPLE_SIZE * overfetch_multiplier, n_scan_tracks)
+    fetch_k = min(OVERFETCH_BASE * overfetch_multiplier, n_scan_tracks)
     scan_block = 65536
 
     if store_per_seed:
@@ -1243,30 +1249,13 @@ def generate_recommendations(
         d_total = d_total - pop_adjustment - track_adjustment
     t_adjust = perf_counter()
     
-    # Use Gumbel noise for variety on the candidate set
-    n = min(SAMPLE_SIZE, len(d_total))
-    k = n - 1
+    # Optionally perturb distances for variety
+    d_rank = d_total.astype(np.float32, copy=False)
     if diversity > 0:
         noise_scale = VARIETY_NOISE_SCALE * diversity
-        noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_total.shape).astype(np.float32)
-        d_noisy = d_total.astype(np.float32) + noise
-        top_n_unsorted = np.argpartition(d_noisy, k)[:n]
-        top_n_sorted = top_n_unsorted[np.argsort(d_noisy[top_n_unsorted])]
-    else:
-        top_n_unsorted = np.argpartition(d_total, k)[:n]
-        top_n_sorted = top_n_unsorted[np.argsort(d_total[top_n_unsorted])]
-    
-    t_rank = perf_counter()
-    # Map back from candidate-local indices to global track indices
-    similar_indices = candidates[top_n_sorted]
+        noise = np.random.gumbel(loc=0.0, scale=noise_scale, size=d_rank.shape).astype(np.float32)
+        d_rank = d_rank + noise
 
-    # Zipfian scoring: rewards top matches significantly more than lower ones
-    # Score = 1000 / (Rank + K)
-    # scores = 1000.0 / (np.arange(1, n + 1) + 25.0)
-
-    smoothing_factor = SAMPLE_SIZE * 0.025
-    scores = 1000.0 / (np.arange(1, n + 1) + smoothing_factor)
-    
     # Exclude input artists and any explicitly excluded artists
     excluded_codes = {
         code
@@ -1280,37 +1269,63 @@ def generate_recommendations(
             if (code := data.get_artist_code(artist)) is not None
         )
 
-    artist_buckets: dict[int, dict[str, object]] = {}
-    for track_idx, score in zip(similar_indices.tolist(), scores.tolist()):
-        artist_code = int(data.track_artist_codes[track_idx])
-        if artist_code in excluded_codes:
-            continue
+    valid = np.ones(len(candidates), dtype=bool)
+    if excluded_codes:
+        excluded_mask = np.zeros(len(data.artist_names_by_code), dtype=bool)
+        excluded_mask[np.fromiter(excluded_codes, dtype=np.int32)] = True
+        valid = ~excluded_mask[candidate_artist_codes]
 
-        bucket = artist_buckets.setdefault(
-            artist_code,
-            {"track_count": 0, "total_score": 0.0, "tracks": []},
-        )
-        bucket["track_count"] = int(bucket["track_count"]) + 1
-        top_tracks = bucket["tracks"]
-        if len(top_tracks) < tracks_per_artist:
-            top_tracks.append(track_idx)
-            bucket["total_score"] = float(bucket["total_score"]) + float(score)
+    inv = artist_inv[valid]
+    dist = d_rank[valid]
+    tracks_valid = candidates[valid]
 
-    artist_stats_full = [
-        {
-            "artist_code": artist_code,
-            "track_count": int(bucket["track_count"]),
-            "display_count": min(int(bucket["track_count"]), tracks_per_artist),
-            "total_score": float(bucket["total_score"]),
-            "tracks": list(bucket["tracks"]),
-        }
-        for artist_code, bucket in artist_buckets.items()
-        if int(bucket["track_count"]) >= 2
-    ]
-    artist_stats_full.sort(key=lambda item: item["total_score"], reverse=True)
-    has_more_candidates = len(artist_stats_full) > max_artists
-    artist_stats = artist_stats_full[:max_artists]
-    artist_stats.sort(key=lambda item: (item["display_count"], item["total_score"]), reverse=True)
+    # Group by artist, sort by distance within each group
+    order = np.lexsort((dist, inv))
+    inv_s = inv[order]
+    dist_s = dist[order]
+    tracks_s = tracks_valid[order]
+
+    # Position of each track within its artist group
+    group_breaks = np.r_[0, np.flatnonzero(np.diff(inv_s)) + 1]
+    group_counts = np.diff(np.r_[group_breaks, len(inv_s)])
+    pos_in_group = np.arange(len(inv_s)) - np.repeat(group_breaks, group_counts)
+
+    # Keep only best tracks_per_artist per artist
+    keep = pos_in_group < tracks_per_artist
+    inv_top = inv_s[keep]
+    dist_top = dist_s[keep]
+    tracks_top = tracks_s[keep]
+
+    n_unique = len(unique_artist_codes)
+    top_counts = np.bincount(inv_top, minlength=n_unique).astype(np.int32)
+    top_sums = np.bincount(inv_top, weights=dist_top, minlength=n_unique).astype(np.float32)
+
+    fill_penalty = float(np.percentile(dist_top, AVG_DISTANCE_FILL_PERCENTILE))
+    missing = np.clip(tracks_per_artist - top_counts, 0, tracks_per_artist)
+    padded_sums = top_sums + missing * fill_penalty
+
+    artist_mean = np.full(n_unique, np.inf, dtype=np.float32)
+    eligible = top_counts >= MIN_ARTIST_TRACKS
+    artist_mean[eligible] = padded_sums[eligible] / tracks_per_artist
+
+    eligible_inv = np.flatnonzero(eligible)
+    best_order = np.argsort(artist_mean[eligible_inv])
+    has_more_candidates = len(best_order) > max_artists
+    best_local = eligible_inv[best_order[:max_artists]]
+
+    t_rank = perf_counter()
+
+    artist_stats = []
+    for local_inv in best_local:
+        m = inv_top == local_inv
+        artist_stats.append({
+            "artist_code": int(unique_artist_codes[local_inv]),
+            "track_count": int(top_counts[local_inv]),
+            "display_count": int(min(top_counts[local_inv], tracks_per_artist)),
+            "avg_distance": float(artist_mean[local_inv]),
+            "tracks": tracks_top[m][:tracks_per_artist].tolist(),
+        })
+    artist_stats.sort(key=lambda x: (-x["display_count"], x["avg_distance"]))
 
     artist_profiles = (
         data.get_artist_genre_profiles(
