@@ -96,12 +96,17 @@ DYNAMIC_CANDIDATE_PLAN_BY_GENRE_WEIGHT: dict[int, dict[str, float | int | None]]
 }
 
 # Optional language-aware prefilter.
-LANGUAGE_PREFILTER_ENABLED = False
+LANGUAGE_PREFILTER_ENABLED = True
+LANGUAGE_PREFILTER_STRICT_MATCH = True
 LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT: dict[int, float] = {
     2: 0.50,
     3: 0.40,
     4: 0.30,
 }
+
+# Prefilter artists by cosine similarity between seed-audio centroid and artist-audio centroids.
+AUDIO_PREFILTER_ENABLED = True
+AUDIO_PREFILTER_TARGET_RATIO = 0.35
 
 # Limit temporary query allocations when scanning the full audio matrix.
 # Each batch allocates roughly `batch_size * n_tracks * 4 bytes` for the
@@ -216,6 +221,7 @@ class MusicData:
         self.artist_track_count_by_code: np.ndarray | None = None  # Per-artist log track count (0-1)
         self.popularity_median: float = 0.5  # Median artist popularity for centering
         self.artist_search_keys: tuple[str, ...] = ()  # Pre-normalized names for search
+        self.artist_audio_centroids_unit: np.ndarray | None = None  # Per-artist unit audio centroid
     
     def load(self) -> None:
         t0 = perf_counter()
@@ -371,12 +377,20 @@ class MusicData:
         audio_data *= weights
         self.matrix_audio = audio_data
         self.audio_norms_sq = np.einsum('ij,ij->i', self.matrix_audio, self.matrix_audio, dtype=np.float32)
+        if AUDIO_PREFILTER_ENABLED:
+            self._build_artist_audio_centroids()
 
         del audio_df, audio_data, weights, source_row_indices, meta_df, artist_df, valid_mask
 
         audio_mb = self.matrix_audio.nbytes / 1024**2
         genre_mb = self.matrix_genre.nbytes / 1024**2
+        audio_centroid_mb = (
+            0.0
+            if self.artist_audio_centroids_unit is None
+            else self.artist_audio_centroids_unit.nbytes / 1024**2
+        )
         print(f"[startup] Matrices ready (audio {audio_mb:.0f}MB f32 + genre {genre_mb:.0f}MB f16 @ artist-level)")
+        print(f"[startup] Artist audio centroids ready ({audio_centroid_mb:.1f}MB f32 unit)")
 
         _trim_process_memory()
 
@@ -526,6 +540,30 @@ class MusicData:
         self.artist_search_keys = tuple(
             normalize_search_text(a) for a in self.artists_list
         )
+
+    def _build_artist_audio_centroids(self) -> None:
+        if self.matrix_audio is None or self.track_artist_codes is None:
+            self.artist_audio_centroids_unit = None
+            return
+
+        n_artists = len(self.artist_names_by_code)
+        if n_artists == 0:
+            self.artist_audio_centroids_unit = None
+            return
+
+        artist_codes = self.track_artist_codes.astype(np.int64, copy=False)
+        centroid_sums = np.zeros((n_artists, self.matrix_audio.shape[1]), dtype=np.float32)
+        np.add.at(centroid_sums, artist_codes, self.matrix_audio)
+
+        counts = np.bincount(artist_codes, minlength=n_artists).astype(np.float32, copy=False)
+        valid = counts > 0
+        centroid_sums[valid] /= counts[valid, None]
+
+        norms = np.einsum('ij,ij->i', centroid_sums, centroid_sums, dtype=np.float32)
+        np.sqrt(norms, out=norms)
+        nz = norms > 0
+        centroid_sums[nz] /= norms[nz, None]
+        self.artist_audio_centroids_unit = centroid_sums
 
     def _profile_for_artist_code(
         self,
@@ -897,6 +935,10 @@ def _resolve_language_prefilter_target_ratio(language_weight: int) -> float | No
     return _clamp_ratio(LANGUAGE_PREFILTER_TARGET_RATIO_BY_WEIGHT.get(language_weight))
 
 
+def _resolve_audio_prefilter_target_ratio(_genre_weight: int) -> float | None:
+    return _clamp_ratio(AUDIO_PREFILTER_TARGET_RATIO)
+
+
 def _prefilter_artist_codes_by_genre(
     data: MusicData,
     seeds_genre_stack: np.ndarray,
@@ -938,14 +980,13 @@ def _prefilter_artist_codes_by_language(
     data: MusicData,
     query_language_codes: np.ndarray,
     target_ratio: float | None,
+    strict_match: bool = LANGUAGE_PREFILTER_STRICT_MATCH,
 ) -> np.ndarray | None:
     if (
         data.artist_language_codes_by_artist_code is None
         or data.artist_track_offsets is None
         or data.matrix_audio is None
     ):
-        return None
-    if target_ratio is None or target_ratio <= 0:
         return None
 
     query_lang_codes = np.asarray(query_language_codes, dtype=np.int64)
@@ -962,15 +1003,24 @@ def _prefilter_artist_codes_by_language(
     artist_lang_codes = artist_lang_codes[:n_artists]
     artist_track_counts = artist_track_counts[:n_artists]
 
-    target_tracks = int(round(len(data.matrix_audio) * target_ratio))
-    if target_tracks <= 0:
-        return None
-
     eligible_mask = np.isin(artist_lang_codes, query_lang_codes)
     if not bool(np.any(eligible_mask)):
         return None
 
     eligible_artist_indices = np.flatnonzero(eligible_mask).astype(np.int32, copy=False)
+
+    # Strict mode: keep all artists that match one of the seed/input languages.
+    # This performs a hard language gate with no popularity/coverage sampling.
+    if strict_match:
+        return eligible_artist_indices
+
+    if target_ratio is None or target_ratio <= 0:
+        return None
+
+    target_tracks = int(round(len(data.matrix_audio) * target_ratio))
+    if target_tracks <= 0:
+        return None
+
     eligible_track_counts = artist_track_counts[eligible_artist_indices]
 
     if data.artist_popularity_by_code is not None:
@@ -991,6 +1041,47 @@ def _prefilter_artist_codes_by_language(
     keep_n = int(np.searchsorted(cumsum, target_tracks, side='left') + 1)
     keep_n = max(1, min(keep_n, len(ordered_artist_indices)))
     return ordered_artist_indices[:keep_n].astype(np.int32, copy=False)
+
+
+def _prefilter_artist_codes_by_audio(
+    data: MusicData,
+    seeds_audio_stack: np.ndarray,
+    weights_arr: np.ndarray,
+    target_ratio: float | None,
+) -> np.ndarray | None:
+    if (
+        data.artist_track_offsets is None
+        or data.matrix_audio is None
+        or target_ratio is None
+    ):
+        return None
+
+    if data.artist_audio_centroids_unit is None:
+        data._build_artist_audio_centroids()
+    if data.artist_audio_centroids_unit is None:
+        return None
+
+    target_tracks = int(round(len(data.matrix_audio) * target_ratio))
+    if target_tracks <= 0:
+        return None
+
+    w_sum = float(weights_arr.sum())
+    if w_sum <= 0:
+        return None
+
+    query_vec = np.sum(seeds_audio_stack * (weights_arr[:, None]), axis=0) / w_sum
+    qn = float(np.linalg.norm(query_vec))
+    if qn <= 0:
+        return None
+    query_vec = query_vec / qn
+
+    sims = data.artist_audio_centroids_unit @ query_vec.astype(np.float32, copy=False)
+    artist_counts = np.diff(data.artist_track_offsets).astype(np.int64, copy=False)
+    order = np.argsort(sims)[::-1]
+    cumsum = np.cumsum(artist_counts[order])
+    keep_n = int(np.searchsorted(cumsum, target_tracks, side='left') + 1)
+    keep_n = max(1, min(keep_n, len(order)))
+    return order[:keep_n].astype(np.int32, copy=False)
 
 
 def generate_recommendations(
@@ -1080,6 +1171,16 @@ def generate_recommendations(
         )
 
     overfetch_multiplier, genre_target_ratio = _resolve_dynamic_candidate_plan(genre_weight)
+    audio_target_ratio = None
+    audio_prefilter_artist_codes = None
+    if AUDIO_PREFILTER_ENABLED:
+        audio_target_ratio = _resolve_audio_prefilter_target_ratio(genre_weight)
+        audio_prefilter_artist_codes = _prefilter_artist_codes_by_audio(
+            data,
+            seeds_audio_stack,
+            weights_arr,
+            audio_target_ratio,
+        )
 
     language_target_ratio = None
     language_prefilter_ready = False
@@ -1089,44 +1190,60 @@ def generate_recommendations(
         and effective_language_weight > 0
         and data.artist_language_codes_by_artist_code is not None
     ):
-        language_target_ratio = _resolve_language_prefilter_target_ratio(language_weight)
-        language_prefilter_ready = language_target_ratio is not None
+        if LANGUAGE_PREFILTER_STRICT_MATCH:
+            language_prefilter_ready = True
+        else:
+            language_target_ratio = _resolve_language_prefilter_target_ratio(language_weight)
+            language_prefilter_ready = language_target_ratio is not None
 
-    genre_prefilter_artist_codes = None
-    language_prefilter_artist_codes = None
     genre_prefilter_artist_codes = _prefilter_artist_codes_by_genre(
         data,
         seeds_genre_stack,
         weights_arr,
         genre_target_ratio,
     )
+    language_prefilter_artist_codes = None
     if language_prefilter_ready and language_target_ratio is not None:
         language_prefilter_artist_codes = _prefilter_artist_codes_by_language(
             data,
             query_language_codes,
             language_target_ratio,
+            strict_match=LANGUAGE_PREFILTER_STRICT_MATCH,
+        )
+    elif language_prefilter_ready:
+        language_prefilter_artist_codes = _prefilter_artist_codes_by_language(
+            data,
+            query_language_codes,
+            None,
+            strict_match=LANGUAGE_PREFILTER_STRICT_MATCH,
         )
 
     prefilter_artist_codes = None
     prefilter_mode = 'none'
-    if genre_prefilter_artist_codes is not None and language_prefilter_artist_codes is not None:
-        intersect_codes = np.intersect1d(
-            genre_prefilter_artist_codes,
-            language_prefilter_artist_codes,
-            assume_unique=False,
-        )
-        if len(intersect_codes) > 0:
-            prefilter_artist_codes = intersect_codes.astype(np.int32, copy=False)
-            prefilter_mode = 'genre+language'
-        else:
-            prefilter_artist_codes = genre_prefilter_artist_codes
-            prefilter_mode = 'genre-fallback'
-    elif genre_prefilter_artist_codes is not None:
-        prefilter_artist_codes = genre_prefilter_artist_codes
-        prefilter_mode = 'genre'
-    elif language_prefilter_artist_codes is not None:
-        prefilter_artist_codes = language_prefilter_artist_codes
-        prefilter_mode = 'language'
+    prefilter_sources: list[tuple[str, np.ndarray]] = []
+    if audio_prefilter_artist_codes is not None:
+        prefilter_sources.append(('audio', audio_prefilter_artist_codes))
+    if genre_prefilter_artist_codes is not None:
+        prefilter_sources.append(('genre', genre_prefilter_artist_codes))
+    if language_prefilter_artist_codes is not None:
+        prefilter_sources.append(('language', language_prefilter_artist_codes))
+
+    if prefilter_sources:
+        mode_parts: list[str] = []
+        prefilter_artist_codes = prefilter_sources[0][1]
+        mode_parts.append(prefilter_sources[0][0])
+        for source_name, source_codes in prefilter_sources[1:]:
+            intersect_codes = np.intersect1d(
+                prefilter_artist_codes,
+                source_codes,
+                assume_unique=False,
+            )
+            if len(intersect_codes) > 0:
+                prefilter_artist_codes = intersect_codes.astype(np.int32, copy=False)
+                mode_parts.append(source_name)
+            else:
+                mode_parts.append(f"{source_name}-fallback")
+        prefilter_mode = '+'.join(mode_parts)
 
     candidate_scan_indices: np.ndarray | None = None
     if prefilter_artist_codes is not None and len(prefilter_artist_codes) > 0:
@@ -1423,10 +1540,13 @@ def generate_recommendations(
         "store_per_seed": store_per_seed,
         "prefilter_mode": prefilter_mode,
         "prefilter_artists": int(0 if prefilter_artist_codes is None else len(prefilter_artist_codes)),
+        "prefilter_audio_artists": int(0 if audio_prefilter_artist_codes is None else len(audio_prefilter_artist_codes)),
         "prefilter_genre_artists": int(0 if genre_prefilter_artist_codes is None else len(genre_prefilter_artist_codes)),
         "prefilter_language_artists": int(0 if language_prefilter_artist_codes is None else len(language_prefilter_artist_codes)),
+        "audio_target_ratio": float(0.0 if audio_target_ratio is None else audio_target_ratio),
         "genre_target_ratio": float(0.0 if genre_target_ratio is None else genre_target_ratio),
         "language_target_ratio": float(0.0 if language_target_ratio is None else language_target_ratio),
+        "language_prefilter_strict": bool(LANGUAGE_PREFILTER_STRICT_MATCH),
         "unique_artists": int(len(unique_artist_codes)),
         "genre_ms": int(1000 * (t_genre - t_audio)),
         "lang_ms": int(1000 * (t_language - t_genre)),
