@@ -36,6 +36,7 @@
     let regenerationHistory = $state<Set<string>>(new Set());
     let lastSearchParams = $state<string>("");
     const HIDDEN_ARTIST_LIMIT = 30; // Force new search after this many total artists
+    const ARTIST_PRELOAD_LIMIT = 1000;
     const hitArtistLimit = $derived(regenerationHistory.size >= HIDDEN_ARTIST_LIMIT);
 
     // Sidebar player
@@ -58,7 +59,7 @@
 
         try {
             const [artists, stats] = await Promise.all([
-                fetchArtists("", 5000),
+                fetchArtists("", ARTIST_PRELOAD_LIMIT),
                 fetchStats().catch(() => null),
             ]);
             artistsList.set(artists);

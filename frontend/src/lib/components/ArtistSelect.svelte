@@ -22,6 +22,7 @@
     let isSearching = $state(false);
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let searchSeq = 0;
+    let abortController: AbortController | null = null;
 
     const filtered = $derived.by(() => {
         if (query.trim()) {
@@ -35,10 +36,10 @@
 
     $effect(() => {
         const q = query.trim();
-        if (debounceTimer) {
-            clearTimeout(debounceTimer);
-        }
-        if (!q) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        abortController?.abort();
+
+        if (q.length < 2) {
             searchResults = [];
             isSearching = false;
             return;
@@ -46,24 +47,29 @@
         isSearching = true;
         const seq = ++searchSeq;
         debounceTimer = setTimeout(async () => {
+            abortController = new AbortController();
             try {
-                const results = await fetchArtists(q, 100);
+                const results = await fetchArtists(q, 100, abortController.signal);
                 if (seq === searchSeq) {
                     searchResults = results;
                 }
-            } catch (e) {
-                console.error("Artist search failed:", e);
+            } catch (e: any) {
+                if (e?.name !== "AbortError") {
+                    console.error("Artist search failed:", e);
+                    if (seq === searchSeq) {
+                        searchResults = [];
+                    }
+                }
+            } finally {
                 if (seq === searchSeq) {
-                    searchResults = [];
+                    isSearching = false;
                 }
             }
-            if (seq === searchSeq) {
-                isSearching = false;
-            }
-        }, 150);
+        }, 250);
 
         return () => {
             if (debounceTimer) clearTimeout(debounceTimer);
+            abortController?.abort();
         };
     });
 

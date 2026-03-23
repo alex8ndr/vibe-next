@@ -7,7 +7,6 @@ import secrets
 import os
 import hashlib
 import pickle
-import unicodedata
 from time import time
 from time import perf_counter
 from contextlib import asynccontextmanager
@@ -30,6 +29,7 @@ try:
         MusicData,
         ParquetDataSource,
         generate_recommendations,
+        normalize_search_text,
         GENRE_FOCUS,
         LANGUAGE_FOCUS,
         TRACKS_PER_ARTIST,
@@ -41,6 +41,7 @@ except ImportError:
         MusicData,
         ParquetDataSource,
         generate_recommendations,
+        normalize_search_text,
         GENRE_FOCUS,
         LANGUAGE_FOCUS,
         TRACKS_PER_ARTIST,
@@ -277,10 +278,12 @@ ANALYTICS_MIN_INTERVAL = 5.0  # seconds between logged searches from same client
 
 
 def _normalize_search_text(value: str) -> str:
-    """Normalize text for accent-insensitive artist search matching."""
-    normalized = unicodedata.normalize("NFKD", value)
-    no_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    return no_marks.casefold().strip()
+    """Normalize text for accent-insensitive artist search matching.
+    
+    NOTE: For bulk artist matching, use music_data.artist_search_keys
+    (pre-computed at startup) instead of calling this per-artist.
+    """
+    return normalize_search_text(value)
 
 
 def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_artists: list[str], valid_exclude: list[str] | None) -> bool:
@@ -346,16 +349,39 @@ async def get_artists(q: str = "", limit: int = 1000) -> list[str]:
         if not q_norm:
             return artists[:limit]
 
-        exact, starts, substring = [], [], []
-        for a in artists:
-            a_norm = _normalize_search_text(a)
+        search_keys = getattr(music_data, "artist_search_keys", ())
+        if len(search_keys) != len(artists):
+            search_keys = tuple(_normalize_search_text(a) for a in artists)
+
+        # For 1-char queries, only do prefix matching to keep per-keystroke latency low.
+        if len(q_norm) < 2:
+            starts = [
+                a
+                for a, a_norm in zip(artists, search_keys)
+                if a_norm.startswith(q_norm)
+            ]
+            return starts[:limit]
+
+        exact, starts = [], []
+        for a, a_norm in zip(artists, search_keys):
             if a_norm == q_norm:
                 exact.append(a)
             elif a_norm.startswith(q_norm):
                 starts.append(a)
-            elif q_norm in a_norm:
+        merged = exact + starts
+        if len(merged) >= limit:
+            return merged[:limit]
+
+        need = limit - len(merged)
+        substring: list[str] = []
+        for a, a_norm in zip(artists, search_keys):
+            if a_norm.startswith(q_norm):
+                continue
+            if q_norm in a_norm:
                 substring.append(a)
-        artists = exact + starts + substring
+                if len(substring) >= need:
+                    break
+        artists = merged + substring
     
     return artists[:limit]
 

@@ -5,6 +5,7 @@ Updated to use polars instead of pandas for memory efficiency.
 import ctypes
 import gc
 import os
+import unicodedata
 import numpy as np
 import polars as pl
 from pathlib import Path
@@ -112,6 +113,13 @@ AUDIO_SCAN_SCRATCH_TARGET_MB = 160
 MIN_TRACK_ID_BYTES = 22
 
 
+def normalize_search_text(value: str) -> str:
+    """Normalize text for accent-insensitive artist search matching."""
+    normalized = unicodedata.normalize("NFKD", value)
+    no_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return no_marks.casefold().strip()
+
+
 def _get_audio_scan_seed_batch_size(n_tracks: int, n_seeds: int) -> int:
     """Pick a seed-batch size that respects the scan scratch-memory target."""
     if n_tracks <= 0 or n_seeds <= 0:
@@ -207,6 +215,7 @@ class MusicData:
         self.artist_popularity_by_code: np.ndarray | None = None  # Per-artist popularity (0-1)
         self.artist_track_count_by_code: np.ndarray | None = None  # Per-artist log track count (0-1)
         self.popularity_median: float = 0.5  # Median artist popularity for centering
+        self.artist_search_keys: tuple[str, ...] = ()  # Pre-normalized names for search
     
     def load(self) -> None:
         t0 = perf_counter()
@@ -341,6 +350,7 @@ class MusicData:
             self.artist_names_by_code[int(code)]
             for code in artist_popularity['artist_code'].to_list()
         ]
+        self._build_artist_search_keys()
         print(f"[startup] Indexed {len(self.artists_list):,} artists by popularity")
 
         lookup_mb = (
@@ -511,6 +521,11 @@ class MusicData:
         self.artist_track_count_by_code = np.full(n_artists, 0.5, dtype=np.float32)
         self.artist_popularity_by_code[artist_codes] = avg_pops
         self.artist_track_count_by_code[artist_codes] = norm_counts.astype(np.float32, copy=False)
+
+    def _build_artist_search_keys(self) -> None:
+        self.artist_search_keys = tuple(
+            normalize_search_text(a) for a in self.artists_list
+        )
 
     def _profile_for_artist_code(
         self,
@@ -1135,11 +1150,12 @@ def generate_recommendations(
 
     t_prep = perf_counter()
     fetch_k = min(OVERFETCH_BASE * overfetch_multiplier, n_scan_tracks)
-    scan_block = 65536
+    scan_block = 131072
 
     if store_per_seed:
         # Fast path: store per-seed distances during scan, skip refine.
         d_scan = np.empty((n_seeds, n_scan_tracks), dtype=np.float32)
+        d_min = np.empty(n_scan_tracks, dtype=np.float32)
         for lo in range(0, n_scan_tracks, scan_block):
             hi = min(lo + scan_block, n_scan_tracks)
             if candidate_scan_indices is None:
@@ -1154,8 +1170,7 @@ def generate_recommendations(
             dots += seed_norms_sq_flat[:, None]
             np.maximum(dots, 0.0, out=dots)
             d_scan[:, lo:hi] = dots
-
-        d_min = np.min(d_scan, axis=0)
+            np.min(dots, axis=0, out=d_min[lo:hi])
         if fetch_k >= n_scan_tracks:
             top_k_idx = np.arange(n_scan_tracks, dtype=np.int32)
         else:

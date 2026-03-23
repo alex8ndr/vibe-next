@@ -53,12 +53,12 @@ export interface RecommendResponse {
     meta?: RecommendMeta;
 }
 
-export async function fetchArtists(query = '', limit = 100): Promise<string[]> {
+export async function fetchArtists(query = '', limit = 100, signal?: AbortSignal): Promise<string[]> {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
     params.set('limit', String(limit));
 
-    const res = await fetch(`${API_BASE}/artists?${params}`);
+    const res = await fetch(`${API_BASE}/artists?${params}`, { signal });
     if (!res.ok) throw new Error('Failed to fetch artists');
     return res.json();
 }
