@@ -78,7 +78,7 @@ MAX_ARTISTS = 6
 VARIETY_NOISE_SCALE = 0.1
 
 # Overfetch base: fetch_k = OVERFETCH_BASE * overfetch_multiplier
-OVERFETCH_BASE = 5000
+OVERFETCH_BASE = 3000
 
 # Artist aggregation: minimum tracks an artist must have in the candidate pool
 MIN_ARTIST_TRACKS = 2
