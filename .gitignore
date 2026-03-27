@@ -40,6 +40,8 @@ backend/data/analytics.jsonl
 
 # Local cache
 backend/data/.music_data_cache.pkl
+backend/data/.music_data_cache/
+backend/data/.runtime_mmap/
 
 # Pipeline intermediates (regenerable from data.csv.zip)
 backend/data/data_filtered.parquet

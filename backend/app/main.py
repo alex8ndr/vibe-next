@@ -6,13 +6,13 @@ import json
 import secrets
 import os
 import hashlib
-import pickle
 from time import time
 from time import perf_counter
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter, deque
+import shutil
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -53,7 +53,7 @@ except ImportError:
 TRACKS_PATH = Path(__file__).parent.parent / "data" / "tracks.parquet"
 ARTISTS_PATH = Path(__file__).parent.parent / "data" / "artists.parquet"
 ANALYTICS_PATH = Path(__file__).parent.parent / "data" / "analytics.jsonl"
-CACHE_PATH = Path(__file__).parent.parent / "data" / ".music_data_cache.pkl"
+CACHE_DIR = Path(__file__).parent.parent / "data" / ".music_data_cache"
 
 # Data caching - disabled by default (safe for production). Enable for dev with ENABLE_DATA_CACHE=true
 ENABLE_DATA_CACHE = os.getenv("ENABLE_DATA_CACHE", "").lower() == "true"
@@ -74,34 +74,37 @@ def _load_cached_data() -> MusicData:
     if not ARTISTS_PATH.exists():
         raise RuntimeError(f"Artists file not found: {ARTISTS_PATH}")
     
-    # Check cache if enabled
-    if ENABLE_DATA_CACHE and CACHE_PATH.exists():
-        print(f"[startup] Cache enabled, checking {CACHE_PATH}")
-        cache_mtime = CACHE_PATH.stat().st_mtime
-        data_mtime = max(TRACKS_PATH.stat().st_mtime, ARTISTS_PATH.stat().st_mtime)
-        
-        if cache_mtime >= data_mtime:
-            try:
-                with open(CACHE_PATH, 'rb') as f:
-                    music_data = pickle.load(f)
+    source = ParquetDataSource(TRACKS_PATH, ARTISTS_PATH)
+
+    # Check cache if enabled.
+    if ENABLE_DATA_CACHE and CACHE_DIR.exists():
+        print(f"[startup] Cache enabled, checking {CACHE_DIR}")
+        music_data = MusicData(source)
+        try:
+            restored = music_data.load_cache_bundle(CACHE_DIR, TRACKS_PATH, ARTISTS_PATH)
+            if restored:
                 elapsed = perf_counter() - t0
                 print(f"[startup] Restored {music_data.track_count:,} tracks from cache in {elapsed:.2f}s")
                 return music_data
-            except Exception as e:
-                print(f"[startup] Cache load failed: {e}, reloading from parquet...")
-    
+            print("[startup] Cache is stale, rebuilding from parquet...")
+        except Exception as e:
+            print(f"[startup] Cache load failed: {e}, rebuilding from parquet...")
+            music_data = None
+            try:
+                shutil.rmtree(CACHE_DIR)
+            except Exception:
+                pass
+
     # Load fresh data
-    source = ParquetDataSource(TRACKS_PATH, ARTISTS_PATH)
     music_data = MusicData(source)
     print("[startup] Building in-memory structures from parquet...")
     music_data.load()
-    
+
     # Save to cache if enabled
     if ENABLE_DATA_CACHE:
         try:
-            with open(CACHE_PATH, 'wb') as f:
-                pickle.dump(music_data, f)
-            print(f"[startup] Cached {music_data.track_count:,} tracks, {len(music_data.artists_list):,} artists")
+            music_data.save_cache_bundle(CACHE_DIR, TRACKS_PATH, ARTISTS_PATH)
+            print(f"[startup] Cached {music_data.track_count:,} tracks, {len(music_data.artists_list):,} artists at {CACHE_DIR}")
         except Exception as e:
             print(f"[startup] Warning: Failed to write cache: {e}")
     else:

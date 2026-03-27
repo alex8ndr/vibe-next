@@ -4,7 +4,10 @@ Updated to use polars instead of pandas for memory efficiency.
 """
 import ctypes
 import gc
+import json
 import os
+import shutil
+import tempfile
 import unicodedata
 import numpy as np
 import polars as pl
@@ -189,6 +192,49 @@ class ParquetDataSource:
 
 
 class MusicData:
+    CACHE_FORMAT_VERSION = 1
+    CACHE_MANIFEST_FILE = 'manifest.json'
+    CACHE_ARRAY_FIELDS = (
+        'matrix_audio',
+        'matrix_genre',
+        'matrix_genre_unit',
+        'audio_norms_sq',
+        'genre_norms',
+        'artist_names_sorted',
+        'artist_codes_sorted',
+        'track_ids_sorted',
+        'track_row_indices_sorted',
+        'track_sorted_pos_by_row',
+        'track_artist_codes',
+        'track_popularity',
+        'track_name_offsets',
+        'artist_genre_codes_by_artist_code',
+        'artist_language_codes_by_artist_code',
+        'artist_track_offsets',
+        'artist_track_row_indices',
+        'artist_popularity_by_code',
+        'artist_track_count_by_code',
+        'artist_audio_centroids_unit',
+    )
+    CACHE_MMAP_ARRAY_FIELDS = frozenset(
+        {
+            'matrix_audio',
+            'matrix_genre',
+            'matrix_genre_unit',
+            'audio_norms_sq',
+            'track_ids_sorted',
+            'track_row_indices_sorted',
+            'track_sorted_pos_by_row',
+            'track_artist_codes',
+            'track_popularity',
+            'track_name_blob',
+            'track_name_offsets',
+            'artist_track_offsets',
+            'artist_track_row_indices',
+            'artist_audio_centroids_unit',
+        }
+    )
+
     def __init__(self, source: DataSource):
         self.source = source
         self.track_count: int = 0
@@ -209,7 +255,7 @@ class MusicData:
         self.track_sorted_pos_by_row: np.ndarray | None = None
         self.track_artist_codes: np.ndarray | None = None  # Per-track compact artist code
         self.track_popularity: np.ndarray | None = None
-        self.track_name_blob: bytearray | None = None
+        self.track_name_blob: bytearray | np.ndarray | None = None
         self.track_name_offsets: np.ndarray | None = None
         self.genre_names_by_code: list[str | None] = [None]
         self.language_names_by_code: list[str | None] = [None]
@@ -222,6 +268,148 @@ class MusicData:
         self.popularity_median: float = 0.5  # Median artist popularity for centering
         self.artist_search_keys: tuple[str, ...] = ()  # Pre-normalized names for search
         self.artist_audio_centroids_unit: np.ndarray | None = None  # Per-artist unit audio centroid
+
+    @staticmethod
+    def _source_file_fingerprint(path: Path) -> dict[str, int | str]:
+        stat = path.stat()
+        return {
+            'name': path.name,
+            'size': int(stat.st_size),
+            'mtime_ns': int(stat.st_mtime_ns),
+        }
+
+    @classmethod
+    def _source_fingerprint(cls, tracks_path: Path, artists_path: Path) -> dict[str, dict[str, int | str]]:
+        return {
+            'tracks': cls._source_file_fingerprint(tracks_path),
+            'artists': cls._source_file_fingerprint(artists_path),
+        }
+
+    def _cache_blob_array(self) -> np.ndarray:
+        if self.track_name_blob is None:
+            raise ValueError('track_name_blob is not available for cache export')
+        if isinstance(self.track_name_blob, np.ndarray):
+            return self.track_name_blob.astype(np.uint8, copy=False)
+        return np.frombuffer(self.track_name_blob, dtype=np.uint8)
+
+    def _cache_arrays(self) -> dict[str, np.ndarray]:
+        arrays: dict[str, np.ndarray] = {}
+        for field in self.CACHE_ARRAY_FIELDS:
+            value = getattr(self, field)
+            if value is None:
+                raise ValueError(f'Cannot write cache; missing array field: {field}')
+            arrays[field] = np.asarray(value)
+        arrays['track_name_blob'] = self._cache_blob_array()
+        return arrays
+
+    def save_cache_bundle(self, cache_dir: Path, tracks_path: Path, artists_path: Path) -> None:
+        """Persist a deterministic, mmap-friendly cache bundle to disk."""
+        arrays = self._cache_arrays()
+        cache_dir = Path(cache_dir)
+        cache_dir_parent = cache_dir.parent
+        cache_dir_parent.mkdir(parents=True, exist_ok=True)
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f'{cache_dir.name}.tmp-', dir=str(cache_dir_parent)))
+        arrays_dir = tmp_dir / 'arrays'
+        lists_dir = tmp_dir / 'lists'
+        arrays_dir.mkdir(parents=True, exist_ok=True)
+        lists_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            array_specs: dict[str, dict[str, object]] = {}
+            for name, arr in arrays.items():
+                path = arrays_dir / f'{name}.npy'
+                np.save(path, arr, allow_pickle=False)
+                array_specs[name] = {
+                    'path': f'arrays/{name}.npy',
+                    'shape': list(arr.shape),
+                    'dtype': str(arr.dtype),
+                    'mmap': bool(name in self.CACHE_MMAP_ARRAY_FIELDS),
+                }
+
+            list_paths: dict[str, str] = {}
+            list_fields: dict[str, object] = {
+                'artist_names_by_code': self.artist_names_by_code,
+                'artists_list': self.artists_list,
+                'genre_names_by_code': self.genre_names_by_code,
+                'language_names_by_code': self.language_names_by_code,
+                'audio_cols': self.audio_cols,
+                'genre_cols': self.genre_cols,
+            }
+            for field, values in list_fields.items():
+                out_path = lists_dir / f'{field}.json'
+                with out_path.open('w', encoding='utf-8') as fh:
+                    json.dump(values, fh, ensure_ascii=False, separators=(',', ':'))
+                list_paths[field] = f'lists/{field}.json'
+
+            manifest = {
+                'format_version': self.CACHE_FORMAT_VERSION,
+                'source': self._source_fingerprint(tracks_path, artists_path),
+                'track_count': int(self.track_count),
+                'popularity_median': float(self.popularity_median),
+                'arrays': array_specs,
+                'lists': list_paths,
+            }
+            with (tmp_dir / self.CACHE_MANIFEST_FILE).open('w', encoding='utf-8') as fh:
+                json.dump(manifest, fh, ensure_ascii=False, separators=(',', ':'))
+
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+            tmp_dir.replace(cache_dir)
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+    def load_cache_bundle(self, cache_dir: Path, tracks_path: Path, artists_path: Path) -> bool:
+        """Load a previously saved cache bundle, returning False when stale/missing."""
+        cache_dir = Path(cache_dir)
+        manifest_path = cache_dir / self.CACHE_MANIFEST_FILE
+        if not manifest_path.exists():
+            return False
+
+        with manifest_path.open('r', encoding='utf-8') as fh:
+            manifest = json.load(fh)
+
+        if int(manifest.get('format_version', -1)) != self.CACHE_FORMAT_VERSION:
+            return False
+
+        if manifest.get('source') != self._source_fingerprint(tracks_path, artists_path):
+            return False
+
+        list_specs = manifest.get('lists', {})
+        for field in (
+            'artist_names_by_code',
+            'artists_list',
+            'genre_names_by_code',
+            'language_names_by_code',
+            'audio_cols',
+            'genre_cols',
+        ):
+            list_path = cache_dir / str(list_specs[field])
+            with list_path.open('r', encoding='utf-8') as fh:
+                setattr(self, field, json.load(fh))
+
+        self.audio_col_indices = {col: idx for idx, col in enumerate(self.audio_cols)}
+        self.popularity_median = float(manifest.get('popularity_median', 0.5))
+
+        array_specs = manifest.get('arrays', {})
+        for name in (*self.CACHE_ARRAY_FIELDS, 'track_name_blob'):
+            spec = array_specs[name]
+            array_path = cache_dir / str(spec['path'])
+            mmap_mode = 'r' if bool(spec.get('mmap', False)) else None
+            arr = np.load(array_path, mmap_mode=mmap_mode, allow_pickle=False)
+            expected_shape = tuple(spec['shape'])
+            expected_dtype = str(spec['dtype'])
+            if arr.shape != expected_shape or str(arr.dtype) != expected_dtype:
+                raise ValueError(f'Corrupt cache array: {name}')
+            if name == 'track_name_blob':
+                self.track_name_blob = arr
+            else:
+                setattr(self, name, arr)
+
+        self.track_count = int(manifest.get('track_count', len(self.track_artist_codes)))
+        self.artist_search_keys = tuple(normalize_search_text(a) for a in self.artists_list)
+        return True
     
     def load(self) -> None:
         t0 = perf_counter()
@@ -605,6 +793,8 @@ class MusicData:
             raise KeyError(f"Track row {row_idx} is unavailable")
         start = int(self.track_name_offsets[row_idx])
         end = int(self.track_name_offsets[row_idx + 1])
+        if isinstance(self.track_name_blob, np.ndarray):
+            return self.track_name_blob[start:end].tobytes().decode('utf-8')
         return self.track_name_blob[start:end].decode('utf-8')
 
     def get_track_genre(self, row_idx: int) -> str | None:
