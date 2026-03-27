@@ -11,6 +11,7 @@ from language_config import (
     TAG_FASTTEXT_THRESHOLD,
     LOCALE_SIGNAL_FASTTEXT_THRESHOLD,
     FALLBACK_FASTTEXT_THRESHOLD,
+    PROTECTED_TAG_LANG_CODES,
     VOTE_FALLBACK_CONF_FLOOR,
     VOTE_FALLBACK_MIN_VOTES,
     VOTE_FALLBACK_DOMINANCE,
@@ -61,6 +62,7 @@ def resolve_artist_languages(
     vote_fallback_conf_floor: float = VOTE_FALLBACK_CONF_FLOOR,
     vote_fallback_min_votes: int = VOTE_FALLBACK_MIN_VOTES,
     vote_fallback_dominance: float = VOTE_FALLBACK_DOMINANCE,
+    protected_tag_lang_codes: frozenset[str] = PROTECTED_TAG_LANG_CODES,
 ) -> dict[str, str]:
     """Resolve one final language code per artist.
 
@@ -115,6 +117,8 @@ def resolve_artist_languages(
 
         norm_name = normalize_artist_name(artist_name)
         tag_lang = tag_lang_lookup.get(norm_name)
+        tag_lang_norm = tag_lang.strip().lower() if isinstance(tag_lang, str) else None
+        tag_lang_base = tag_lang_norm.split("-", 1)[0] if tag_lang_norm else None
 
         cleaned_titles: list[str] = []
         for title in top_titles:
@@ -129,15 +133,20 @@ def resolve_artist_languages(
         if combined:
             detected_lang, detected_conf = detect_language(model, combined)
 
-        has_tag_signal = bool(tag_lang) or bool(tag_signal_lookup.get(norm_name))
+        has_tag_signal = bool(tag_lang_norm) or bool(tag_signal_lookup.get(norm_name))
 
-        if tag_lang:
-            if tag_lang in {"ja", "ko", "zh"}:
-                artist_lang[artist_name] = tag_lang
+        if tag_lang_norm:
+            # Accept both full locale tags (e.g. hi-IN) and base ISO tags.
+            is_protected_tag_lang = (
+                tag_lang_norm in protected_tag_lang_codes
+                or (tag_lang_base is not None and tag_lang_base in protected_tag_lang_codes)
+            )
+            if is_protected_tag_lang:
+                artist_lang[artist_name] = tag_lang_base or tag_lang_norm
             elif detected_lang and detected_conf >= tag_fasttext_threshold:
                 artist_lang[artist_name] = detected_lang
             else:
-                artist_lang[artist_name] = tag_lang
+                artist_lang[artist_name] = tag_lang_base or tag_lang_norm
             explicit_tag_count += 1
             continue
 

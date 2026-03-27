@@ -22,6 +22,24 @@ FALLBACK_FASTTEXT_THRESHOLD: float = 0.8
 # Stronger override threshold for explicit CJK tag languages.
 CJK_TAG_FASTTEXT_THRESHOLD: float = 0.9
 
+PROTECTED_TAG_LANG_CODES: frozenset[str] = frozenset(
+    {
+        "ja",
+        "ko",
+        "zh",
+        "hi",
+        "ur",
+        "pa",
+        "bn",
+        "ta",
+        "te",
+        "ml",
+        "mr",
+        "gu",
+        "kn",
+    }
+)
+
 # Shared resolver/debug defaults.
 LANGUAGE_MAX_TITLES: int = 50
 
