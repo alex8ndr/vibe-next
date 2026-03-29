@@ -2,8 +2,9 @@
 """
 Preprocess external artist genre sources into standardized parquet files.
 
-Reads raw CSV/parquet data from Serkan, Yamac, and Vectorql datasets and
-writes standardized parquet files to data/external/genre/ with a unified schema:
+Reads raw CSV/parquet/SQLite data from Serkan, Yamac, Vectorql, and Malte
+datasets and writes standardized parquet files to data/external/genre/ with a
+unified schema:
 
   - id: Spotify artist ID (String)
   - name: artist name (String)
@@ -16,13 +17,16 @@ so changes to the vocabulary don't require re-running this script.
 
 Usage:
     python preprocess_genre_sources.py
-    python preprocess_genre_sources.py --source serkan yamac vectorql
+    python preprocess_genre_sources.py --source serkan yamac vectorql malte
 """
 
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
+import zipfile
+from collections import defaultdict
 from pathlib import Path
 
 import polars as pl
@@ -33,8 +37,12 @@ from io_utils import atomic_write_parquet
 from paths import (
     EXTERNAL_DIR,
     GENRE_DIR,
+    MALTE_GENRE,
+    MALTE_SQLITE,
+    MALTE_SQLITE_ZIP,
     SERKAN_ARTISTS_CSV,
     SERKAN_GENRE,
+    get_genre_sources,
     VECTORQL_GENRE,
     YAMAC_ARTISTS_CSV,
     YAMAC_GENRE,
@@ -151,31 +159,146 @@ def preprocess_vectorql() -> pl.DataFrame | None:
     return _standardize_schema(df)
 
 
+def _ensure_malte_sqlite() -> Path | None:
+    """Return path to Malte SQLite DB, extracting zip if needed."""
+    if MALTE_SQLITE.exists():
+        return MALTE_SQLITE
+
+    if not MALTE_SQLITE_ZIP.exists():
+        print(f"  Not found: {MALTE_SQLITE} or {MALTE_SQLITE_ZIP}")
+        return None
+
+    MALTE_SQLITE.parent.mkdir(parents=True, exist_ok=True)
+    print(f"  Extracting {MALTE_SQLITE_ZIP}...")
+    with zipfile.ZipFile(MALTE_SQLITE_ZIP, "r") as zf:
+        if "spotify.sqlite" not in zf.namelist():
+            print("  Zip file does not contain spotify.sqlite")
+            return None
+        zf.extract("spotify.sqlite", path=MALTE_SQLITE.parent)
+    return MALTE_SQLITE
+
+
+def preprocess_malte() -> pl.DataFrame | None:
+    """Preprocess Malte SQLite into standardized artist-genre rows."""
+    db_path = _ensure_malte_sqlite()
+    if db_path is None:
+        return None
+
+    print(f"  Reading {db_path}...")
+    conn = sqlite3.connect(db_path)
+    # Some rows contain invalid UTF-8 byte sequences in artist names.
+    # Use bytes + replacement decoding to keep preprocessing deterministic.
+    conn.text_factory = bytes
+    cur = conn.cursor()
+    try:
+        artist_meta: dict[str, tuple[str, int | None]] = {}
+        artist_rows = 0
+        for artist_id_raw, name_raw, popularity_raw in cur.execute(
+            "SELECT id, name, popularity FROM artists"
+        ):
+            artist_rows += 1
+
+            artist_id = _decode_sqlite_text(artist_id_raw)
+            artist_name = _decode_sqlite_text(name_raw)
+            if not artist_id or not artist_name:
+                continue
+
+            popularity: int | None
+            try:
+                popularity = int(popularity_raw) if popularity_raw is not None else None
+            except (TypeError, ValueError):
+                popularity = None
+
+            artist_meta[artist_id] = (artist_name, popularity)
+
+        tags_by_artist: dict[str, list[str]] = defaultdict(list)
+        genre_rows = 0
+        for artist_id_raw, genre_raw in cur.execute(
+            """
+                SELECT rag.artist_id, g.id
+                FROM r_artist_genre rag
+                JOIN genres g ON rag.genre_id = g.id
+            """
+        ):
+            genre_rows += 1
+            artist_id = _decode_sqlite_text(artist_id_raw)
+            genre = _decode_sqlite_text(genre_raw)
+            if artist_id and genre:
+                tags_by_artist[artist_id].append(genre)
+    finally:
+        conn.close()
+
+    print(f"  Artists: {artist_rows:,}")
+    print(f"  Artist-genre rows: {genre_rows:,}")
+
+    if not tags_by_artist or not artist_meta:
+        return None
+
+    out_rows: list[dict[str, object]] = []
+    for artist_id, genres in tags_by_artist.items():
+        meta = artist_meta.get(artist_id)
+        if meta is None:
+            continue
+        name, popularity = meta
+        out_rows.append(
+            {
+                "id": artist_id,
+                "name": name,
+                "popularity": popularity,
+                "genres": genres,
+                "fallback": None,
+            }
+        )
+
+    if not out_rows:
+        return None
+
+    return _standardize_schema(pl.DataFrame(out_rows))
+
+
+def _decode_sqlite_text(value: object) -> str:
+    """Decode sqlite text values safely, replacing malformed UTF-8 bytes."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Preprocess external genre sources into standardized parquet files."
     )
+    source_choices = [source.name for source in get_genre_sources()]
     parser.add_argument(
         "--source",
         nargs="*",
-        choices=["serkan", "yamac", "vectorql"],
+        choices=source_choices,
         help="Sources to process (default: all)",
     )
     args = parser.parse_args()
 
     GENRE_DIR.mkdir(parents=True, exist_ok=True)
 
-    sources = args.source or ["serkan", "yamac", "vectorql"]
-
     processors = {
-        "serkan": (preprocess_serkan, SERKAN_GENRE),
-        "yamac": (preprocess_yamac, YAMAC_GENRE),
-        "vectorql": (preprocess_vectorql, VECTORQL_GENRE),
+        "serkan": preprocess_serkan,
+        "yamac": preprocess_yamac,
+        "vectorql": preprocess_vectorql,
+        "malte": preprocess_malte,
     }
+    outputs = {
+        "serkan": SERKAN_GENRE,
+        "yamac": YAMAC_GENRE,
+        "vectorql": VECTORQL_GENRE,
+        "malte": MALTE_GENRE,
+    }
+
+    sources = args.source or [source.name for source in get_genre_sources()]
 
     for name in sources:
         print(f"\n--- {name} ---")
-        processor, output_path = processors[name]
+        processor = processors[name]
+        output_path = outputs[name]
         df = processor()
         if df is None:
             continue

@@ -28,7 +28,7 @@ from genre_locale_config import (
     LOCALE_CONNECTOR_TOKENS as _LOCALE_CONNECTOR_TOKENS,
     LOCALE_SCENE_REMAPS as _LOCALE_SCENE_REMAPS,
 )
-from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE
+from paths import get_genre_sources
 from track_dedup import normalize_artist_name
 from utils import AUDIODB_GENRE_MAP
 
@@ -546,16 +546,18 @@ def load_artist_genre_lookup(
         - lang_signal_lookup is True when locale signal exists, even if
           language code is ambiguous (e.g. belgian/swiss).
 
-    Sources are checked sequentially in quality order (Yamac → Vectorql → Serkan).
+    Sources are checked sequentially in configured precedence order
+    (see paths.get_genre_sources()).
     """
     _tag_cache: dict[tuple, tuple[str | None, str | None, bool]] = {}
     genre_lookup: dict[str, str] = {}
     lang_lookup: dict[str, str] = {}
     lang_signal_lookup: dict[str, bool] = {}
 
-    for path in [YAMAC_GENRE, VECTORQL_GENRE, SERKAN_GENRE]:
+    for source in get_genre_sources():
+        path = source.path
         if not path.exists():
-            print(f"Genre source not found: {path}")
+            print(f"Genre source not found ({source.name}): {path}")
             continue
 
         df = pl.read_parquet(path)

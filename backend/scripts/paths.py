@@ -8,6 +8,7 @@ Usage:
     from paths import DATA_DIR, RAW_DATASET, TRACKS_DATASET, ARTISTS_DATASET
 """
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 # Base data directory (configurable via environment)
@@ -91,6 +92,35 @@ GENRE_DIR = EXTERNAL_DIR / "genre"
 SERKAN_GENRE = GENRE_DIR / "serkan.parquet"
 YAMAC_GENRE = GENRE_DIR / "yamac.parquet"
 VECTORQL_GENRE = GENRE_DIR / "vectorql.parquet"
+MALTE_GENRE = GENRE_DIR / "malte.parquet"
+
+# Malte SQLite source (used by preprocess_genre_sources.py)
+MALTE_DIR = EXTERNAL_DIR / "malte"
+MALTE_SQLITE = MALTE_DIR / "spotify.sqlite"
+MALTE_SQLITE_ZIP = MALTE_DIR / "spotify.sqlite.zip"
+
+
+@dataclass(frozen=True)
+class GenreSource:
+    """Runtime artist-genre source definition."""
+
+    name: str
+    path: Path
+
+
+# Source precedence for lookup conflict resolution.
+# Earlier sources win when multiple datasets contain the same normalized artist.
+GENRE_SOURCES: tuple[GenreSource, ...] = (
+    GenreSource("yamac", YAMAC_GENRE),
+    GenreSource("vectorql", VECTORQL_GENRE),
+    GenreSource("serkan", SERKAN_GENRE),
+    GenreSource("malte", MALTE_GENRE),
+)
+
+
+def get_genre_sources() -> tuple[GenreSource, ...]:
+    """Return artist-genre sources in runtime precedence order."""
+    return GENRE_SOURCES
 
 # =============================================================================
 # Metadata & Manifest
@@ -172,6 +202,7 @@ def print_paths():
     print(f"  SERKAN_GENRE:     {SERKAN_GENRE} {'✓' if SERKAN_GENRE.exists() else '✗'}")
     print(f"  YAMAC_GENRE:      {YAMAC_GENRE} {'✓' if YAMAC_GENRE.exists() else '✗'}")
     print(f"  VECTORQL_GENRE:   {VECTORQL_GENRE} {'✓' if VECTORQL_GENRE.exists() else '✗'}")
+    print(f"  MALTE_GENRE:      {MALTE_GENRE} {'✓' if MALTE_GENRE.exists() else '✗'}")
 
 
 if __name__ == "__main__":

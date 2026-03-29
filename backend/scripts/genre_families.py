@@ -78,8 +78,8 @@ GENRE_DEFINITIONS = {
     'progressive-rock': {'progressive': 0.7, 'rock': 0.5, 'classical_cinematic': 0.2}, 
     'experimental':     {'alternative': 0.3, 'progressive': 0.3, 'electronic_techno': 0.3, 'chill_ambient': 0.3}, 
     
-    'emo':              {'emo_pop_punk': 0.8, 'punk': 0.3},
-    'power-pop':        {'emo_pop_punk': 0.5, 'pop': 0.5, 'rock': 0.3},
+    'emo':              {'emo_pop_punk': 0.9, 'punk': 0.2, 'pop': 0.2},
+    'power-pop':        {'emo_pop_punk': 0.7, 'pop': 0.3, 'rock': 0.3},
     
     # =========================================================================
     # POP
@@ -102,43 +102,43 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # ELECTRONIC (House, Techno, Bass)
     # =========================================================================
-    'electronic':       {'electronic_house': 0.5, 'electronic_techno': 0.4, 'bass_music': 0.3, 'chill_ambient': 0.2},
+    'electronic':       {'electronic_house': 0.5, 'electronic_techno': 0.2, 'bass_music': 0.3, 'chill_ambient': 0.2},
     
-    'house':            {'electronic_house': 0.85, 'electronic_techno': 0.15, 'rnb_soul': 0.2},
+    'house':            {'electronic_house': 0.8, 'electronic_techno': 0.2, 'rnb_soul': 0.2},
     
-    'deep-house':       {'electronic_house': 0.82, 'chill_ambient': 0.5, 'rnb_soul': 0.2},
-    'progressive-house': {'electronic_house': 0.68, 'electronic_techno': 0.38, 'progressive': 0.35},
+    'deep-house':       {'electronic_house': 0.8, 'chill_ambient': 0.5, 'rnb_soul': 0.2},
+    'progressive-house': {'electronic_house': 0.7, 'electronic_techno': 0.4, 'progressive': 0.4},
     'disco':            {'electronic_house': 0.7, 'rnb_soul': 0.6, 'pop': 0.3},
-    'edm':              {'electronic_house': 0.6, 'pop': 0.35, 'electronic_techno': 0.2},
+    'edm':              {'electronic_house': 0.6, 'pop': 0.4, 'electronic_techno': 0.2},
     
-    'techno':           {'electronic_techno': 0.95},
-    'minimal-techno':   {'electronic_techno': 0.82, 'chill_ambient': 0.5},
-    'trance':           {'electronic_techno': 0.72, 'electronic_house': 0.35, 'chill_ambient': 0.25},
-    'hardstyle':        {'electronic_techno': 0.6, 'extreme_metal': 0.35, 'bass_music': 0.25},
+    'techno':           {'electronic_techno': 1.0},
+    'minimal-techno':   {'electronic_techno': 0.8, 'chill_ambient': 0.5},
+    'trance':           {'electronic_techno': 0.7, 'electronic_house': 0.4, 'chill_ambient': 0.3},
+    'hardstyle':        {'electronic_techno': 0.6, 'extreme_metal': 0.4, 'bass_music': 0.3},
     
-    'industrial':       {'electronic_techno': 0.45, 'alternative': 0.4, 'metal': 0.2},
+    'industrial':       {'electronic_techno': 0.5, 'alternative': 0.4, 'metal': 0.2},
     'industrial-metal': {'metal': 0.4, 'electronic_techno': 0.3},
     
-    'dubstep':          {'bass_music': 0.9, 'electronic_house': 0.25, 'electronic_techno': 0.05},
-    'drum-and-bass':    {'bass_music': 0.75, 'electronic_techno': 0.45, 'electronic_house': 0.15},
-    'breakbeat':        {'bass_music': 0.7, 'electronic_house': 0.45, 'hip_hop': 0.2},
-    'synthwave':        {'electronic_techno': 0.35, 'electronic_house': 0.35, 'chill_ambient': 0.45, 'alternative': 0.2},
+    'dubstep':          {'bass_music': 0.9, 'electronic_house': 0.3, 'electronic_techno': 0.1},
+    'drum-and-bass':    {'bass_music': 0.8, 'electronic_techno': 0.5, 'electronic_house': 0.2},
+    'breakbeat':        {'bass_music': 0.7, 'electronic_house': 0.4, 'hip_hop': 0.2},
+    'synthwave':        {'electronic_techno': 0.3, 'electronic_house': 0.3, 'chill_ambient': 0.5, 'alternative': 0.3},
 
     # =========================================================================
     # CHILL & AMBIENT
     # =========================================================================
     'ambient':          {'chill_ambient': 0.8, 'classical_cinematic': 0.4},
     'chill':            {'chill_ambient': 0.8, 'hip_hop': 0.3, 'pop': 0.3, 'electronic_house': 0.2},
-    'new-age':          {'chill_ambient': 0.9, 'classical_cinematic': 0.2},
+    'new-age':          {'chill_ambient': 0.9, 'classical_cinematic': 0.3},
     'sleep':            {'chill_ambient': 1.0},
     
     # =========================================================================
     # ACOUSTIC, FOLK, COUNTRY
     # =========================================================================
-    'acoustic':         {'acoustic_folk': 0.95, 'chill_ambient': 0.15},
+    'acoustic':         {'acoustic_folk': 1.0, 'chill_ambient': 0.2},
     'folk':             {'acoustic_folk': 0.8, 'alternative': 0.3},
     'singer-songwriter': {'acoustic_folk': 0.7, 'pop': 0.4, 'alternative': 0.2},
-    'country':          {'acoustic_folk': 0.5, 'jazz_blues': 0.3, 'rock': 0.3, 'pop': 0.2},
+    'country':          {'acoustic_folk': 0.7, 'jazz_blues': 0.2, 'rock': 0.2, 'pop': 0.2},
     'guitar':           {'acoustic_folk': 0.5, 'rock': 0.5, 'jazz_blues': 0.2},
     
     # =========================================================================
@@ -151,41 +151,41 @@ GENRE_DEFINITIONS = {
     # =========================================================================
     # LATIN
     # =========================================================================
-    'salsa':            {'latin_tropical': 0.85, 'jazz_blues': 0.35, 'pop': 0.1},
-    'samba':            {'latin_tropical': 0.72, 'jazz_blues': 0.15, 'latin_regional': 0.32, 'acoustic_folk': 0.1},
+    'salsa':            {'latin_tropical': 0.9, 'jazz_blues': 0.4, 'pop': 0.1},
+    'samba':            {'latin_tropical': 0.7, 'jazz_blues': 0.2, 'latin_regional': 0.3, 'acoustic_folk': 0.1},
     'afrobeat':         {'latin_tropical': 0.8, 'rnb_soul': 0.4, 'electronic_house': 0.2},
     
-    'forro':            {'latin_regional': 0.75, 'acoustic_folk': 0.45, 'jazz_blues': 0.2},
-    'sertanejo':        {'latin_regional': 0.65, 'acoustic_folk': 0.55, 'pop': 0.35},
+    'forro':            {'latin_regional': 0.8, 'acoustic_folk': 0.5, 'jazz_blues': 0.2},
+    'sertanejo':        {'latin_regional': 0.7, 'acoustic_folk': 0.6, 'pop': 0.4},
     'tango':            {'latin_regional': 1.0, 'classical_cinematic': 0.4},
 
     # =========================================================================
     # REGGAE & DUB
     # =========================================================================
     'dancehall':        {'reggae_dub': 0.8, 'hip_hop': 0.5},
-    'ska':              {'reggae_dub': 0.4, 'latin_tropical': 0.4, 'punk': 0.4},
+    'ska':              {'reggae_dub': 0.6, 'latin_tropical': 0.3, 'punk': 0.2},
     
     # =========================================================================
     # CLASSICAL & CINEMATIC
     # =========================================================================
     'classical':        {'classical_cinematic': 1.0},
-    'opera':            {'classical_cinematic': 0.8, 'acoustic_folk': 0.2},
+    'opera':            {'classical_cinematic': 0.7, 'acoustic_folk': 0.4},
     'piano':            {'classical_cinematic': 0.8, 'acoustic_folk': 0.4, 'chill_ambient': 0.3},
-    'show-tunes':       {'classical_cinematic': 0.8, 'pop': 0.4},
+    'show-tunes':       {'classical_cinematic': 0.7, 'pop': 0.5},
     
     # =========================================================================
     # WORLD / REGIONAL (lower weights for less smearing)
     # =========================================================================
-    'indian':           {'world_regional': 0.65, 'classical_cinematic': 0.35, 'pop': 0.25},
-    'flamenco':         {'acoustic_folk': 0.55, 'world_regional': 0.25, 'classical_cinematic': 0.2, 'latin_tropical': 0.35},
+    'indian':           {'world_regional': 0.8, 'classical_cinematic': 0.3, 'pop': 0.2},
+    'flamenco':         {'acoustic_folk': 0.4, 'world_regional': 0.6, 'classical_cinematic': 0.2, 'latin_tropical': 0.4},
 
     # =========================================================================
     # CHRISTIAN 
     # =========================================================================
     'gospel':           {'christian': 0.8, 'rnb_soul': 0.3, 'acoustic_folk': 0.2},
     'ccm':              {'christian': 0.8, 'pop': 0.5, 'acoustic_folk': 0.2},
-    'christian-rock':   {'christian': 0.8, 'rock': 0.5, 'emo_pop_punk': 0.2},
-    'christian-metal':  {'christian': 0.8, 'metal': 0.6, 'punk': 0.2},
+    'christian-rock':   {'christian': 0.8, 'rock': 0.6, 'emo_pop_punk': 0.3},
+    'christian-metal':  {'christian': 0.8, 'metal': 0.7, 'punk': 0.2},
 
     # =========================================================================
     # DATASET FINDINGS
@@ -204,7 +204,7 @@ GENRE_DEFINITIONS = {
     'reggae':           {'reggae_dub': 1.0, 'rock': 0.2},
 
     # Keep groove distinct from pure heavy-metal by adding progressive/rhythm character.
-    'groove':           {'metal': 0.5, 'rock': 0.3, 'progressive': 0.4, 'rnb_soul': 0.2},
+    'groove':           {'metal': 0.6, 'rock': 0.2, 'progressive': 0.3, 'rnb_soul': 0.2},
 
     # Split old broad goth bucket with better separation from alt-rock and industrial.
     'goth-rock':        {'alternative': 0.4, 'rock': 0.3, 'electronic_techno': 0.4, 'chill_ambient': 0.3},
@@ -224,9 +224,9 @@ GENRE_DEFINITIONS = {
 
 
     'hardcore-hip-hop': {'hip_hop': 0.6, 'rnb_soul': 0.3}, # Aggressive Rap (Wu-Tang, DMX)
-    'hardcore-punk':    {'punk': 0.6, 'metal': 0.2},
+    'hardcore-punk':    {'punk': 0.7, 'metal': 0.1},
     'post-hardcore':    {'punk': 0.5, 'rock': 0.4, 'emo_pop_punk': 0.4, 'metal': 0.2}, 
     
     # Generic 'hardcore' pointing to punk to catch stragglers
-    'hardcore':         {'punk': 0.6, 'metal': 0.3}, 
+    'hardcore':         {'punk': 0.7, 'metal': 0.2}, 
 }

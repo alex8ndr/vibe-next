@@ -26,7 +26,7 @@ from genre_mapping import (
     explain_artist_tags,
     explain_raw_genre,
 )
-from paths import SERKAN_GENRE, YAMAC_GENRE, VECTORQL_GENRE, TRACKS_DATASET
+from paths import TRACKS_DATASET, get_genre_sources
 from language_detection import load_fasttext_model, clean_track_title, detect_language
 from language_config import (
     GENRE_LANG_OVERRIDES,
@@ -130,8 +130,8 @@ def summarize_rows(df: pl.DataFrame, label: str, *, all_matches: bool = False) -
 def _build_filtered_lookup(normalized_names: set[str]) -> tuple[dict[str, str], dict[str, str], dict[str, bool]]:
     """Build genre lookup for specific normalized names only (fast path for debug).
 
-    Uses the same sequential source priority as load_artist_genre_lookup:
-    Yamac → Vectorql → Serkan, most popular entry per name, early stopping.
+    Uses the same sequential source priority as load_artist_genre_lookup
+    (paths.get_genre_sources()), most popular entry per name, early stopping.
     """
     from genre_mapping import (
         _map_standard_genre,
@@ -142,7 +142,8 @@ def _build_filtered_lookup(normalized_names: set[str]) -> tuple[dict[str, str], 
     tag_lang_lookup: dict[str, str] = {}
     tag_signal_lookup: dict[str, bool] = {}
 
-    for path in [YAMAC_GENRE, VECTORQL_GENRE, SERKAN_GENRE]:
+    for source in get_genre_sources():
+        path = source.path
         if not path.exists():
             continue
 
@@ -455,14 +456,9 @@ def main() -> None:
         print(f"  {name} -> {resolved} (normalized: {norm})")
 
     print("\nExternal source rows:")
-    serkan_rows = load_source_rows(SERKAN_GENRE, normalized)
-    summarize_rows(serkan_rows, "Serkan", all_matches=args.all_matches)
-
-    yamac_rows = load_source_rows(YAMAC_GENRE, normalized)
-    summarize_rows(yamac_rows, "Yamac", all_matches=args.all_matches)
-
-    vectorql_rows = load_source_rows(VECTORQL_GENRE, normalized)
-    summarize_rows(vectorql_rows, "Vectorql", all_matches=args.all_matches)
+    for source in get_genre_sources():
+        rows = load_source_rows(source.path, normalized)
+        summarize_rows(rows, source.name.capitalize(), all_matches=args.all_matches)
 
     if args.lang:
         run_language_detection(
