@@ -115,6 +115,9 @@ export const DEFAULT_SETTINGS = {
     vibeMood: 0,   // Chill (-1) to Energetic (+1)
     vibeSound: 0,  // Acoustic (-1) to Electronic (+1)
     popularity: 0, // Hidden Gems (-1) to Mainstream (+1)
+    // Advanced targeting 
+    targetLanguage: 'match' as string,
+    targetGenre: 'match' as string,
 };
 
 export const settings = createPersistedStore('vibe-settings', DEFAULT_SETTINGS);

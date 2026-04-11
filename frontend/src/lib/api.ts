@@ -22,6 +22,8 @@ export interface RecommendRequest {
     debug?: boolean;
     debug_audio?: boolean;
     client_id?: string;
+    target_language?: string;
+    target_genre?: string;
 }
 
 export interface GenreInfo {
@@ -81,6 +83,18 @@ export async function fetchRecommendations(request: RecommendRequest): Promise<R
 export async function fetchStats(): Promise<{ track_count: number; artist_count: number }> {
     const res = await fetch(`${API_BASE}/stats`);
     if (!res.ok) throw new Error('Failed to fetch stats');
+    return res.json();
+}
+
+export interface FilterOption {
+    value: string;
+    label: string;
+    count: number;
+}
+
+export async function fetchFilters(): Promise<{ languages: FilterOption[]; genres: FilterOption[] }> {
+    const res = await fetch(`${API_BASE}/filters`);
+    if (!res.ok) throw new Error('Failed to fetch filters');
     return res.json();
 }
 

@@ -184,7 +184,7 @@
                             Number(e.data.position || 0) >= Math.max(Number(e.data.duration || 0) - 750, 0);
 
                         isActuallyPlaying = !e.data.isPaused;
-                        
+
                         // Clear loading state when playback starts for this card's current track
                         if (!e.data.isPaused && $loadingTrackId === currentTrackId) {
                             loadingTrackId.set(null);
@@ -247,7 +247,6 @@
                     }
                 }
                 isActuallyPlaying = false;
-                // Clear loading state if it was for this card
                 if ($loadingTrackId === currentTrackId) {
                     loadingTrackId.set(null);
                 }
@@ -318,7 +317,7 @@
         loadingTrackId.set(trackId);
         startLoadingTimeout(trackId);
         
-        // Load and play new track (small delay helps with embed race conditions)
+        // Load new track
         currentTrackId = trackId;
         const gen = ++playGeneration;
         controller.loadUri(`spotify:track:${trackId}`);

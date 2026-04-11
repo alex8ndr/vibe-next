@@ -116,6 +116,8 @@
                 debug: $devSettings.debugMode,
                 debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
                 client_id: clientId,
+                target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
+                target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
             });
             loadingProgress = 100;
             recommendations.set(res.recommendations);
@@ -123,7 +125,7 @@
             // Add newly recommended artists to history so regenerate() excludes them
             Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
             // Store params to detect when they've changed
-            lastSearchParams = JSON.stringify({ selected, fineTune });
+            lastSearchParams = JSON.stringify({ selected, fineTune, targetLanguage: $settings.targetLanguage, targetGenre: $settings.targetGenre });
             clearInterval(progressInterval);
             isLoading.set(false);
         } catch (e) {
@@ -162,6 +164,8 @@
                 debug: $devSettings.debugMode,
                 debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
                 client_id: clientId,
+                target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
+                target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
             });
             loadingProgress = 100;
             recommendations.set(res.recommendations);

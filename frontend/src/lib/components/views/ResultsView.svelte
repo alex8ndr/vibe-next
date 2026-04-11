@@ -49,7 +49,7 @@
     let globalSongSearch = $state("");
 
     // Derived
-    const currentParams = $derived(JSON.stringify({ selected, fineTune }));
+    const currentParams = $derived(JSON.stringify({ selected, fineTune, targetLanguage: $settings.targetLanguage, targetGenre: $settings.targetGenre }));
     const paramsChanged = $derived(lastSearchParams !== "" && currentParams !== lastSearchParams);
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
     const hasRecommendations = $derived(Object.keys($recommendations).length > 0);
@@ -137,6 +137,96 @@
 
     
 
+    let hoveredSeed = $state<{name: string, artist: string, x: number, y: number, hue: number, features: Record<string, number>} | null>(null);
+
+    function getHue(name: string): number {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+            hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return Math.abs(hash) % 360;
+    }
+
+    function seedCoords(af: Record<string, number>): { x: number; y: number } {
+        return { x: Number(af.energy ?? 0.5), y: Number(af.valence ?? 0.5) };
+    }
+
+    const seedPoints = $derived.by(() => {
+        const points: Array<{name: string, artist: string, x: number, y: number, hue: number, features: Record<string, number>, dimmed: boolean}> = [];
+        for (const artist of selected) {
+            const tracks = artistTracks[artist] || [];
+            const seedTrackIds = fineTune[artist] || [];
+            const hasFineTune = seedTrackIds.length > 0;
+            for (const t of tracks) {
+                if (!t.audio_features) continue;
+                const af = t.audio_features as Record<string, number>;
+                const { x, y } = seedCoords(af);
+                const isSelected = !hasFineTune || seedTrackIds.includes(t.track_id);
+                points.push({
+                    name: t.track_name,
+                    artist,
+                    x, y,
+                    hue: getHue(artist),
+                    features: af,
+                    dimmed: hasFineTune && !isSelected,
+                });
+            }
+        }
+        return points;
+    });
+
+    let exportStatus = $state<"idle" | "copied" | "failed">("idle");
+    let exportTooltipOpen = $state(false);
+    let exportTooltipRef = $state<HTMLDivElement | null>(null);
+    let downloadDropdownOpen = $state(false);
+    let downloadDropdownRef = $state<HTMLDivElement | null>(null);
+
+    async function exportResults() {
+        const text = Object.entries($recommendations)
+            .flatMap(([artist, tracks]) =>
+                tracks.map((t) => `${artist} - ${t.track_name}`)
+            )
+            .join("\n");
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            exportStatus = "copied";
+        } catch {
+            exportStatus = "failed";
+        }
+        exportTooltipOpen = true;
+        if (exportStatus === "failed") {
+            setTimeout(() => { exportTooltipOpen = false; exportStatus = "idle"; }, 3000);
+        }
+    }
+
+    function handleExportTooltipClickOutside(e: MouseEvent) {
+        if (exportTooltipRef && !exportTooltipRef.contains(e.target as Node)) {
+            exportTooltipOpen = false;
+            exportStatus = "idle";
+        }
+    }
+
+    $effect(() => {
+        if (exportTooltipOpen) {
+            document.addEventListener("click", handleExportTooltipClickOutside);
+            return () => document.removeEventListener("click", handleExportTooltipClickOutside);
+        }
+    });
+
+    function handleDownloadClickOutside(e: MouseEvent) {
+        if (downloadDropdownRef && !downloadDropdownRef.contains(e.target as Node)) {
+            downloadDropdownOpen = false;
+        }
+    }
+
+    $effect(() => {
+        if (downloadDropdownOpen) {
+            document.addEventListener("click", handleDownloadClickOutside);
+            return () => document.removeEventListener("click", handleDownloadClickOutside);
+        }
+    });
+
     function downloadHTML() {
         const html = generateHTML({
             recommendations: $recommendations,
@@ -147,6 +237,22 @@
         const a = document.createElement("a");
         a.href = url;
         a.download = "vibe-recommendations.html";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function downloadTXT() {
+        const text = Object.entries($recommendations)
+            .flatMap(([artist, tracks]) =>
+                tracks.map((t) => `${artist} - ${t.track_name}`)
+            )
+            .join("\n");
+        if (!text) return;
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vibe-recommendations.txt";
         a.click();
         URL.revokeObjectURL(url);
     }
@@ -313,22 +419,84 @@
             <VibeControls />
         </div>
 
-        <!-- Search vector chart in dev mode -->
-        {#if import.meta.env.DEV && $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorAudio}
-            <div class="side-section search-vector-chart">
+        <!-- Seed map scatter plot in dev mode -->
+        {#if import.meta.env.DEV && $devSettings.debugMode && $devSettings.showAudioFeatures && seedPoints.length > 0}
+            <div class="side-section seed-map-section">
                 <div class="chart-header">
-                    <h5>Search Vector</h5>
+                    <h5>Seed Map</h5>
                 </div>
-                <div class="audio-features-chart">
-                    {#each Object.entries(searchVectorAudio) as [key, value]}
-                        <div class="feature">
-                            <span class="feature-name">{key}</span>
-                            <div class="feature-bar">
-                                <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
+                <div class="seed-map-wrap">
+                    <svg viewBox="-12 -5 117 117" class="seed-map-svg">
+                        {#each [0, 25, 50, 75, 100] as v}
+                            <line x1={v} y1="0" x2={v} y2="100" stroke="var(--border)" stroke-width="0.3" />
+                            <line x1="0" y1={v} x2="100" y2={v} stroke="var(--border)" stroke-width="0.3" />
+                        {/each}
+                        <!-- X-axis tick labels (Energy) -->
+                        {#each [{v: 0, l: '0'}, {v: 50, l: '.5'}, {v: 100, l: '1'}] as tick}
+                            <text x={tick.v} y="106" text-anchor="middle" fill="var(--text-3)" font-size="3.5">{tick.l}</text>
+                        {/each}
+                        <!-- Y-axis tick labels (Mood) - note: SVG y is inverted -->
+                        {#each [{v: 100, l: '0'}, {v: 50, l: '.5'}, {v: 0, l: '1'}] as tick}
+                            <text x="-3" y={tick.v + 1.5} text-anchor="end" fill="var(--text-3)" font-size="3.5">{tick.l}</text>
+                        {/each}
+                        <text x="50" y="112" text-anchor="middle" fill="var(--text-3)" font-size="3.5">Energy →</text>
+                        <text x="-8" y="50" text-anchor="middle" fill="var(--text-3)" font-size="3.5" transform="rotate(-90, -8, 50)">Valence →</text>
+                        {#if searchVectorAudio}
+                            {@const sv = seedCoords(searchVectorAudio as Record<string, number>)}
+                            {@const svx = sv.x * 100}
+                            {@const svy = 100 - sv.y * 100}
+                            <line x1={svx - 4} y1={svy} x2={svx + 4} y2={svy} stroke="var(--gold)" stroke-width="1" />
+                            <line x1={svx} y1={svy - 4} x2={svx} y2={svy + 4} stroke="var(--gold)" stroke-width="1" />
+                        {/if}
+                        {#each seedPoints.filter(p => p.dimmed) as pt}
+                            <circle
+                                cx={pt.x * 100}
+                                cy={100 - pt.y * 100}
+                                r="2"
+                                fill="hsl({pt.hue}, 20%, 40%)"
+                                opacity="0.3"
+                                style="cursor: pointer;"
+                                onmouseenter={() => hoveredSeed = pt}
+                                onmouseleave={() => hoveredSeed = null}
+                            />
+                        {/each}
+                        {#each seedPoints.filter(p => !p.dimmed) as pt}
+                            <circle
+                                cx={pt.x * 100}
+                                cy={100 - pt.y * 100}
+                                r={hoveredSeed === pt ? 4 : 3}
+                                fill="hsl({pt.hue}, 60%, 55%)"
+                                stroke="hsl({pt.hue}, 40%, 35%)"
+                                stroke-width="0.5"
+                                style="cursor: pointer;"
+                                onmouseenter={() => hoveredSeed = pt}
+                                onmouseleave={() => hoveredSeed = null}
+                            />
+                        {/each}
+                    </svg>
+                    {#if hoveredSeed}
+                        <div class="seed-tooltip">
+                            <strong>{hoveredSeed.name}</strong>
+                            <span class="seed-tooltip-artist">{hoveredSeed.artist}</span>
+                            <div class="seed-tooltip-features">
+                                {#each Object.entries(hoveredSeed.features).filter(([k]) => typeof hoveredSeed?.features[k] === 'number') as [key, val]}
+                                    <span>{key}: {Number(val).toFixed(2)}</span>
+                                {/each}
                             </div>
-                            <span class="feature-value">{(value as number).toFixed(2)}</span>
                         </div>
+                    {/if}
+                </div>
+                <div class="seed-legend">
+                    {#each selected as artist}
+                        <span class="seed-legend-item">
+                            <span class="seed-dot" style="background: hsl({getHue(artist)}, 60%, 55%)"></span>
+                            {artist}
+                        </span>
                     {/each}
+                    <span class="seed-legend-item">
+                        <span class="seed-dot seed-dot-vector"></span>
+                        Vector
+                    </span>
                 </div>
             </div>
         {/if}
@@ -384,43 +552,67 @@
                     {/each}
                 </div>
             {/if}
-            <div class="results-actions">
+            <div class="results-actions" bind:this={exportTooltipRef}>
                 <button
-                    class="btn-action"
-                    onclick={downloadHTML}
+                    class="btn-export"
+                    onclick={exportResults}
                     disabled={!hasRecommendations}
-                    title="Download as HTML with Spotify players"
+                    title="Copy all results to clipboard"
                 >
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                    >
-                        <path
-                            d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
-                        />
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                     </svg>
-                    HTML
+                    Export
                 </button>
-                <button
-                    class="btn-action"
-                    onclick={downloadJSON}
-                    disabled={!hasRecommendations}
-                    title="Download as JSON"
-                >
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
+                <div class="download-dropdown" bind:this={downloadDropdownRef}>
+                    <button
+                        class="btn-action"
+                        onclick={() => downloadDropdownOpen = !downloadDropdownOpen}
+                        disabled={!hasRecommendations}
+                        title="Download results"
                     >
-                        <path
-                            d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"
-                        />
-                    </svg>
-                    JSON
-                </button>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                        <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    {#if downloadDropdownOpen}
+                        <div class="download-menu">
+                            <button class="download-option" onclick={() => { downloadTXT(); downloadDropdownOpen = false; }}>TXT</button>
+                            <button class="download-option" onclick={() => { downloadHTML(); downloadDropdownOpen = false; }}>HTML</button>
+                            <button class="download-option" onclick={() => { downloadJSON(); downloadDropdownOpen = false; }}>JSON</button>
+                        </div>
+                    {/if}
+                </div>
+                {#if exportTooltipOpen}
+                    <div class="export-tooltip" class:success={exportStatus === "copied"} class:error={exportStatus === "failed"}>
+                        {#if exportStatus === "copied"}
+                            <div class="export-tooltip-status">✓ Copied {totalTracks} tracks to clipboard</div>
+                            <div class="export-tooltip-media">
+                                <!-- <img src="/tunemymusic-freetext.png" alt="TuneMyMusic Free Text option" /> -->
+                            </div>
+                            <a
+                                class="export-tooltip-cta"
+                                href="https://www.tunemymusic.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                                </svg>
+                                <span class="export-tooltip-cta-text">
+                                    Export using TuneMyMusic
+                                    <small>Add to Spotify, Apple Music & more</small>
+                                </span>
+                            </a>
+                            <div class="export-tooltip-hint">Click "Free Text", paste, and convert</div>
+                        {:else}
+                            <div class="export-tooltip-status">✗ Copy failed — try downloading instead</div>
+                        {/if}
+                    </div>
+                {/if}
             </div>
         </div>
 

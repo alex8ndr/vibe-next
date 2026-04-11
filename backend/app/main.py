@@ -30,6 +30,7 @@ try:
         ParquetDataSource,
         generate_recommendations,
         normalize_search_text,
+        FEATURE_WEIGHTS,
         GENRE_FOCUS,
         LANGUAGE_FOCUS,
         TRACKS_PER_ARTIST,
@@ -42,6 +43,7 @@ except ImportError:
         ParquetDataSource,
         generate_recommendations,
         normalize_search_text,
+        FEATURE_WEIGHTS,
         GENRE_FOCUS,
         LANGUAGE_FOCUS,
         TRACKS_PER_ARTIST,
@@ -225,6 +227,8 @@ class RecommendRequest(BaseModel):
     debug_audio: bool = False
     # Client ID for analytics deduplication
     client_id: str | None = Field(default=None, max_length=64)
+    target_language: str | None = None   # e.g., "English", "any", or None (= match input)
+    target_genre: str | None = None      # e.g., "Rock", "any", or None (= match input)
 
 
 class Track(BaseModel):
@@ -306,6 +310,8 @@ def should_log_search(client_id: str | None, request: 'RecommendRequest', valid_
         "vibe_mood": request.vibe_mood,
         "vibe_sound": request.vibe_sound,
         "popularity": request.popularity,
+        "target_language": request.target_language,
+        "target_genre": request.target_genre,
     }
     sig = hashlib.sha1(json.dumps(sig_payload, sort_keys=True).encode()).hexdigest()
     
@@ -432,6 +438,8 @@ async def recommend(
         popularity=request.popularity,
         debug=request.debug,
         debug_audio=request.debug_audio,
+        target_language=request.target_language,
+        target_genre=request.target_genre,
     )
     
     # Log search in background (with rate limiting)
@@ -450,6 +458,8 @@ async def recommend(
                 "vibe_mood": request.vibe_mood,
                 "vibe_sound": request.vibe_sound,
                 "popularity": request.popularity,
+                "target_language": request.target_language,
+                "target_genre": request.target_genre,
             },
             "results": {
                 artist: [{"id": t["track_id"], "name": t["track_name"]} for t in tracks]
@@ -472,6 +482,74 @@ async def get_stats():
         "track_count": music_data.track_count,
         "artist_count": len(music_data.artists_list),
     }
+
+
+_LANG_NAMES: dict[str, str] = {
+    'en': 'English', 'es': 'Spanish', 'pt': 'Portuguese', 'ja': 'Japanese',
+    'de': 'German', 'fr': 'French', 'zh': 'Chinese', 'it': 'Italian',
+    'ru': 'Russian', 'tr': 'Turkish', 'fi': 'Finnish', 'ko': 'Korean',
+    'id': 'Indonesian', 'hi': 'Hindi', 'pl': 'Polish', 'sv': 'Swedish',
+    'ar': 'Arabic', 'th': 'Thai', 'nl': 'Dutch', 'no': 'Norwegian',
+    'da': 'Danish', 'tl': 'Tagalog', 'cs': 'Czech', 'hu': 'Hungarian',
+    'ta': 'Tamil', 'pa': 'Punjabi', 'ms': 'Malay', 'vi': 'Vietnamese',
+    'el': 'Greek', 'he': 'Hebrew', 'ml': 'Malayalam', 'ro': 'Romanian',
+    'fa': 'Persian', 'uk': 'Ukrainian', 'te': 'Telugu', 'is': 'Icelandic',
+    'bg': 'Bulgarian', 'lt': 'Lithuanian', 'lv': 'Latvian', 'hr': 'Croatian',
+    'et': 'Estonian', 'am': 'Amharic', 'sk': 'Slovak', 'sq': 'Albanian',
+    'sl': 'Slovenian', 'ur': 'Urdu', 'sr': 'Serbian', 'ca': 'Catalan',
+    'af': 'Afrikaans', 'hy': 'Armenian', 'ne': 'Nepali', 'eo': 'Esperanto',
+}
+
+_GENRE_OVERRIDES: dict[str, str] = {
+    'ccm': 'CCM', 'edm': 'EDM', 'r-n-b': 'R&B',
+}
+
+_GENRE_SMALL_WORDS = {'and', 'n'}
+
+def _format_genre(slug: str) -> str:
+    if slug in _GENRE_OVERRIDES:
+        return _GENRE_OVERRIDES[slug]
+    return ' '.join(
+        w if w in _GENRE_SMALL_WORDS else w.capitalize()
+        for w in slug.split('-')
+    )
+
+# Cached at startup after data loads
+_cached_filters: dict | None = None
+
+def _build_filter_cache(data: MusicData) -> dict:
+    import numpy as np
+    genre_codes = data.artist_genre_codes_by_artist_code
+    lang_codes = data.artist_language_codes_by_artist_code
+
+    genres = []
+    for i, name in enumerate(data.genre_names_by_code):
+        if name is None:
+            continue
+        count = int(np.sum(genre_codes == i))
+        genres.append({"value": name, "label": _format_genre(name), "count": count})
+    genres.sort(key=lambda x: x["count"], reverse=True)
+
+    languages = []
+    for i, name in enumerate(data.language_names_by_code):
+        if name is None:
+            continue
+        count = int(np.sum(lang_codes == i))
+        languages.append({"value": name, "label": _LANG_NAMES.get(name, name.upper()), "count": count})
+    languages.sort(key=lambda x: x["count"], reverse=True)
+
+    return {"languages": languages, "genres": genres}
+
+
+@app.get("/filters")
+async def get_filters():
+    """Return available language and genre values from the dataset."""
+    global _cached_filters
+    if not music_data:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+    if _cached_filters is None:
+        _cached_filters = _build_filter_cache(music_data)
+    return _cached_filters
 
 
 @app.get("/artists/{artist_name:path}/tracks")
@@ -499,15 +577,30 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
     else:
         artist_indices.sort(key=lambda row_idx: music_data.get_track_name(row_idx).casefold())
 
-    return [
-        Track(
+    key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
+    has_audio = music_data.matrix_audio is not None
+
+    results = []
+    for row_idx in artist_indices:
+        audio_feats = None
+        if has_audio:
+            audio_feats = {}
+            for feat in key_features:
+                idx = music_data.audio_col_indices.get(feat)
+                if idx is not None:
+                    raw_val = float(music_data.matrix_audio[row_idx, idx]) / FEATURE_WEIGHTS[feat]
+                    audio_feats[feat] = round(raw_val, 3)
+            if not audio_feats:
+                audio_feats = None
+
+        results.append(Track(
             track_id=music_data.get_track_id(row_idx),
             track_name=music_data.get_track_name(row_idx),
             genre=music_data.get_track_genre(row_idx),
             language=music_data.get_track_language(row_idx),
-        )
-        for row_idx in artist_indices
-    ]
+            audio_features=audio_feats,
+        ))
+    return results
 
 
 @app.post("/log/action")

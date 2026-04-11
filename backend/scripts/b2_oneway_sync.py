@@ -85,7 +85,7 @@ def get_remote_timestamp(target_file: Path) -> int | None:
     return None
 
 
-def upload(local_file: Path, *, write_latest: bool) -> None:
+def upload(local_file: Path, *, write_latest: bool = True, write_archive: bool = False) -> None:
     if not local_file.exists():
         raise SystemExit(f"Local file not found: {local_file}")
 
@@ -93,9 +93,10 @@ def upload(local_file: Path, *, write_latest: bool) -> None:
     base = local_file.stem
     ext = local_file.suffix
 
-    key_ts = _timestamp_key(prefix, base, ext)
-    print(f"Uploading timestamped object: {key_ts}")
-    bucket.upload_local_file(local_file=str(local_file), file_name=key_ts)
+    if write_archive:
+        key_ts = _timestamp_key(prefix, base, ext)
+        print(f"Uploading timestamped object: {key_ts}")
+        bucket.upload_local_file(local_file=str(local_file), file_name=key_ts)
 
     if write_latest:
         key_latest = _latest_key(prefix, base, ext)
@@ -146,9 +147,9 @@ def parse_args() -> argparse.Namespace:
     up = sub.add_parser("upload", help="Upload local parquet to B2")
     up.add_argument("--file", type=Path, required=True, help="Local parquet file to upload")
     up.add_argument(
-        "--no-latest",
+        "--archive",
         action="store_true",
-        help="Skip uploading *-latest.parquet object",
+        help="Also upload a timestamped archive copy",
     )
 
     down = sub.add_parser("download", help="Download parquet from B2")
@@ -168,7 +169,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.command == "upload":
-        upload(args.file, write_latest=not args.no_latest)
+        upload(args.file, write_archive=args.archive)
         return
     if args.command == "download":
         download(args.output, args.remote_key)

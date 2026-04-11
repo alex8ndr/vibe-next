@@ -20,11 +20,12 @@
 
     // Track collapsed artist groups
     let allCollapsed = $state(false);
+    let showExportLabel = $state(true);
     let exportDropdownOpen = $state(false);
     let exportDropdownRef = $state<HTMLDivElement | null>(null);
     let copyStatus = $state<"idle" | "copied" | "failed">("idle");
-    let copyStatusTimeoutId = $state<ReturnType<typeof setTimeout> | null>(null);
-    let isCopyTooltipHovered = $state(false);
+    let exportTooltipOpen = $state(false);
+    let exportTooltipRef = $state<HTMLDivElement | null>(null);
 
     // Persist collapsed artists to localStorage
     const COLLAPSED_STORAGE_KEY = 'vibe-collapsed-artists';
@@ -60,58 +61,36 @@
 
     const canPlaySidebar = $derived($sidebarPlayerStatus === "ready");
 
-    function scheduleCopyStatusReset(delayMs = 2500) {
-        if (copyStatusTimeoutId) {
-            clearTimeout(copyStatusTimeoutId);
-            copyStatusTimeoutId = null;
-        }
-        if (copyStatus !== "idle") {
-            copyStatusTimeoutId = setTimeout(() => {
-                if (isCopyTooltipHovered) {
-                    scheduleCopyStatusReset(500);
-                    return;
-                }
-                copyStatus = "idle";
-                copyStatusTimeoutId = null;
-            }, delayMs);
-        }
-    }
-
-    function setCopyStatus(status: "idle" | "copied" | "failed") {
-        copyStatus = status;
-        scheduleCopyStatusReset();
-    }
-
-    function onCopyTooltipEnter() {
-        isCopyTooltipHovered = true;
-        if (copyStatusTimeoutId) {
-            clearTimeout(copyStatusTimeoutId);
-            copyStatusTimeoutId = null;
-        }
-    }
-
-    function onCopyTooltipLeave() {
-        isCopyTooltipHovered = false;
-        scheduleCopyStatusReset(900);
-    }
-
-    function buildTuneMyMusicText(): string {
-        return $favoriteTracks
+    async function copyFavouritesText() {
+        const text = $favoriteTracks
             .map((track) => `${track.artist_name} - ${track.track_name}`)
             .join("\n");
-    }
-
-    async function copyTuneMyMusicText() {
-        const text = buildTuneMyMusicText();
         if (!text) return;
-
         try {
             await navigator.clipboard.writeText(text);
-            setCopyStatus("copied");
+            copyStatus = "copied";
         } catch {
-            setCopyStatus("failed");
+            copyStatus = "failed";
+        }
+        exportTooltipOpen = true;
+        if (copyStatus === "failed") {
+            setTimeout(() => { exportTooltipOpen = false; copyStatus = "idle"; }, 3000);
         }
     }
+
+    function handleExportTooltipClickOutside(e: MouseEvent) {
+        if (exportTooltipRef && !exportTooltipRef.contains(e.target as Node)) {
+            exportTooltipOpen = false;
+            copyStatus = "idle";
+        }
+    }
+
+    $effect(() => {
+        if (exportTooltipOpen) {
+            document.addEventListener("click", handleExportTooltipClickOutside);
+            return () => document.removeEventListener("click", handleExportTooltipClickOutside);
+        }
+    });
 
     function playFavorite(track: FavoriteTrack) {
         if (!canPlaySidebar) {
@@ -233,53 +212,27 @@
     </div>
 
     <div class="section-header mt">
-        <h4>Favourites <span class="cnt">{$favoriteTracks.length}</span></h4>
-        <div class="header-btns">
+        <button class="fav-collapse-toggle" onclick={toggleAllCollapsed} title={allCollapsed ? "Expand all" : "Collapse all"}>
+            <svg class="fav-collapse-arrow" class:collapsed={allCollapsed} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="m6 9 6 6 6-6"/>
+            </svg>
+            <h4>Favourites <span class="cnt">{$favoriteTracks.length}</span></h4>
+        </button>
+        <div class="header-btns" bind:this={exportTooltipRef}>
             {#if $favoriteTracks.length > 0}
-                <div class="tunemymusic-btn-wrap">
-                    <button
-                        class="header-btn tunemymusic-copy"
-                        class:copied={copyStatus === "copied"}
-                        onclick={copyTuneMyMusicText}
-                        title="Copy to clipboard for TuneMyMusic"
-                    >
-                        {#if copyStatus === "copied"}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M20 6 9 17l-5-5"/>
-                            </svg>
-                        {:else}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                        {/if}
-                    </button>
-                    <span class="tunemymusic-tooltip" role="tooltip" onmouseenter={onCopyTooltipEnter} onmouseleave={onCopyTooltipLeave}>
-                        {#if copyStatus === "copied"}
-                            Copied! Paste into <a href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a> → Free Text
-                        {:else if copyStatus === "failed"}
-                            Copy failed
-                        {:else}
-                            Copy for <a href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a>
-                        {/if}
-                    </span>
-                </div>
-                <button class="header-btn" onclick={toggleAllCollapsed} title={allCollapsed ? "Expand all" : "Collapse all"}>
+                <button
+                    class="header-btn export-btn"
+                    onclick={copyFavouritesText}
+                    title="Copy all to clipboard"
+                >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        {#if allCollapsed}
-                            <path d="m5 15 7-7 7 7"/>
-                        {:else}
-                            <path d="m19 9-7 7-7-7"/>
-                        {/if}
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                     </svg>
-                </button>
-                <button class="header-btn danger" onclick={clearFavorites} title="Clear all">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
+                    {#if showExportLabel}<span class="export-label">Export</span>{/if}
                 </button>
                 <div class="export-dropdown" bind:this={exportDropdownRef}>
-                    <button class="header-btn" onclick={() => exportDropdownOpen = !exportDropdownOpen} title="Export">
+                    <button class="header-btn" onclick={() => exportDropdownOpen = !exportDropdownOpen} title="Download">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
@@ -288,21 +241,46 @@
                         <!-- svelte-ignore a11y_click_events_have_key_events -->
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
                         <div class="export-menu" onclick={handleExportClickOutside}>
-                            <button class="export-option" onclick={() => { downloadFavouritesJSON(); exportDropdownOpen = false; }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-                                </svg>
-                                JSON
-                            </button>
-                            <button class="export-option" onclick={() => { downloadFavouritesHTML(); exportDropdownOpen = false; }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                                </svg>
-                                HTML
+                            <button class="export-option" onclick={() => { downloadFavouritesJSON(); exportDropdownOpen = false; }}>JSON</button>
+                            <button class="export-option" onclick={() => { downloadFavouritesHTML(); exportDropdownOpen = false; }}>HTML</button>
+                            <button class="export-option toggle-option" onclick={() => { showExportLabel = !showExportLabel; exportDropdownOpen = false; }}>
+                                {showExportLabel ? 'Hide' : 'Show'} label
                             </button>
                         </div>
                     {/if}
                 </div>
+                <button class="header-btn danger" onclick={clearFavorites} title="Clear all">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                </button>
+                {#if exportTooltipOpen}
+                    <div class="sidebar-export-tooltip" class:success={copyStatus === "copied"} class:error={copyStatus === "failed"}>
+                        {#if copyStatus === "copied"}
+                            <div class="export-tooltip-status">✓ Copied {$favoriteTracks.length} tracks</div>
+                            <div class="export-tooltip-media">
+                                <!-- <img src="/tunemymusic-freetext.png" alt="TuneMyMusic Free Text option" /> -->
+                            </div>
+                            <a
+                                class="export-tooltip-cta"
+                                href="https://www.tunemymusic.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                                </svg>
+                                <span class="export-tooltip-cta-text">
+                                    Export using TuneMyMusic
+                                    <small>Add to Spotify, Apple Music & more</small>
+                                </span>
+                            </a>
+                            <div class="export-tooltip-hint">Click "Free Text", paste, and convert</div>
+                        {:else}
+                            <div class="export-tooltip-status">✗ Copy failed</div>
+                        {/if}
+                    </div>
+                {/if}
             {/if}
         </div>
     </div>
@@ -423,6 +401,32 @@
         color: #e55;
     }
 
+    .header-btn.export-btn {
+        width: auto;
+        gap: 0.3rem;
+        padding: 0 0.4rem;
+        background: var(--gold);
+        border-color: var(--gold);
+        color: #111;
+    }
+
+    .header-btn.export-btn:hover {
+        filter: brightness(1.1);
+        border-color: var(--gold);
+        color: #111;
+    }
+
+    .export-label {
+        font-size: 0.65rem;
+        font-weight: 600;
+    }
+
+    .toggle-option {
+        border-top: 1px solid var(--border);
+        font-size: 0.6rem;
+        color: var(--text-3);
+    }
+
     .cnt {
         color: var(--gold);
         font-weight: 500;
@@ -441,45 +445,132 @@
         color: var(--text-3);
     }
 
-    .tunemymusic-btn-wrap {
+    .fav-collapse-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        background: none;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        color: var(--text);
+    }
+
+    .fav-collapse-toggle:hover {
+        opacity: 0.8;
+    }
+
+    .fav-collapse-toggle h4 {
+        margin: 0;
+        font-size: 0.85rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .fav-collapse-arrow {
+        transition: transform 0.2s ease;
+        color: var(--text-3);
+        flex-shrink: 0;
+    }
+
+    .fav-collapse-arrow.collapsed {
+        transform: rotate(-90deg);
+    }
+
+    .header-btns {
         position: relative;
     }
 
-    .tunemymusic-copy.copied {
-        border-color: var(--gold);
-        color: var(--gold);
-    }
-
-    .tunemymusic-tooltip {
-        display: none;
+    .sidebar-export-tooltip {
         position: absolute;
         top: calc(100% + 6px);
         right: 0;
+        width: 220px;
         background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 6px 10px;
-        font-size: 0.65rem;
-        color: var(--text-2);
-        text-align: center;
-        width: 160px;
-        z-index: 10;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        padding: 0.65rem;
+        z-index: 100;
+        animation: tooltipDropIn 0.15s ease-out;
     }
 
-    .tunemymusic-tooltip a {
-        color: var(--gold);
+    .sidebar-export-tooltip.error {
+        border-color: #a03030;
+    }
+
+    .export-tooltip-status {
+        font-size: 0.7rem;
+        font-weight: 600;
+        margin-bottom: 0.4rem;
+    }
+
+    .sidebar-export-tooltip.success .export-tooltip-status {
+        color: #4ade80;
+    }
+
+    .sidebar-export-tooltip.error .export-tooltip-status {
+        color: #f87171;
+    }
+
+    .export-tooltip-media {
+        margin-bottom: 0.4rem;
+    }
+
+    .export-tooltip-media:empty {
+        display: none;
+    }
+
+    .export-tooltip-media img {
+        width: 100%;
+        border-radius: 4px;
+    }
+
+    .export-tooltip-cta {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.4rem 0.55rem;
+        background: var(--gold);
+        color: #111;
+        border-radius: 5px;
+        font-size: 0.7rem;
+        font-weight: 600;
         text-decoration: none;
+        transition: filter 0.15s;
     }
 
-    .tunemymusic-tooltip a:hover {
-        text-decoration: underline;
+    .export-tooltip-cta:hover {
+        filter: brightness(1.1);
     }
 
-    .tunemymusic-btn-wrap:hover .tunemymusic-tooltip,
-    .tunemymusic-copy.copied ~ .tunemymusic-tooltip,
-    .tunemymusic-tooltip:hover {
-        display: block;
+    .export-tooltip-cta svg {
+        flex-shrink: 0;
+    }
+
+    .export-tooltip-cta-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.3;
+    }
+
+    .export-tooltip-cta-text small {
+        font-size: 0.55rem;
+        font-weight: 400;
+        opacity: 0.7;
+    }
+
+    .export-tooltip-hint {
+        font-size: 0.6rem;
+        color: var(--text-3);
+        text-align: center;
+        margin-top: 0.3rem;
+        font-style: italic;
+    }
+
+    @keyframes tooltipDropIn {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
     }
 
     .player-status-note {

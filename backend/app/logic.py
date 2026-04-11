@@ -1288,6 +1288,8 @@ def generate_recommendations(
     popularity: float = 0.0,  # -1 (hidden gems) to +1 (mainstream)
     debug: bool = False,
     debug_audio: bool = False,
+    target_language: str | None = None,
+    target_genre: str | None = None,
 ) -> tuple[dict[str, list[dict]], dict]:
     t_start = perf_counter()
     matrix_audio = data.matrix_audio
@@ -1353,7 +1355,30 @@ def generate_recommendations(
 
     query_language_code = None
     query_language_codes = np.empty(0, dtype=np.int64)
-    if effective_language_weight > 0:
+    if target_language and target_language != 'match':
+        if target_language == 'any':
+            # Disable language filtering entirely
+            effective_language_weight = 0.0
+        else:
+            # Override: look up the target language code
+            lang_code = None
+            for i, name in enumerate(data.language_names_by_code):
+                if name and name.lower() == target_language.lower():
+                    lang_code = i
+                    break
+            if lang_code is not None:
+                query_language_codes = np.array([lang_code], dtype=np.int64)
+                query_language_code = lang_code
+                # Ensure language weight is active so the override takes effect
+                if effective_language_weight <= 0:
+                    effective_language_weight = LANGUAGE_WEIGHT_CURVE[2]  # Medium weight
+            else:
+                # Unknown language name, fall back to seed inference
+                if effective_language_weight > 0:
+                    query_language_codes, query_language_code = _infer_seed_language_preferences(
+                        data, seed_artist_codes, weights_arr,
+                    )
+    elif effective_language_weight > 0:
         query_language_codes, query_language_code = _infer_seed_language_preferences(
             data,
             seed_artist_codes,
@@ -1386,12 +1411,29 @@ def generate_recommendations(
             language_target_ratio = _resolve_language_prefilter_target_ratio(language_weight)
             language_prefilter_ready = language_target_ratio is not None
 
-    genre_prefilter_artist_codes = _prefilter_artist_codes_by_genre(
-        data,
-        seeds_genre_stack,
-        weights_arr,
-        genre_target_ratio,
-    )
+    if target_genre and target_genre != 'match' and target_genre != 'any':
+        # Override: filter to artists matching the target genre
+        target_genre_code = None
+        for i, name in enumerate(data.genre_names_by_code):
+            if name and name.lower() == target_genre.lower():
+                target_genre_code = i
+                break
+        if target_genre_code is not None and data.artist_genre_codes_by_artist_code is not None:
+            genre_match_mask = data.artist_genre_codes_by_artist_code == target_genre_code
+            genre_prefilter_artist_codes = np.flatnonzero(genre_match_mask).astype(np.int32, copy=False)
+        else:
+            genre_prefilter_artist_codes = _prefilter_artist_codes_by_genre(
+                data, seeds_genre_stack, weights_arr, genre_target_ratio,
+            )
+    elif target_genre == 'any':
+        genre_prefilter_artist_codes = None
+    else:
+        genre_prefilter_artist_codes = _prefilter_artist_codes_by_genre(
+            data,
+            seeds_genre_stack,
+            weights_arr,
+            genre_target_ratio,
+        )
     language_prefilter_artist_codes = None
     if language_prefilter_ready and language_target_ratio is not None:
         language_prefilter_artist_codes = _prefilter_artist_codes_by_language(
