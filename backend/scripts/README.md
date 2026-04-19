@@ -205,11 +205,29 @@ Genre family definitions. Edit this to modify genre mappings.
 ### `paths.py`
 Path configuration using `VIBE_DATA_DIR` environment variable.
 
+## Data Setup
+
+1. **Get track data** in parquet or CSV format and place in `backend/data/external/`.
+
+   The pipeline auto-discovers any `.parquet` files in this directory. You can use the datasets listed in [Acknowledgements](../../README.md#acknowledgements) or bring your own.
+
+   To preprocess a raw CSV into the pipeline's schema:
+   ```bash
+   cd backend/scripts
+   python ingest/preprocess_external_datasets.py --auto --input path/to/data.csv --output-name my_dataset
+   ```
+   Column mapping is auto-inferred from common name variants (id/track_id, name/track_name, artists/artist_name, etc).
+
+2. **Genre data** (optional): place artist genre parquets in `backend/data/external/genre/`.
+
+3. **Language model** (optional, for language detection):
+   ```bash
+   wget https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz -O backend/data/lid.176.ftz
+   ```
+
 ## Full Workflow
 
-1. **Raw data files** are in `backend/data/`:
-   - `data.parquet` - Main dataset
-   - `added_artists.parquet` - Additional artists (from discovery scripts)
+1. **Add track data** to `backend/data/external/` (see [Data Setup](#data-setup))
 
 2. **Add new artists** (optional):
    ```bash
@@ -219,12 +237,11 @@ Path configuration using `VIBE_DATA_DIR` environment variable.
 
 3. **Run pipeline**:
    ```bash
-   cd backend/scripts/pipeline
-   python filter_data.py -v       # Creates data_filtered.parquet
-   python process_data.py -v      # Creates tracks.parquet + artists.parquet
+   cd backend/scripts
+   python run_pipeline.py --all-datasets --verbose
    ```
 
-4. **Commit and redeploy** to pick up the new data.
+4. **Deploy** the updated `tracks.parquet` and `artists.parquet`.
 
 ## Dependencies
 
