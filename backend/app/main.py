@@ -51,11 +51,12 @@ except ImportError:
         MAX_ARTISTS,
     )
 
-# Data paths - configurable via environment in production
-TRACKS_PATH = Path(__file__).parent.parent / "data" / "tracks.parquet"
-ARTISTS_PATH = Path(__file__).parent.parent / "data" / "artists.parquet"
-ANALYTICS_PATH = Path(__file__).parent.parent / "data" / "analytics.jsonl"
-CACHE_DIR = Path(__file__).parent.parent / "data" / ".music_data_cache"
+# Data paths - configurable via VIBE_DATA_DIR environment variable
+_DATA_DIR = Path(os.environ.get("VIBE_DATA_DIR", Path(__file__).parent.parent / "data")).resolve()
+TRACKS_PATH = _DATA_DIR / "tracks.parquet"
+ARTISTS_PATH = _DATA_DIR / "artists.parquet"
+ANALYTICS_PATH = _DATA_DIR / "analytics.jsonl"
+CACHE_DIR = _DATA_DIR / ".music_data_cache"
 
 # Data caching - disabled by default (safe for production). Enable for dev with ENABLE_DATA_CACHE=true
 ENABLE_DATA_CACHE = os.getenv("ENABLE_DATA_CACHE", "").lower() == "true"

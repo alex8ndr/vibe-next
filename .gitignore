@@ -34,6 +34,8 @@ Thumbs.db
 
 # Backend dev/testing files
 backend/dev/
+backend/scripts/devtools/
+backend/scripts/ingest/
 
 # Analytics
 backend/data/analytics.jsonl
@@ -43,6 +45,18 @@ backend/data/.music_data_cache.pkl
 backend/data/.music_data_cache/
 backend/data/.runtime_mmap/
 
-# Pipeline intermediates (regenerable from data.csv.zip)
+# Pipeline intermediates (regenerable by pipeline)
 backend/data/data_filtered.parquet
+backend/data/data_encoded.parquet
 backend/data/external/
+
+# Serving artifacts (rebuilt by pipeline)
+backend/data/tracks.parquet
+backend/data/artists.parquet
+backend/data/added_artists.parquet
+backend/data/data.parquet
+backend/data/data.csv.zip
+backend/data/added_artists.csv.zip
+
+# Language detection model (downloaded separately)
+backend/data/lid.176.ftz

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Quick integration test for the recommendation engine."""
 
+import gc
+import shutil
 import sys
+from tempfile import mkdtemp
 from pathlib import Path
 
 # Add app directory to path
@@ -14,6 +17,29 @@ source = ParquetDataSource(tracks_path, artists_path)
 data = MusicData(source)
 data.load()
 print(f'Loaded {data.track_count:,} tracks')
+
+tmp_dir = Path(mkdtemp(prefix='music-data-cache-test-'))
+cached = None
+try:
+    cache_dir = tmp_dir / '.music_data_cache'
+    data.save_cache_bundle(cache_dir, tracks_path, artists_path)
+
+    cached = MusicData(source)
+    restored = cached.load_cache_bundle(cache_dir, tracks_path, artists_path)
+    assert restored, 'Cache bundle should restore cleanly'
+    assert cached.track_count == data.track_count
+    assert cached.get_track_id(0) == data.get_track_id(0)
+    assert cached.get_track_name(0) == data.get_track_name(0)
+    print('Cache roundtrip test: PASS')
+
+    # Smoke test recommendations from cached/mmap load
+    cached_recs, _ = generate_recommendations(cached, ['Taylor Swift'], max_artists=3)
+    assert cached_recs, 'Cached recommendations should not be empty'
+    print('Cached recommendation smoke test: PASS')
+finally:
+    cached = None
+    gc.collect()
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 # Test single artist
 recs, meta = generate_recommendations(data, ['Taylor Swift'], max_artists=3)

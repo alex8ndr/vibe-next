@@ -47,6 +47,7 @@ DEFAULT_TRENDING_LIMIT = 50   # Chart entries to check
 
 from track_dedup import deduplicate_tracks_polars, normalize_artist_name, normalize_track_name
 from schema import RAW_SCHEMA, RAW_COLUMN_ORDER, coerce_to_schema, normalize_for_merge
+from paths import DATA_DIR, ADDED_ARTISTS, get_input_dataset
 
 # API endpoints
 RECCOBEATS_URL = "https://api.reccobeats.com/v1"
@@ -67,14 +68,8 @@ RATE_LIMIT_DEEZER = 0.2
 RATE_LIMIT_LASTFM = 0.3
 RATE_LIMIT_RECCOBEATS = 0.2
 
-# File paths (relative to backend/)
-DATA_DIR = Path(__file__).parent.parent / "data"
-MAIN_DATASET = DATA_DIR / "data.parquet"  # Primary dataset (parquet)
-OUTPUT_PARQUET = DATA_DIR / "added_artists.parquet"  # Discovery output (parquet)
-
-# Legacy paths (for backward compatibility during migration)
-LEGACY_CSV = DATA_DIR / "added_artists.csv.zip"
-OUTPUT_CSV = LEGACY_CSV  # Alias for backward compat
+OUTPUT_PARQUET = ADDED_ARTISTS
+MAIN_DATASET = get_input_dataset()
 
 # Use canonical column order from schema.py
 RAW_COLS = RAW_COLUMN_ORDER
@@ -1161,15 +1156,6 @@ def load_existing() -> Tuple[pl.DataFrame, pl.DataFrame]:
     if OUTPUT_PARQUET.exists():
         df_added = pl.read_parquet(OUTPUT_PARQUET)
         df_added = _normalize_schema(df_added)
-    elif LEGACY_CSV.exists():
-        # Backward compat: read legacy CSV if parquet doesn't exist
-        import zipfile
-        with zipfile.ZipFile(LEGACY_CSV, 'r') as zf:
-            csv_names = [n for n in zf.namelist() if n.endswith('.csv')]
-            if csv_names:
-                with zf.open(csv_names[0]) as f:
-                    df_added = pl.read_csv(f, infer_schema_length=10000)
-        df_added = _normalize_schema(df_added)
     
     # If one is empty, match its schema to the other
     if len(df_main) == 0 and len(df_added) > 0:
@@ -1183,15 +1169,6 @@ def load_existing() -> Tuple[pl.DataFrame, pl.DataFrame]:
 def save_parquet(df: pl.DataFrame) -> None:
     """Save DataFrame to parquet (primary format)."""
     df.write_parquet(OUTPUT_PARQUET, compression="zstd", compression_level=12)
-
-
-def save_csv_zip(df: pl.DataFrame) -> None:
-    """Save DataFrame to compressed CSV zip (legacy, for backward compat)."""
-    csv_buffer = io.StringIO()
-    df.write_csv(csv_buffer)
-    
-    with zipfile.ZipFile(LEGACY_CSV, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("added_artists.csv", csv_buffer.getvalue())
 
 
 def deduplicate_with_report(
