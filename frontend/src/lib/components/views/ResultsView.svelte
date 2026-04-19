@@ -60,6 +60,7 @@
         hasRecommendations && ($recommendationsMeta?.has_more_candidates ?? true)
     );
     const debugInfo = $derived($recommendationsMeta?.debug);
+    const genreProfiles = $derived($recommendationsMeta?.genre_profiles);
     const inputGenreProfile = $derived($recommendationsMeta?.input_genre_profile);
     const inputLanguageProfile = $derived($recommendationsMeta?.input_language_profile);
     const searchVectorAudio = $derived($recommendationsMeta?.search_vector_audio);
@@ -607,7 +608,7 @@
                                     <small>Add to Spotify, Apple Music & more</small>
                                 </span>
                             </a>
-                            <div class="export-tooltip-hint">Click "Free Text", paste, and convert</div>
+                            <div class="export-tooltip-hint">Click <strong>"Free Text"</strong>, paste, and convert</div>
                         {:else}
                             <div class="export-tooltip-status">✗ Copy failed — try downloading instead</div>
                         {/if}
@@ -634,6 +635,7 @@
                     onAddToSearch={() => addToSearch(artist)}
                     showFavoriteButton={true}
                     debugInfo={debugInfo?.[artist]}
+                    genreProfile={genreProfiles?.[artist]}
                 />
             {/each}
         </div>

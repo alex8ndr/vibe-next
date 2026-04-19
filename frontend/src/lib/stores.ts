@@ -31,6 +31,7 @@ export interface ArtistDebugInfo {
 
 export interface RecommendMeta {
     has_more_candidates: boolean;
+    genre_profiles?: Record<string, Array<{ genre: string; pct: number }>>;
     debug?: Record<string, ArtistDebugInfo>;
     input_genre_profile?: Array<{ artist: string; genres: GenreInfo[] }>;
     input_language_profile?: Array<{ artist: string; languages: Array<{ language: string; pct: number }> }>;

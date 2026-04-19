@@ -13,6 +13,7 @@
         isKnown?: boolean;
         isAdded?: boolean;
         debugInfo?: ArtistDebugInfo;
+        genreProfile?: Array<{ genre: string; pct: number }>;
         staggerIndex?: number;
     }
 
@@ -25,6 +26,7 @@
         isKnown = false,
         isAdded = false,
         debugInfo,
+        genreProfile,
         staggerIndex = 0,
     }: Props = $props();
     
@@ -49,9 +51,9 @@
     
     // Format genre profile for display
     function formatGenreProfile(): string {
-        if (!debugInfo?.genre_profile?.length) return '';
-        return debugInfo.genre_profile
-            .map(g => `${Math.round(g.pct)}% ${g.genre}`)
+        if (!genreProfile?.length) return '';
+        return genreProfile
+            .map(g => g.genre)
             .join(', ');
     }
 
@@ -62,7 +64,7 @@
             .join(', ');
     }
     
-    const genreProfile = $derived(formatGenreProfile());
+    const genreProfileText = $derived(formatGenreProfile());
     const languageProfile = $derived(formatLanguageProfile());
     const showDebug = $derived($devSettings.debugMode && $devSettings.showGenreProfiles);
     const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
@@ -339,12 +341,12 @@
     <div class="card-header">
         <div class="title-row">
             <h3 class="title">{artist}</h3>
-            {#if showDebug && (genreProfile || languageProfile)}
-                <span class="genre-profile">
-                    {#if genreProfile}{genreProfile}{/if}
-                    {#if genreProfile && languageProfile} • {/if}
-                    {#if languageProfile}{languageProfile}{/if}
-                </span>
+            {#if genreProfileText}
+                <span class="genre-sep">·</span>
+                <span class="genre-profile">{genreProfileText}</span>
+            {/if}
+            {#if showDebug && languageProfile}
+                <span class="genre-profile">{languageProfile}</span>
             {/if}
         </div>
         <div class="card-actions" class:visible={showActions}>
@@ -487,8 +489,8 @@
 
     .title-row {
         display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
+        align-items: center;
+        gap: 0.4rem;
         min-width: 0;
         flex: 1;
     }
@@ -500,15 +502,23 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
     }
     
+    .genre-sep {
+        color: var(--text-3);
+        font-size: 0.85rem;
+        flex-shrink: 0;
+    }
+
     .genre-profile {
-        font-size: 0.65rem;
+        font-size: 0.75rem;
         color: var(--text-3);
         font-weight: 400;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        flex-shrink: 1;
     }
 
     .card-actions {

@@ -1691,11 +1691,8 @@ def generate_recommendations(
         })
     artist_stats.sort(key=lambda x: (-x["display_count"], x["avg_distance"]))
 
-    artist_profiles = (
-        data.get_artist_genre_profiles(
-            input_artists + [data.get_artist_name(int(row["artist_code"])) for row in artist_stats]
-        )
-        if debug else {}
+    artist_profiles = data.get_artist_genre_profiles(
+        input_artists + [data.get_artist_name(int(row["artist_code"])) for row in artist_stats]
     )
     language_profiles = (
         data.get_artist_language_profiles(
@@ -1801,6 +1798,13 @@ def generate_recommendations(
     meta = {
         "has_more_candidates": has_more_candidates,
         "perf": perf_info,
+    }
+    # Always include genre profiles for display on cards
+    meta["genre_profiles"] = {
+        data.get_artist_name(int(row["artist_code"])): [
+            {"genre": g, "pct": p} for g, p in artist_profiles.get(data.get_artist_name(int(row["artist_code"])), [])
+        ]
+        for row in artist_stats
     }
     if debug:
         meta["debug"] = debug_info

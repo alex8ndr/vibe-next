@@ -275,7 +275,7 @@
                                     <small>Add to Spotify, Apple Music & more</small>
                                 </span>
                             </a>
-                            <div class="export-tooltip-hint">Click "Free Text", paste, and convert</div>
+                            <div class="export-tooltip-hint">Click <strong>"Free Text"</strong>, paste, and convert</div>
                         {:else}
                             <div class="export-tooltip-status">✗ Copy failed</div>
                         {/if}
@@ -561,11 +561,10 @@
     }
 
     .export-tooltip-hint {
-        font-size: 0.6rem;
-        color: var(--text-3);
+        font-size: 0.65rem;
+        color: var(--text-2);
         text-align: center;
-        margin-top: 0.3rem;
-        font-style: italic;
+        margin-top: 0.4rem;
     }
 
     @keyframes tooltipDropIn {
