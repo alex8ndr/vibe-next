@@ -55,6 +55,10 @@ export interface RecommendResponse {
     meta?: RecommendMeta;
 }
 
+export interface TrackAudioFeaturesResponse {
+    audio_features: Record<string, Record<string, number>>;
+}
+
 export async function fetchArtists(query = '', limit = 100, signal?: AbortSignal): Promise<string[]> {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -102,4 +106,22 @@ export async function fetchArtistTracks(artistName: string): Promise<Track[]> {
     const res = await fetch(`${API_BASE}/artists/${encodeURIComponent(artistName)}/tracks`);
     if (!res.ok) throw new Error('Failed to fetch tracks');
     return res.json();
+}
+
+export async function fetchTrackAudioFeatures(trackIds: string[]): Promise<Record<string, Record<string, number>>> {
+    if (!trackIds.length) return {};
+
+    const res = await fetch(`${API_BASE}/tracks/audio-features`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ track_ids: trackIds }),
+    });
+
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: 'Request failed' }));
+        throw new Error(error.detail || 'Failed to fetch track audio features');
+    }
+
+    const data: TrackAudioFeaturesResponse = await res.json();
+    return data.audio_features ?? {};
 }

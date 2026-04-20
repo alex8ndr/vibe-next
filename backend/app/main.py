@@ -246,6 +246,14 @@ class RecommendResponse(BaseModel):
     meta: dict | None = None
 
 
+class TrackAudioFeaturesRequest(BaseModel):
+    track_ids: list[str]
+
+
+class TrackAudioFeaturesResponse(BaseModel):
+    audio_features: dict[str, dict[str, float]]
+
+
 class SearchLog(BaseModel):
     input_artists: list[str]
     track_ids: list[str] | None = None
@@ -602,6 +610,44 @@ async def get_artist_tracks(artist_name: str) -> list[Track]:
             audio_features=audio_feats,
         ))
     return results
+
+
+@app.post("/tracks/audio-features", response_model=TrackAudioFeaturesResponse)
+async def get_track_audio_features(request: TrackAudioFeaturesRequest) -> TrackAudioFeaturesResponse:
+    """Return per-track audio features for specific track IDs."""
+    if not music_data:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+
+    track_ids = [tid for tid in dict.fromkeys(request.track_ids or []) if tid]
+    if not track_ids:
+        return TrackAudioFeaturesResponse(audio_features={})
+
+    if len(track_ids) > 1000:
+        raise HTTPException(status_code=400, detail="Too many track IDs (max 1000)")
+
+    if music_data.matrix_audio is None:
+        return TrackAudioFeaturesResponse(audio_features={})
+
+    key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
+    out: dict[str, dict[str, float]] = {}
+
+    for track_id in track_ids:
+        row_idx = music_data.get_track_index(track_id)
+        if row_idx is None:
+            continue
+
+        features: dict[str, float] = {}
+        for feat in key_features:
+            idx = music_data.audio_col_indices.get(feat)
+            if idx is None:
+                continue
+            raw_val = float(music_data.matrix_audio[row_idx, idx]) / FEATURE_WEIGHTS[feat]
+            features[feat] = round(raw_val, 3)
+
+        if features:
+            out[track_id] = features
+
+    return TrackAudioFeaturesResponse(audio_features=out)
 
 
 @app.post("/log/action")

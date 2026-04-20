@@ -59,7 +59,6 @@
     const canRegenerate = $derived(
         hasRecommendations && ($recommendationsMeta?.has_more_candidates ?? true)
     );
-    const debugInfo = $derived($recommendationsMeta?.debug);
     const genreProfiles = $derived($recommendationsMeta?.genre_profiles);
     const inputGenreProfile = $derived($recommendationsMeta?.input_genre_profile);
     const inputLanguageProfile = $derived($recommendationsMeta?.input_language_profile);
@@ -421,7 +420,7 @@
         </div>
 
         <!-- Seed map scatter plot in dev mode -->
-        {#if import.meta.env.DEV && $devSettings.debugMode && $devSettings.showAudioFeatures && seedPoints.length > 0}
+        {#if import.meta.env.DEV && $devSettings.debugMode && $settings.showAudioFeatures && seedPoints.length > 0}
             <div class="side-section seed-map-section">
                 <div class="chart-header">
                     <h5>Seed Map</h5>
@@ -513,14 +512,6 @@
                     <span>Debug</span>
                 </label>
                 {#if $devSettings.debugMode}
-                    <label class="dev-toggle">
-                        <input type="checkbox" bind:checked={$devSettings.showGenreProfiles} />
-                        <span>Genres</span>
-                    </label>
-                    <label class="dev-toggle">
-                        <input type="checkbox" bind:checked={$devSettings.showAudioFeatures} />
-                        <span>Features</span>
-                    </label>
                     <div class="dev-pool-status">
                         <div class="pool-stat"><span>Regen:</span> <strong>{regenerationHistory?.size ?? 0}</strong></div>
                         <div class="pool-stat"><span>Params:</span> <strong>{paramsChanged ? "⚠" : "✓"}</strong></div>
@@ -545,7 +536,7 @@
                     {/each}
                 </div>
             {/if}
-            {#if $devSettings.debugMode && $devSettings.showAudioFeatures && searchVectorGenre && searchVectorGenre.length > 0}
+            {#if $devSettings.debugMode && $settings.showAudioFeatures && searchVectorGenre && searchVectorGenre.length > 0}
                 <div class="debug-search-vector">
                     <span class="debug-label">Genre vector:</span>
                     {#each searchVectorGenre as {genre, pct}}
@@ -634,7 +625,6 @@
                     onAddToKnown={() => addToKnown(artist)}
                     onAddToSearch={() => addToSearch(artist)}
                     showFavoriteButton={true}
-                    debugInfo={debugInfo?.[artist]}
                     genreProfile={genreProfiles?.[artist]}
                 />
             {/each}

@@ -112,6 +112,9 @@ export const DEFAULT_SETTINGS = {
     maxResults: LIMITS.MAX_RESULT_ARTISTS.default,
     tracksPerArtist: LIMITS.MAX_TRACKS_PER_ARTIST.default,
     showBackground: true,
+    showGenres: true,
+    showLanguages: false,
+    showAudioFeatures: false,
     // Vibe modifiers: -1 to +1 sliders
     vibeMood: 0,   // Chill (-1) to Energetic (+1)
     vibeSound: 0,  // Acoustic (-1) to Electronic (+1)
@@ -122,6 +125,16 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const settings = createPersistedStore('vibe-settings', DEFAULT_SETTINGS);
+
+if (browser) {
+    settings.update((current) => ({
+        ...DEFAULT_SETTINGS,
+        ...current,
+        showGenres: current.showGenres ?? true,
+        showLanguages: current.showLanguages ?? false,
+        showAudioFeatures: current.showAudioFeatures ?? false,
+    }));
+}
 
 // Theme: 'light', 'dark', or 'system'
 export const themePreference = createPersistedStore<'light' | 'dark' | 'system'>('vibe-theme', 'system');
@@ -142,8 +155,6 @@ export const rightPanelOpen = createPersistedStore<boolean>('vibe-right-panel', 
 // Dev settings (only visible in dev mode)
 export const devSettings = createPersistedStore('vibe-dev-settings', {
     debugMode: false,
-    showGenreProfiles: true,
-    showAudioFeatures: false,
 });
 
 // Client ID for analytics (persisted per-browser)

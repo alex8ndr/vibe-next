@@ -1720,24 +1720,18 @@ def generate_recommendations(
                 "language": language,
             }
             
-            # Add per-song debug data if requested
-            if debug and debug_audio:
+            if debug_audio:
                 # Extract audio features for this specific song
                 key_features = ['energy', 'danceability', 'acousticness', 'valence', 'tempo', 'instrumentalness']
                 features_to_use = [c for c in key_features if c in data.audio_cols]
-                
+
                 audio_feats = {}
                 for feat in features_to_use:
                     idx = data.audio_col_indices[feat]
-                    # Divide by weight to get original value
                     raw_val = float(matrix_audio[track_idx, idx]) / FEATURE_WEIGHTS[feat]
                     audio_feats[feat] = round(raw_val, 3)
-                
-                # Include track's actual genre
-                if genre:
-                    audio_feats['genre'] = genre
-                
-                if audio_feats:  # Only add if we have features
+
+                if audio_feats:
                     track_info['audio_features'] = audio_feats
             
             tracks.append(track_info)

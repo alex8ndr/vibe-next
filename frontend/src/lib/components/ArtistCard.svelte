@@ -1,8 +1,88 @@
 <script lang="ts">
-    import type { Track, ArtistDebugInfo } from "$lib/stores";
-    import { nowPlaying, sidebarPlaying, loadingTrackId, devSettings, favoriteTracks } from "$lib/stores";
+    import type { Track } from "$lib/stores";
+    import { nowPlaying, sidebarPlaying, loadingTrackId, favoriteTracks, settings } from "$lib/stores";
     import { trackPlayTrack, trackAddFavorite, trackRemoveFavorite } from "$lib/analytics";
     import { onMount } from "svelte";
+
+    interface DisplayFeature {
+        key: string;
+        label: string;
+        value: number;
+        barValue: number;
+    }
+
+    const AUDIO_FEATURE_KEYS = [
+        "energy",
+        "danceability",
+        "acousticness",
+        "valence",
+        "tempo",
+        "instrumentalness",
+    ] as const;
+
+    const AUDIO_FEATURE_LABELS: Record<string, string> = {
+        energy: "Energy",
+        danceability: "Dance",
+        acousticness: "Acoustic",
+        valence: "Mood",
+        tempo: "Tempo",
+        instrumentalness: "Instrumental",
+    };
+
+    const LANGUAGE_NAMES: Record<string, string> = {
+        en: "English",
+        es: "Spanish",
+        pt: "Portuguese",
+        ja: "Japanese",
+        de: "German",
+        fr: "French",
+        zh: "Chinese",
+        it: "Italian",
+        ru: "Russian",
+        tr: "Turkish",
+        fi: "Finnish",
+        ko: "Korean",
+        id: "Indonesian",
+        hi: "Hindi",
+        pl: "Polish",
+        sv: "Swedish",
+        ar: "Arabic",
+        th: "Thai",
+        nl: "Dutch",
+        no: "Norwegian",
+        da: "Danish",
+        tl: "Tagalog",
+        cs: "Czech",
+        hu: "Hungarian",
+        ta: "Tamil",
+        pa: "Punjabi",
+        ms: "Malay",
+        vi: "Vietnamese",
+        el: "Greek",
+        he: "Hebrew",
+        ml: "Malayalam",
+        ro: "Romanian",
+        fa: "Persian",
+        uk: "Ukrainian",
+        te: "Telugu",
+        is: "Icelandic",
+        bg: "Bulgarian",
+        lt: "Lithuanian",
+        lv: "Latvian",
+        hr: "Croatian",
+        et: "Estonian",
+        am: "Amharic",
+        sk: "Slovak",
+        sq: "Albanian",
+        sl: "Slovenian",
+        ur: "Urdu",
+        sr: "Serbian",
+        ca: "Catalan",
+        af: "Afrikaans",
+        hy: "Armenian",
+        ne: "Nepali",
+        eo: "Esperanto",
+    };
 
     interface Props {
         artist: string;
@@ -12,7 +92,6 @@
         showFavoriteButton?: boolean;
         isKnown?: boolean;
         isAdded?: boolean;
-        debugInfo?: ArtistDebugInfo;
         genreProfile?: Array<{ genre: string; pct: number }>;
         staggerIndex?: number;
     }
@@ -25,7 +104,6 @@
         showFavoriteButton = false,
         isKnown = false,
         isAdded = false,
-        debugInfo,
         genreProfile,
         staggerIndex = 0,
     }: Props = $props();
@@ -57,18 +135,65 @@
             .join(', ');
     }
 
+    function formatLanguageCode(language: string): string {
+        const normalized = language.trim().toLowerCase();
+        if (!normalized) return '';
+        if (LANGUAGE_NAMES[normalized]) return LANGUAGE_NAMES[normalized];
+        if (normalized.length === 2) return normalized.toUpperCase();
+        return language.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
     function formatLanguageProfile(): string {
-        if (!debugInfo?.language_profile?.length) return '';
-        return debugInfo.language_profile
-            .map(l => `${Math.round(l.pct)}% ${l.language}`)
+        const counts = new Map<string, number>();
+        for (const t of tracks) {
+            const raw = typeof t.language === 'string' ? t.language : '';
+            const label = formatLanguageCode(raw);
+            if (!label) continue;
+            counts.set(label, (counts.get(label) ?? 0) + 1);
+        }
+        if (counts.size === 0) return '';
+        return [...counts.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([label]) => label)
             .join(', ');
+    }
+
+    function clamp01(value: number): number {
+        return Math.max(0, Math.min(1, value));
+    }
+
+    function normalizeFeatureValue(key: string, value: number): number {
+        if (key === 'tempo') {
+            if (value > 1.5) return clamp01(value / 200);
+            return clamp01(value);
+        }
+        if (value > 1.0) return clamp01(value / 100);
+        return clamp01(value);
+    }
+
+    function getTrackAudioFeatures(track: Track): DisplayFeature[] {
+        const features = track.audio_features;
+        if (!features) return [];
+
+        return AUDIO_FEATURE_KEYS.flatMap((key): DisplayFeature[] => {
+            const raw = features[key];
+            if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+                return [];
+            }
+            return [{
+                key,
+                label: AUDIO_FEATURE_LABELS[key] ?? key,
+                value: raw,
+                barValue: normalizeFeatureValue(key, raw),
+            }];
+        });
     }
     
     const genreProfileText = $derived(formatGenreProfile());
     const languageProfile = $derived(formatLanguageProfile());
-    const showDebug = $derived($devSettings.debugMode && $devSettings.showGenreProfiles);
-    const showAudioFeatures = $derived($devSettings.debugMode && $devSettings.showAudioFeatures);
-    const hasTrackFeatures = $derived(tracks.some(t => t.audio_features));
+    const showGenres = $derived($settings.showGenres);
+    const showLanguages = $derived($settings.showLanguages);
+    const showAudioFeatures = $derived($settings.showAudioFeatures);
 
     // Stagger config: delay between each card's iframe init (ms)
     const STAGGER_DELAY_MS = 150;
@@ -341,12 +466,13 @@
     <div class="card-header">
         <div class="title-row">
             <h3 class="title">{artist}</h3>
-            {#if genreProfileText}
+            {#if showLanguages && languageProfile}
+                <span class="genre-sep">·</span>
+                <span class="genre-profile">{languageProfile}</span>
+            {/if}
+            {#if showGenres && genreProfileText}
                 <span class="genre-sep">·</span>
                 <span class="genre-profile">{genreProfileText}</span>
-            {/if}
-            {#if showDebug && languageProfile}
-                <span class="genre-profile">{languageProfile}</span>
             {/if}
         </div>
         <div class="card-actions" class:visible={showActions}>
@@ -387,6 +513,7 @@
         {#each tracks as t (t.track_id)}
             {@const isSelected = playingTrackId === t.track_id}
             {@const isLoading = isLoadingTrack(t.track_id)}
+            {@const audioFeatures = showAudioFeatures ? getTrackAudioFeatures(t) : []}
             <div class="trk-row">
                 <button
                     class="trk"
@@ -418,6 +545,32 @@
                     </span>
                     <span class="txt">{t.track_name}</span>
                 </button>
+                {#if showAudioFeatures && audioFeatures.length > 0}
+                    <div
+                        class="audio-hover-zone"
+                        tabindex="0"
+                        role="button"
+                        aria-label={`Show audio features for ${t.track_name}`}
+                    >
+                        <svg class="audio-hover-glyph" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="5" y1="20" x2="5" y2="12" />
+                            <line x1="12" y1="20" x2="12" y2="8" />
+                            <line x1="19" y1="20" x2="19" y2="4" />
+                        </svg>
+                        <div class="audio-hover-popover" role="tooltip">
+                            <div class="audio-features-label">Song Features</div>
+                            {#each audioFeatures as feature (feature.key)}
+                                <div class="feature">
+                                    <span class="feature-name">{feature.label}</span>
+                                    <div class="feature-bar">
+                                        <div class="feature-fill" style:width={`${feature.barValue * 100}%`}></div>
+                                    </div>
+                                    <span class="feature-value">{feature.value.toFixed(2)}</span>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
                 {#if showFavoriteButton}
                     <button
                         class="fav-btn"
@@ -429,37 +582,6 @@
                     </button>
                 {/if}
             </div>
-            
-            {#if showAudioFeatures && t.audio_features}
-                <div class="audio-features">
-                    <div class="audio-features-label">Song features:</div>
-                    {#each Object.entries(t.audio_features) as [key, value]}
-                        {#if key === 'genre'}
-                            <div class="feature genre-feature">
-                                <span class="feature-name">genre</span>
-                                <span class="feature-value-text">{value}</span>
-                            </div>
-                        {:else if typeof value === 'number'}
-                            <div class="feature">
-                                <span class="feature-name">{key}</span>
-                                <div class="feature-bar">
-                                    <div class="feature-fill" style:width="{(value as number) * 100}%"></div>
-                                </div>
-                                <span class="feature-value">{(value as number).toFixed(2)}</span>
-                            </div>
-                        {:else}
-                            <div class="feature genre-feature">
-                                <span class="feature-name">{key}</span>
-                                <span class="feature-value-text">{String(value)}</span>
-                            </div>
-                        {/if}
-                    {/each}
-                </div>
-            {:else if showAudioFeatures}
-                <div class="audio-features audio-features-missing">
-                    <span class="audio-features-label">No audio data - run new search with debug enabled</span>
-                </div>
-            {/if}
         {/each}
     </div>
 </article>
@@ -631,6 +753,7 @@
 
     .trk-row {
         display: flex;
+        align-items: stretch;
         gap: 0.25rem;
     }
 
@@ -733,6 +856,67 @@
         white-space: nowrap;
     }
 
+    .audio-hover-zone {
+        position: relative;
+        width: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(
+            135deg,
+            hsl(var(--hue), 26%, 24%) 0%,
+            hsl(calc(var(--hue) + 20), 20%, 18%) 100%
+        );
+        border: none;
+        border-radius: 5px;
+        color: #ddd;
+        opacity: 0.7;
+        cursor: pointer;
+        outline: none;
+    }
+
+    .audio-hover-zone:focus-visible {
+        box-shadow: 0 0 0 1px var(--gold);
+        opacity: 1;
+    }
+
+    .audio-hover-glyph {
+        opacity: 0.9;
+    }
+
+    .audio-hover-popover {
+        position: absolute;
+        bottom: calc(100% + 0.2rem);
+        right: 0;
+        width: 220px;
+        padding: 0.45rem 0.5rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        box-shadow: 0 4px 10px var(--shadow);
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        opacity: 0;
+        transform: translateY(2px);
+        pointer-events: none;
+        transition: opacity 0.12s ease, transform 0.12s ease;
+        z-index: 5;
+    }
+
+    .audio-hover-zone:hover,
+    .audio-hover-zone:active,
+    .audio-hover-zone:focus-within {
+        opacity: 1;
+    }
+
+    .audio-hover-zone:hover .audio-hover-popover,
+    .audio-hover-zone:active .audio-hover-popover,
+    .audio-hover-zone:focus-within .audio-hover-popover {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
     .fav-btn {
         width: 28px;
         display: flex;
@@ -769,6 +953,7 @@
             --trk-lit2: 32%;
         }
 
+        .audio-hover-zone,
         .fav-btn {
             background: linear-gradient(
                 135deg,
@@ -785,6 +970,7 @@
         --trk-lit2: 32%;
     }
 
+    :global([data-theme="light"]) .audio-hover-zone,
     :global([data-theme="light"]) .fav-btn {
         background: linear-gradient(
             135deg,
@@ -826,24 +1012,7 @@
             opacity: 1;
         }
     }
-    
-    /* Audio features debug display */
-    .audio-features {
-        margin-top: 0.25rem;
-        margin-bottom: 0.25rem;
-        padding: 0.4rem 0.5rem;
-        background: var(--bg-alt);
-        border-radius: 5px;
-        display: flex;
-        flex-direction: column;
-        gap: 0.2rem;
-    }
-    
-    .audio-features-missing {
-        opacity: 0.5;
-        font-style: italic;
-    }
-    
+
     .audio-features-label {
         font-size: 0.6rem;
         color: var(--text-3);
@@ -878,26 +1047,11 @@
         background: var(--gold);
         border-radius: 2px;
     }
-    
+
     .feature-value {
-        width: 35px;
+        width: 38px;
         text-align: right;
         color: var(--text-2);
         font-family: monospace;
-    }
-    
-    .genre-feature {
-        display: flex;
-        gap: 0.5rem;
-        font-size: 0.7rem;
-        padding: 0.25rem 0;
-        border-top: 1px solid var(--border);
-        margin-top: 0.25rem;
-    }
-    
-    .feature-value-text {
-        flex: 1;
-        color: var(--text-2);
-        font-style: italic;
     }
 </style>

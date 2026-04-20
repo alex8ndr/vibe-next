@@ -7,6 +7,7 @@
         fetchArtists,
         fetchRecommendations,
         fetchArtistTracks,
+        fetchTrackAudioFeatures,
         fetchStats,
     } from "$lib/api";
     import {
@@ -35,6 +36,8 @@
     let loadingProgress = $state(0);
     let regenerationHistory = $state<Set<string>>(new Set());
     let lastSearchParams = $state<string>("");
+    let audioHydrationInFlight = false;
+    const hydratedAudioTrackIds = new Set<string>();
     const HIDDEN_ARTIST_LIMIT = 30; // Force new search after this many total artists
     const ARTIST_PRELOAD_LIMIT = 1000;
     const hitArtistLimit = $derived(regenerationHistory.size >= HIDDEN_ARTIST_LIMIT);
@@ -114,7 +117,7 @@
                 vibe_sound: $settings.vibeSound,
                 popularity: $settings.popularity,
                 debug: $devSettings.debugMode,
-                debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
+                debug_audio: $settings.showAudioFeatures,
                 client_id: clientId,
                 target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
                 target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
@@ -162,7 +165,7 @@
                 vibe_sound: $settings.vibeSound,
                 popularity: $settings.popularity,
                 debug: $devSettings.debugMode,
-                debug_audio: $devSettings.debugMode && $devSettings.showAudioFeatures,
+                debug_audio: $settings.showAudioFeatures,
                 client_id: clientId,
                 target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
                 target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
@@ -182,6 +185,64 @@
             isLoading.set(false);
         }
     }
+
+    function collectMissingAudioTrackIds(currentRecommendations: Record<string, Track[]>): string[] {
+        const out: string[] = [];
+        for (const tracks of Object.values(currentRecommendations)) {
+            for (const track of tracks) {
+                if (track.audio_features) continue;
+                if (hydratedAudioTrackIds.has(track.track_id)) continue;
+                out.push(track.track_id);
+            }
+        }
+        return out;
+    }
+
+    async function hydrateCurrentResultsAudioFeatures(currentRecommendations: Record<string, Track[]>) {
+        if (audioHydrationInFlight) return;
+
+        const missingTrackIds = collectMissingAudioTrackIds(currentRecommendations);
+        if (!missingTrackIds.length) return;
+
+        audioHydrationInFlight = true;
+        try {
+            const featuresByTrack = await fetchTrackAudioFeatures(missingTrackIds);
+            const returnedTrackIds = new Set(Object.keys(featuresByTrack));
+
+            recommendations.update((prev) => {
+                const next: Record<string, Track[]> = {};
+                for (const [artist, tracks] of Object.entries(prev)) {
+                    next[artist] = tracks.map((track) => {
+                        const features = featuresByTrack[track.track_id];
+                        if (!features || track.audio_features) {
+                            return track;
+                        }
+                        return { ...track, audio_features: features };
+                    });
+                }
+                return next;
+            });
+
+            for (const trackId of missingTrackIds) {
+                hydratedAudioTrackIds.add(trackId);
+            }
+            for (const trackId of returnedTrackIds) {
+                hydratedAudioTrackIds.add(trackId);
+            }
+        } catch {
+            // Keep silent to avoid noisy UX; cards will still populate after next search.
+        } finally {
+            audioHydrationInFlight = false;
+        }
+    }
+
+    $effect(() => {
+        const currentRecommendations = $recommendations;
+        if (!$settings.showAudioFeatures) return;
+        if ($isLoading) return;
+        if (Object.keys(currentRecommendations).length === 0) return;
+        void hydrateCurrentResultsAudioFeatures(currentRecommendations);
+    });
 
     function playTrack(track: FavoriteTrack) {
         if (!sidebarReady || !sidebarController) {

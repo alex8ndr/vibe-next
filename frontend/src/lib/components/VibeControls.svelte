@@ -227,6 +227,21 @@
                     {/if}
                 </div>
             </div>
+            <div class="adv-show-row" aria-label="Display options">
+                <span class="adv-show-label">Show</span>
+                <label class="adv-check-inline">
+                    <input type="checkbox" bind:checked={$settings.showGenres} />
+                    <span>Genre</span>
+                </label>
+                <label class="adv-check-inline">
+                    <input type="checkbox" bind:checked={$settings.showLanguages} />
+                    <span>Language</span>
+                </label>
+                <label class="adv-check-inline">
+                    <input type="checkbox" bind:checked={$settings.showAudioFeatures} />
+                    <span>Audio</span>
+                </label>
+            </div>
         </div>
     {/if}
 </div>
@@ -471,5 +486,38 @@
     .adv-option.selected {
         color: var(--gold);
         font-weight: 600;
+    }
+
+    .adv-show-row {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 1px;
+    }
+
+    .adv-show-label {
+        font-size: 0.6rem;
+        color: var(--text-3);
+        flex-shrink: 0;
+    }
+
+    .adv-check-inline {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.6rem;
+        color: var(--text-2);
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .adv-check-inline input {
+        accent-color: var(--gold);
+        width: 12px;
+        height: 12px;
+        margin: 0;
     }
 </style>
