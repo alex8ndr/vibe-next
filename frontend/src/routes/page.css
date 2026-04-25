@@ -78,19 +78,56 @@
 }
 
 .btn-go {
-    padding: 0 1.25rem;
+    padding: 0.6rem 2rem;
     background: var(--gold);
     color: #111;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     border: none;
     border-radius: 8px;
     white-space: nowrap;
+    cursor: pointer;
 }
 
 .btn-go:hover:not(:disabled) {
     filter: brightness(1.1);
 }
+
+.btn-go {
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-go::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--gold), white 30%) 100%
+    );
+    transform-origin: left;
+    transform: scaleX(var(--progress, 0));
+    pointer-events: none;
+    opacity: 0;
+}
+
+.btn-go[data-phase="active"]::after {
+    opacity: 1;
+    transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-go[data-phase="hiding"]::after {
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.btn-go[data-phase="idle"]::after {
+    opacity: 0;
+    transition: none;
+}
+
 
 /* Landing vibe toggle (fixed left edge) */
 .landing-vibe-toggle {
@@ -282,22 +319,6 @@
     margin-top: 0.5rem;
     font-size: 0.75rem;
     color: var(--gold);
-}
-
-.loading-bar {
-    margin: 0.75rem auto 0;
-    width: 100%;
-    max-width: 280px;
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-}
-
-.loading-fill {
-    height: 100%;
-    background: var(--gold);
-    transition: width 0.15s ease;
 }
 
 .fine-section {
@@ -568,6 +589,38 @@
     font-size: 0.8rem;
     border: none;
     border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-update::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--gold), white 30%) 100%
+    );
+    transform-origin: left;
+    transform: scaleX(var(--progress, 0));
+    pointer-events: none;
+    opacity: 0;
+}
+
+.btn-update[data-phase="active"]::after {
+    opacity: 1;
+    transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-update[data-phase="hiding"]::after {
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.btn-update[data-phase="idle"]::after {
+    opacity: 0;
+    transition: none;
 }
 
 .btn-update:disabled {
@@ -594,6 +647,15 @@
 .btn-regenerate:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+.btn-regenerate.spinning svg {
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .side-section {
@@ -1212,7 +1274,7 @@
     }
 
     .btn-go {
-        padding: 0.6rem;
+        padding: 0.6rem 2rem;
     }
 
     .grid {

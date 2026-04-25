@@ -84,6 +84,80 @@ export async function fetchRecommendations(request: RecommendRequest): Promise<R
     return res.json();
 }
 
+// Baseline expected durations (ms) from local fast machine - used as starting ratios
+const STAGE_BASELINES: Record<string, number> = {
+    seeds: 1,
+    prep: 36,
+    audio: 10,
+    genre: 4,
+    lang: 12,
+    rank: 12,
+};
+const BASELINE_TOTAL = Object.values(STAGE_BASELINES).reduce((a, b) => a + b, 0);
+
+// Cumulative progress % each stage completion represents
+const STAGE_PROGRESS: Record<string, number> = {};
+{
+    let cumulative = 0;
+    for (const [stage, ms] of Object.entries(STAGE_BASELINES)) {
+        cumulative += ms;
+        STAGE_PROGRESS[stage] = (cumulative / BASELINE_TOTAL) * 95; // cap at 95%, done=100
+    }
+}
+
+export async function fetchRecommendationsStream(
+    request: RecommendRequest,
+    onProgress: (progress: number) => void,
+): Promise<RecommendResponse> {
+    const res = await fetch(`${API_BASE}/recommend-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+    });
+
+    if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: 'Request failed' }));
+        throw new Error(error.detail || 'Failed to get recommendations');
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: RecommendResponse | null = null;
+    let progress = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = JSON.parse(line.slice(6));
+
+            if (data.stage === 'done') {
+                onProgress(100);
+                result = {
+                    recommendations: data.recommendations,
+                    meta: data.meta,
+                };
+            } else {
+                const stageProgress = STAGE_PROGRESS[data.stage] ?? progress;
+                progress = Math.max(progress, stageProgress);
+                onProgress(progress);
+            }
+        }
+    }
+
+    if (!result) {
+        throw new Error('Stream ended without results');
+    }
+    return result;
+}
+
 export async function fetchStats(): Promise<{ track_count: number; artist_count: number }> {
     const res = await fetch(`${API_BASE}/stats`);
     if (!res.ok) throw new Error('Failed to fetch stats');

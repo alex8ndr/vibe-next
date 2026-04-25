@@ -5,6 +5,8 @@
     import {
         settings,
         isLoading,
+        loadingProgress,
+        progressPhase,
         knownArtists,
         favoriteTracks,
         sidebarPlaying,
@@ -20,7 +22,6 @@
         selected = $bindable(),
         fineTune = $bindable(),
         artistTracks,
-        loadingProgress,
         error,
         datasetStats = null,
         onsearch, // event prop
@@ -29,7 +30,6 @@
         selected: string[];
         fineTune: Record<string, string[]>;
         artistTracks: Record<string, Track[]>;
-        loadingProgress: number;
         error: string | null;
         datasetStats?: { track_count: number; artist_count: number } | null;
         onsearch: () => void;
@@ -113,10 +113,12 @@
             />
             <button
                 class="btn-go"
+                data-phase={$progressPhase}
+                style:--progress={$loadingProgress / 100}
                 onclick={onsearch}
                 disabled={!selected.length || $isLoading}
             >
-                {$isLoading ? "..." : "Go"}
+                <span class="btn-label">Search</span>
             </button>
         </div>
 
@@ -124,15 +126,6 @@
             <p class="limit-msg">
                 Maximum {LIMITS.MAX_INPUT_ARTISTS} artists reached
             </p>
-        {/if}
-
-        {#if $isLoading}
-            <div class="loading-bar">
-                <div
-                    class="loading-fill"
-                    style:width="{loadingProgress}%"
-                ></div>
-            </div>
         {/if}
 
         {#if selected.length > 0}

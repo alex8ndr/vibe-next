@@ -5,7 +5,7 @@
     import FeedbackForm from "$lib/components/FeedbackForm.svelte";
     import {
         fetchArtists,
-        fetchRecommendations,
+        fetchRecommendationsStream,
         fetchArtistTracks,
         fetchTrackAudioFeatures,
         fetchStats,
@@ -15,6 +15,8 @@
         recommendations,
         recommendationsMeta,
         isLoading,
+        loadingProgress,
+        progressPhase,
         hasResults,
         settings,
         knownArtists,
@@ -33,14 +35,36 @@
     let fineTune = $state<Record<string, string[]>>({}); // stores track_ids
     let artistTracks = $state<Record<string, Track[]>>({});
     let error = $state<string | null>(null);
-    let loadingProgress = $state(0);
     let regenerationHistory = $state<Set<string>>(new Set());
     let lastSearchParams = $state<string>("");
     let audioHydrationInFlight = false;
     const hydratedAudioTrackIds = new Set<string>();
     const HIDDEN_ARTIST_LIMIT = 30; // Force new search after this many total artists
     const ARTIST_PRELOAD_LIMIT = 1000;
+    const MIN_PROGRESS_VISIBLE_MS = 300;
     const hitArtistLimit = $derived(regenerationHistory.size >= HIDDEN_ARTIST_LIMIT);
+    let progressStartedAt = 0;
+
+    function beginProgress() {
+        progressStartedAt = performance.now();
+        loadingProgress.set(0);
+        progressPhase.set('active');
+        isLoading.set(true);
+    }
+
+    async function finishProgress() {
+        loadingProgress.set(100);
+        // Ensure the bar is visible for at least MIN_PROGRESS_VISIBLE_MS
+        const elapsed = performance.now() - progressStartedAt;
+        const remaining = Math.max(0, MIN_PROGRESS_VISIBLE_MS - elapsed);
+        if (remaining) await new Promise(r => setTimeout(r, remaining));
+        // Fade out, then reset to zero while hidden
+        progressPhase.set('hiding');
+        await new Promise(r => setTimeout(r, 150));
+        loadingProgress.set(0);
+        progressPhase.set('idle');
+        isLoading.set(false);
+    }
 
     // Sidebar player
     let sidebarPlayerEl = $state<HTMLDivElement | null>(null);
@@ -87,23 +111,13 @@
     async function search() {
         if (!selected.length) return;
         error = null;
-        isLoading.set(true);
-        loadingProgress = 0;
+        beginProgress();
 
-        const progressInterval = setInterval(() => {
-            loadingProgress = Math.min(
-                loadingProgress + Math.random() * 15,
-                90,
-            );
-        }, 150);
-
-        // fineTune now stores track_ids directly, no lookup needed
         const trackIds = selected.flatMap((a) => fineTune[a] || []);
 
         try {
-            // Reset regeneration history on new search
             regenerationHistory = new Set();
-            const res = await fetchRecommendations({
+            const res = await fetchRecommendationsStream({
                 artists: selected,
                 track_ids: trackIds.length ? trackIds : undefined,
                 exclude_artists: $knownArtists.length
@@ -121,19 +135,16 @@
                 client_id: clientId,
                 target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
                 target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
-            });
-            loadingProgress = 100;
+            }, (progress) => loadingProgress.set(progress));
             recommendations.set(res.recommendations);
             recommendationsMeta.set(res.meta ?? null);
-            // Add newly recommended artists to history so regenerate() excludes them
             Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
-            // Store params to detect when they've changed
             lastSearchParams = JSON.stringify({ selected, fineTune, targetLanguage: $settings.targetLanguage, targetGenre: $settings.targetGenre });
-            clearInterval(progressInterval);
-            isLoading.set(false);
+            await finishProgress();
         } catch (e) {
             error = e instanceof Error ? e.message : "Search failed";
-            clearInterval(progressInterval);
+            loadingProgress.set(0);
+            progressPhase.set('idle');
             isLoading.set(false);
         }
     }
@@ -142,18 +153,12 @@
         if (!selected.length || $isLoading) return;
         
         error = null;
-        isLoading.set(true);
-        loadingProgress = 0;
+        beginProgress();
 
-        const progressInterval = setInterval(() => {
-            loadingProgress = Math.min(loadingProgress + Math.random() * 15, 90);
-        }, 150);
-
-        // fineTune now stores track_ids directly, no lookup needed
         const trackIds = selected.flatMap((a) => fineTune[a] || []);
 
         try {
-            const res = await fetchRecommendations({
+            const res = await fetchRecommendationsStream({
                 artists: selected,
                 track_ids: trackIds.length ? trackIds : undefined,
                 exclude_artists: [...$knownArtists, ...Array.from(regenerationHistory)],
@@ -169,19 +174,17 @@
                 client_id: clientId,
                 target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
                 target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
-            });
-            loadingProgress = 100;
+            }, (progress) => loadingProgress.set(progress));
             recommendations.set(res.recommendations);
             recommendationsMeta.set(res.meta ?? null);
-            // Add newly recommended artists to history
             const newHistory = new Set(regenerationHistory);
             Object.keys(res.recommendations).forEach(artist => newHistory.add(artist));
             regenerationHistory = newHistory;
-            clearInterval(progressInterval);
-            isLoading.set(false);
+            await finishProgress();
         } catch (e) {
             error = e instanceof Error ? e.message : "Search failed";
-            clearInterval(progressInterval);
+            loadingProgress.set(0);
+            progressPhase.set('idle');
             isLoading.set(false);
         }
     }
@@ -362,7 +365,6 @@
         bind:selected
         bind:fineTune
         {artistTracks}
-        {loadingProgress}
         {error}
         {datasetStats}
         onsearch={search}

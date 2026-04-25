@@ -43,6 +43,8 @@ export const recommendations = writable<Recommendations>({});
 export const recommendationsMeta = writable<RecommendMeta | null>(null);
 export const artistsList = writable<string[]>([]);
 export const isLoading = writable(false);
+export const loadingProgress = writable<number>(0);
+export const progressPhase = writable<'idle' | 'active' | 'hiding'>('idle');
 export const hasResults = derived(recommendations, ($r) => Object.keys($r).length > 0);
 
 export const nowPlaying = writable<{ artist: string; trackId: string; trackName: string } | null>(null);

@@ -1,13 +1,13 @@
 {
-  "last_updated": "2026-02-04T23:26:54.591315",
+  "last_updated": "2026-03-26T23:24:18.992262",
   "last_operation": "full_process",
   "platform": "Windows",
-  "track_count": 782855,
-  "artist_count": 63067,
+  "track_count": 4094226,
+  "artist_count": 200000,
   "scaler_params": {
     "year": {
-      "min": 2000.0,
-      "max": 2023.0
+      "min": 1900.0,
+      "max": 2026.0
     },
     "key": {
       "min": 0.0,
@@ -23,11 +23,11 @@
     },
     "danceability": {
       "min": 0.0,
-      "max": 0.9929999709129333
+      "max": 1.0
     },
     "duration_ms": {
       "min": 2073.0,
-      "max": 6000495.0
+      "max": 8647601.0
     },
     "energy": {
       "min": 0.0,
@@ -42,8 +42,8 @@
       "max": 1.0
     },
     "loudness": {
-      "min": -58.099998474121094,
-      "max": 6.171999931335449
+      "min": -60.0,
+      "max": 7.234000205993652
     },
     "speechiness": {
       "min": 0.0,
@@ -61,5 +61,9 @@
       "min": 0.0,
       "max": 5.0
     }
-  }
+  },
+  "language_codebook": null,
+  "language_count": 52,
+  "serving_tracks_file": "tracks.parquet",
+  "serving_artists_file": "artists.parquet"
 }

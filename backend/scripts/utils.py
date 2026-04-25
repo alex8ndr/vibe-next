@@ -60,12 +60,12 @@ LASTFM_URL = "https://ws.audioscrobbler.com/2.0"
 # TheAudioDB: 30 req/min free tier → 2 sec minimum
 # Songlink: 10 req/min without API key → 6 sec minimum  
 # Deezer: 50 req/5sec → 0.1 sec minimum (generous at 0.2)
-# Last.fm: Undocumented but reasonable use → 0.3 sec
+# Last.fm: Undocumented but reasonable use → 0.5 sec (safe for sustained batch runs)
 # ReccoBeats: No documented limit → 0.2 sec
 RATE_LIMIT_AUDIODB = 2.0
 RATE_LIMIT_SONGLINK = 6.0
 RATE_LIMIT_DEEZER = 0.2
-RATE_LIMIT_LASTFM = 0.3
+RATE_LIMIT_LASTFM = 0.5
 RATE_LIMIT_RECCOBEATS = 0.2
 
 OUTPUT_PARQUET = ADDED_ARTISTS
@@ -679,6 +679,8 @@ def get_genre_from_audiodb(artist_name: str, session: Optional[requests.Session]
         return best_genre, genre, style
     except Exception:
         return None, None, None
+    finally:
+        time.sleep(RATE_LIMIT_AUDIODB)
 
 
 def _score_genre_match(tag_name: str, tag_count: int, max_count: int) -> Tuple[Optional[str], float]:

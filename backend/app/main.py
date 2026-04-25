@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter, deque
 import shutil
+import asyncio
+import queue
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -21,6 +23,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 
@@ -480,6 +483,105 @@ async def recommend(
         background_tasks.add_task(log_search_async, log_data)
     
     return RecommendResponse(recommendations=recs, meta=meta)
+
+
+@app.post("/recommend-stream")
+async def recommend_stream(
+    request: RecommendRequest,
+):
+    """Generate recommendations with SSE progress streaming."""
+    if not music_data:
+        raise HTTPException(status_code=503, detail="Data not loaded")
+    if not request.artists:
+        raise HTTPException(status_code=400, detail="At least one artist required")
+
+    valid_artists = [a for a in request.artists if music_data.get_artist_code(a) is not None]
+    if not valid_artists:
+        raise HTTPException(status_code=400, detail="No valid artists found")
+
+    valid_exclude = None
+    if request.exclude_artists:
+        valid_exclude = [a for a in request.exclude_artists if music_data.get_artist_code(a) is not None]
+
+    vibe_modifiers = {}
+    if request.vibe_mood != 0.0:
+        vibe_modifiers['mood'] = request.vibe_mood
+    if request.vibe_sound != 0.0:
+        vibe_modifiers['sound'] = request.vibe_sound
+
+    progress_queue: queue.Queue = queue.Queue()
+
+    def progress_cb(stage: str, stage_ms: int):
+        progress_queue.put(f"data: {json.dumps({'stage': stage, 'stage_ms': stage_ms})}\n\n")
+
+    def run_recommend():
+        return generate_recommendations(
+            data=music_data,
+            input_artists=valid_artists,
+            track_ids=request.track_ids,
+            exclude_artists=valid_exclude,
+            diversity=request.diversity,
+            max_artists=request.max_artists,
+            genre_weight=request.genre_weight,
+            language_weight=request.language_weight,
+            tracks_per_artist=request.tracks_per_artist,
+            vibe_modifiers=vibe_modifiers if vibe_modifiers else None,
+            popularity=request.popularity,
+            debug=request.debug,
+            debug_audio=request.debug_audio,
+            target_language=request.target_language,
+            target_genre=request.target_genre,
+            progress_callback=progress_cb,
+        )
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        task = loop.run_in_executor(None, run_recommend)
+
+        while not task.done():
+            try:
+                event = progress_queue.get_nowait()
+                yield event
+            except queue.Empty:
+                await asyncio.sleep(0.01)
+
+        # Drain remaining progress events
+        while not progress_queue.empty():
+            yield progress_queue.get_nowait()
+
+        recs, meta = task.result()
+
+        if should_log_search(request.client_id, request, valid_artists, valid_exclude):
+            log_data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "input_artists": valid_artists,
+                "track_ids": request.track_ids,
+                "exclude_artists": valid_exclude,
+                "settings": {
+                    "diversity": request.diversity,
+                    "max_artists": request.max_artists,
+                    "genre_weight": request.genre_weight,
+                    "language_weight": request.language_weight,
+                    "tracks_per_artist": request.tracks_per_artist,
+                    "vibe_mood": request.vibe_mood,
+                    "vibe_sound": request.vibe_sound,
+                    "popularity": request.popularity,
+                    "target_language": request.target_language,
+                    "target_genre": request.target_genre,
+                },
+                "results": {
+                    artist: [{"id": t["track_id"], "name": t["track_name"]} for t in tracks]
+                    for artist, tracks in recs.items()
+                },
+                "result_count": len(recs),
+                "client_id": request.client_id,
+            }
+            log_search_async(log_data)
+
+        response = RecommendResponse(recommendations=recs, meta=meta)
+        yield f"data: {json.dumps({'stage': 'done', **response.model_dump()})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/stats")

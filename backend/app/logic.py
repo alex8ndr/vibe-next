@@ -12,7 +12,7 @@ import unicodedata
 import numpy as np
 import polars as pl
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 from time import perf_counter
 
 FEATURE_WEIGHTS = {
@@ -1290,6 +1290,7 @@ def generate_recommendations(
     debug_audio: bool = False,
     target_language: str | None = None,
     target_genre: str | None = None,
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> tuple[dict[str, list[dict]], dict]:
     t_start = perf_counter()
     matrix_audio = data.matrix_audio
@@ -1305,6 +1306,8 @@ def generate_recommendations(
     
     grouped_seeds = get_seed_indices_grouped(data, input_artists, track_ids)
     t_seeds = perf_counter()
+    if progress_callback:
+        progress_callback("seeds", int(1000*(t_seeds-t_start)))
     
     if not grouped_seeds:
         return {}, {"has_more_candidates": False}
@@ -1498,6 +1501,8 @@ def generate_recommendations(
     store_per_seed = scan_buffer_bytes <= AUDIO_SCAN_SCRATCH_TARGET_MB * 1024 * 1024
 
     t_prep = perf_counter()
+    if progress_callback:
+        progress_callback("prep", int(1000*(t_prep-t_seeds)))
     fetch_k = min(OVERFETCH_BASE * overfetch_multiplier, n_scan_tracks)
     scan_block = 131072
 
@@ -1571,6 +1576,8 @@ def generate_recommendations(
     else:
         candidates = candidate_scan_indices[top_k_idx].astype(np.int32, copy=False)
     t_audio_scan = perf_counter()
+    if progress_callback:
+        progress_callback("audio", int(1000*(t_audio_scan-t_prep)))
     t_audio = t_audio_scan
 
     # Genre / language / popularity — deduplicate by unique artist codes.
@@ -1582,6 +1589,8 @@ def generate_recommendations(
     d_genre = d_genre_artist[:, artist_inv]
 
     t_genre = perf_counter()
+    if progress_callback:
+        progress_callback("genre", int(1000*(t_genre-t_audio)))
 
     # Combined distance per seed
     if effective_genre_weight > 0:
@@ -1601,6 +1610,8 @@ def generate_recommendations(
         d_lang = d_lang[artist_inv]
         d_total = np.sqrt(d_total**2 + (d_lang * effective_language_weight)**2)
     t_language = perf_counter()
+    if progress_callback:
+        progress_callback("lang", int(1000*(t_language-t_genre)))
     
     # Apply popularity and track count as distance adjustments
     if popularity != 0 and data.artist_popularity_by_code is not None:
@@ -1678,6 +1689,8 @@ def generate_recommendations(
     best_local = eligible_inv[best_order[:max_artists]]
 
     t_rank = perf_counter()
+    if progress_callback:
+        progress_callback("rank", int(1000*(t_rank-t_adjust)))
 
     artist_stats = []
     for local_inv in best_local:

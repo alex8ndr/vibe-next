@@ -8,6 +8,8 @@
         recommendations,
         recommendationsMeta,
         isLoading,
+        loadingProgress,
+        progressPhase,
         settings,
         knownArtists,
         favoriteTracks,
@@ -288,13 +290,16 @@
         <div class="btn-row">
             <button
                 class="btn-update"
+                data-phase={$progressPhase}
+                style:--progress={$loadingProgress / 100}
                 onclick={onsearch}
                 disabled={!selected.length || $isLoading}
             >
-                {$isLoading ? "Updating..." : "Update"}
+                <span class="btn-label">Update</span>
             </button>
             <button
                 class="btn-regenerate"
+                class:spinning={$isLoading}
                 onclick={onregenerate}
                 disabled={!canRegenerate || $isLoading || paramsChanged || hitArtistLimit}
                 title={hitArtistLimit || paramsChanged ? "Update search first" : canRegenerate ? "Regenerate with different artists" : "No more alternatives available"}
