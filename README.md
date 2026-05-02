@@ -25,9 +25,9 @@
 Vibe is a full-stack music recommendation app that helps you discover artists and tracks similar to what you already like.
 
 As someone who listens to a lot of music, I am always looking to discover new artists.
-While platforms like Spotify and YouTube Music already have recommendation algorithms, I wanted something that felt more intentional. Something similar to the experience of walking through a bookstore and picking out books, but for music. Existing recommendation algorithms are also generally biased toward popular established artists.
+While platforms like Spotify and YouTube Music already have recommendation algorithms, I wanted something that felt more intentional. Something similar to the experience of walking through a bookstore and picking out books, but for music, without the hidden workings and biases of existing recommendation algorithms.
 
-The website is designed to make it easy to discover new artists while streamlining the discovery and listening process. Before creating Vibe, I tried other music recommendation websites and found they usually fell into two types. Some recommended artists similar to ones I already knew, but did not recommend any songs from them, so I still had to do the work myself. Others recommended specific songs, but without enough artist context. I wanted one flow where I could get multiple song recommendations for multiple artists and listen to those songs from the same page.
+The website is designed to make it easy to discover new artists while streamlining the discovery and listening process. Before creating Vibe, I tried other music recommendation websites and found they usually fell into two types. Some recommended artists similar to ones I already knew, but did not recommend any songs from them, so I still had to do the work to find and listen to them myself. Others recommended specific songs, but without enough artist context. I wanted one flow where I could get multiple song recommendations for multiple artists and listen to those songs all from the same page.
 
 ## Features
 
