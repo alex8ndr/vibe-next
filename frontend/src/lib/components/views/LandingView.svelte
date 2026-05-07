@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { tick } from "svelte";
     import ArtistSelect from "$lib/components/ArtistSelect.svelte";
     import UserLibrary from "$lib/components/UserLibrary.svelte";
     import VibeControls from "$lib/components/VibeControls.svelte";
@@ -8,6 +7,7 @@
         LANDING_EXAMPLES,
         LANDING_EXAMPLE_DEFAULTS,
         type LandingExample,
+        type LandingExampleSearchRequest,
     } from "$lib/landingExamples";
     import {
         settings,
@@ -39,7 +39,7 @@
         artistTracks: Record<string, Track[]>;
         error: string | null;
         datasetStats?: { track_count: number; artist_count: number } | null;
-        onsearch: () => void | Promise<void>;
+        onsearch: (request?: LandingExampleSearchRequest) => void | Promise<void>;
         onplay: (track: FavoriteTrack) => void;
     }>();
 
@@ -55,6 +55,7 @@
     let heroExpandedArtist = $state<string | null>(null);
     let songSearch = $state("");
     let exampleTracks = $state<Record<string, Track[]>>({});
+    let previousSelectedKey = $state("");
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -63,12 +64,27 @@
     );
 
     $effect(() => {
-        if (heroExpandedArtist && !selected.includes(heroExpandedArtist)) {
+        const nextSelectedKey = selected.join("\u0000");
+        const selectionChanged = nextSelectedKey !== previousSelectedKey;
+        const hadSelection = previousSelectedKey.length > 0;
+
+        if (!selectionChanged) {
+            return;
+        }
+
+        previousSelectedKey = nextSelectedKey;
+
+        if (selected.length === 0) {
             heroExpandedArtist = null;
+            songSearch = "";
+            return;
+        }
+
+        if (!hadSelection || !heroExpandedArtist || !selected.includes(heroExpandedArtist)) {
+            heroExpandedArtist = selected[0];
             songSearch = "";
         }
     });
-
 
     // Actions
     function toggleHeroExpanded(artist: string) {
@@ -151,17 +167,16 @@
     }
 
     async function applyExampleAndSearch(example: LandingExample) {
-        selected = [...example.artists];
-        fineTune = await resolveExampleFineTune(example);
-        heroExpandedArtist = null;
-        songSearch = "";
-        settings.update((current) => ({
-            ...current,
-            ...LANDING_EXAMPLE_DEFAULTS,
-            ...example.settings,
-        }));
-        await tick();
-        await onsearch();
+        const exampleSearchRequest: LandingExampleSearchRequest = {
+            artists: [...example.artists],
+            fineTune: await resolveExampleFineTune(example),
+            settings: {
+                ...LANDING_EXAMPLE_DEFAULTS,
+                ...example.settings,
+            },
+        };
+
+        await onsearch(exampleSearchRequest);
     }
 </script>
 
@@ -192,7 +207,7 @@
                 class="btn-go"
                 data-phase={$progressPhase}
                 style:--progress={$loadingProgress / 100}
-                onclick={onsearch}
+                onclick={() => onsearch()}
                 disabled={!selected.length || $isLoading}
             >
                 <span class="btn-label">Search</span>

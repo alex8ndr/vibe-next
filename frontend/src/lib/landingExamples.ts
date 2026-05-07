@@ -23,6 +23,12 @@ export interface LandingExample {
     settings?: LandingExampleSettings;
 }
 
+export interface LandingExampleSearchRequest {
+    artists: string[];
+    fineTune: Record<string, string[]>;
+    settings?: LandingExampleSettings;
+}
+
 export const LANDING_EXAMPLE_DEFAULTS: LandingExampleSettings = {
     variety: 0,
     genreWeight: 2,

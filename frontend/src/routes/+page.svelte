@@ -3,6 +3,7 @@
     import LandingView from "$lib/components/views/LandingView.svelte";
     import ResultsView from "$lib/components/views/ResultsView.svelte";
     import FeedbackForm from "$lib/components/FeedbackForm.svelte";
+    import type { LandingExampleSearchRequest } from "$lib/landingExamples";
     import {
         fetchArtists,
         fetchRecommendationsStream,
@@ -108,40 +109,72 @@
         selected.forEach(loadTracks);
     });
 
-    async function search() {
-        if (!selected.length) return;
+    function applyLandingSearchRequest(request: LandingExampleSearchRequest) {
+        selected = [...request.artists];
+        fineTune = { ...request.fineTune };
+
+        if (request.settings) {
+            settings.update((current) => ({
+                ...current,
+                ...request.settings,
+            }));
+        }
+    }
+
+    async function search(request?: LandingExampleSearchRequest) {
+        const searchArtists = request?.artists ?? selected;
+        const searchFineTune = request?.fineTune ?? fineTune;
+        const searchSettings = request?.settings
+            ? { ...$settings, ...request.settings }
+            : $settings;
+
+        if (!searchArtists.length) return;
         error = null;
         beginProgress();
 
-        const trackIds = selected.flatMap((a) => fineTune[a] || []);
+        const trackIds = searchArtists.flatMap((artist) => searchFineTune[artist] || []);
 
         try {
             regenerationHistory = new Set();
             const res = await fetchRecommendationsStream({
-                artists: selected,
+                artists: searchArtists,
                 track_ids: trackIds.length ? trackIds : undefined,
                 exclude_artists: $knownArtists.length
                     ? $knownArtists
                     : undefined,
-                diversity: $settings.variety,
-                max_artists: $settings.maxResults,
-                genre_weight: $settings.genreWeight,
-                tracks_per_artist: $settings.tracksPerArtist,
-                vibe_mood: $settings.vibeMood,
-                vibe_sound: $settings.vibeSound,
-                popularity: $settings.popularity,
+                diversity: searchSettings.variety,
+                max_artists: searchSettings.maxResults,
+                genre_weight: searchSettings.genreWeight,
+                tracks_per_artist: searchSettings.tracksPerArtist,
+                vibe_mood: searchSettings.vibeMood,
+                vibe_sound: searchSettings.vibeSound,
+                popularity: searchSettings.popularity,
                 debug: $devSettings.debugMode,
-                debug_audio: $settings.showAudioFeatures,
+                debug_audio: searchSettings.showAudioFeatures,
                 client_id: clientId,
-                target_language: $settings.targetLanguage !== 'match' ? $settings.targetLanguage : undefined,
-                target_genre: $settings.targetGenre !== 'match' ? $settings.targetGenre : undefined,
+                target_language: searchSettings.targetLanguage !== 'match' ? searchSettings.targetLanguage : undefined,
+                target_genre: searchSettings.targetGenre !== 'match' ? searchSettings.targetGenre : undefined,
             }, (progress) => loadingProgress.set(progress));
+
+            if (request) {
+                applyLandingSearchRequest(request);
+            }
+
             recommendations.set(res.recommendations);
             recommendationsMeta.set(res.meta ?? null);
             Object.keys(res.recommendations).forEach(artist => regenerationHistory.add(artist));
-            lastSearchParams = JSON.stringify({ selected, fineTune, targetLanguage: $settings.targetLanguage, targetGenre: $settings.targetGenre });
+            lastSearchParams = JSON.stringify({
+                selected: searchArtists,
+                fineTune: searchFineTune,
+                targetLanguage: searchSettings.targetLanguage,
+                targetGenre: searchSettings.targetGenre,
+            });
             await finishProgress();
         } catch (e) {
+            if (request) {
+                applyLandingSearchRequest(request);
+            }
+
             error = e instanceof Error ? e.message : "Search failed";
             loadingProgress.set(0);
             progressPhase.set('idle');
