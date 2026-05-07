@@ -1,7 +1,14 @@
 <script lang="ts">
+    import { tick } from "svelte";
     import ArtistSelect from "$lib/components/ArtistSelect.svelte";
     import UserLibrary from "$lib/components/UserLibrary.svelte";
     import VibeControls from "$lib/components/VibeControls.svelte";
+    import { fetchArtistTracks } from "$lib/api";
+    import {
+        LANDING_EXAMPLES,
+        LANDING_EXAMPLE_DEFAULTS,
+        type LandingExample,
+    } from "$lib/landingExamples";
     import {
         settings,
         isLoading,
@@ -32,7 +39,7 @@
         artistTracks: Record<string, Track[]>;
         error: string | null;
         datasetStats?: { track_count: number; artist_count: number } | null;
-        onsearch: () => void;
+        onsearch: () => void | Promise<void>;
         onplay: (track: FavoriteTrack) => void;
     }>();
 
@@ -47,6 +54,7 @@
     let showVibePanel = $state(false);
     let heroExpandedArtist = $state<string | null>(null);
     let songSearch = $state("");
+    let exampleTracks = $state<Record<string, Track[]>>({});
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -85,6 +93,75 @@
         return (
             (fineTune[artist]?.length || 0) >= LIMITS.MAX_INPUT_SONGS_PER_ARTIST
         );
+    }
+
+    function normalizeTrackName(name: string): string {
+        return name.trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    async function getExampleTracks(artist: string): Promise<Track[]> {
+        if (exampleTracks[artist]) {
+            return exampleTracks[artist];
+        }
+
+        const tracks = await fetchArtistTracks(artist);
+        exampleTracks = { ...exampleTracks, [artist]: tracks };
+        return tracks;
+    }
+
+    async function resolveExampleFineTune(
+        example: LandingExample,
+    ): Promise<Record<string, string[]>> {
+        if (!example.songs) {
+            return {};
+        }
+
+        const fineTuneFromSongs: Record<string, string[]> = {};
+
+        for (const [artist, songNames] of Object.entries(example.songs)) {
+            if (!songNames.length) {
+                continue;
+            }
+
+            try {
+                const tracks = await getExampleTracks(artist);
+                const byName = new Map(
+                    tracks.map((track) => [normalizeTrackName(track.track_name), track.track_id]),
+                );
+                const resolvedTrackIds = songNames
+                    .map((songName) => byName.get(normalizeTrackName(songName)))
+                    .filter((trackId): trackId is string => Boolean(trackId));
+
+                if (resolvedTrackIds.length) {
+                    fineTuneFromSongs[artist] = resolvedTrackIds;
+                }
+            } catch {
+                // Ignore missing preset songs for landing examples and fall back to artist-only seeds.
+            }
+        }
+
+        return fineTuneFromSongs;
+    }
+
+    function getExampleSongCount(example: LandingExample): number {
+        return Object.values(example.songs || {}).reduce(
+            (total, songs) => total + songs.length,
+            0,
+        );
+    }
+
+    async function applyExampleAndSearch(example: LandingExample) {
+        selected = [...example.artists];
+        fineTune = await resolveExampleFineTune(example);
+        heroExpandedArtist = null;
+        songSearch = "";
+        settings.update((current) => ({
+            ...current,
+            ...LANDING_EXAMPLE_DEFAULTS,
+            ...example.settings,
+        }));
+        await tick();
+        await onsearch();
     }
 </script>
 
@@ -128,8 +205,41 @@
             </p>
         {/if}
 
-        {#if selected.length > 0}
-            <div class="fine-section">
+        <div class="fine-section">
+            {#if selected.length === 0}
+                <div class="example-heading">
+                    <span class="fine-label">Click to try an example:</span>
+                </div>
+
+                <div class="example-grid">
+                    {#each LANDING_EXAMPLES as example (example.id)}
+                        <button
+                            class="example-card"
+                            onclick={() => applyExampleAndSearch(example)}
+                            title={`Search ${example.artists.join(", ")}`}
+                            disabled={$isLoading}
+                        >
+                            <div class="example-card-top">
+                                <span class="example-count"
+                                    >{example.artists.length} {example.artists.length ===
+                                    1
+                                        ? "seed"
+                                        : "seeds"}</span
+                                >
+                                {#if getExampleSongCount(example) > 0}
+                                    <span class="example-song-badge"
+                                        >+{getExampleSongCount(example)} songs</span
+                                    >
+                                {/if}
+                            </div>
+                            <span class="example-artists"
+                                >{example.artists.join(" + ")}</span
+                            >
+                            <span class="example-lane">{example.lane}</span>
+                        </button>
+                    {/each}
+                </div>
+            {:else}
                 <div class="fine-row">
                     <span class="fine-label">Fine-tune:</span>
                     {#each selected as artist (artist)}
@@ -199,8 +309,8 @@
                         {/if}
                     </div>
                 {/if}
-            </div>
-        {/if}
+            {/if}
+        </div>
 
         {#if error}
             <p class="error">{error}</p>
