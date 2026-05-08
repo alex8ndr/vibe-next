@@ -265,11 +265,12 @@
         }
 
         .list {
-            position: fixed;
-            left: 1rem;
-            right: 1rem;
-            top: auto;
-            bottom: 50%;
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 100%;
+            bottom: auto;
+            margin-top: 4px;
             max-height: 40vh;
             border-radius: 12px;
             z-index: 9999;

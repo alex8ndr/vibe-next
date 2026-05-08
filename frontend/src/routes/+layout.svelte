@@ -230,7 +230,10 @@
 
 <style>
 	.app {
+		height: 100vh;
 		min-height: 100vh;
+		height: 100dvh;
+		min-height: 100dvh;
 		display: flex;
 		flex-direction: column;
 	}
@@ -410,8 +413,10 @@
 
 	.main {
 		flex: 1;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
+		overflow: hidden;
 	}
 
 	@media (max-width: 640px) {

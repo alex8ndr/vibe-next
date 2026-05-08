@@ -226,33 +226,35 @@
                     <span class="fine-label">Click to try an example:</span>
                 </div>
 
-                <div class="example-grid">
-                    {#each LANDING_EXAMPLES as example (example.id)}
-                        <button
-                            class="example-card"
-                            onclick={() => applyExampleAndSearch(example)}
-                            title={`Search ${example.artists.join(", ")}`}
-                            disabled={$isLoading}
-                        >
-                            <div class="example-card-top">
-                                <span class="example-count"
-                                    >{example.artists.length} {example.artists.length ===
-                                    1
-                                        ? "seed"
-                                        : "seeds"}</span
-                                >
-                                {#if getExampleSongCount(example) > 0}
-                                    <span class="example-song-badge"
-                                        >+{getExampleSongCount(example)} songs</span
-                                    >
-                                {/if}
-                            </div>
-                            <span class="example-artists"
-                                >{example.artists.join(" + ")}</span
+                <div class="example-list">
+                    <div class="example-grid">
+                        {#each LANDING_EXAMPLES as example (example.id)}
+                            <button
+                                class="example-card"
+                                onclick={() => applyExampleAndSearch(example)}
+                                title={`Search ${example.artists.join(", ")}`}
+                                disabled={$isLoading}
                             >
-                            <span class="example-lane">{example.lane}</span>
-                        </button>
-                    {/each}
+                                <div class="example-card-top">
+                                    <span class="example-count"
+                                        >{example.artists.length} {example.artists.length ===
+                                        1
+                                            ? "seed"
+                                            : "seeds"}</span
+                                    >
+                                    {#if getExampleSongCount(example) > 0}
+                                        <span class="example-song-badge"
+                                            >+{getExampleSongCount(example)} songs</span
+                                        >
+                                    {/if}
+                                </div>
+                                <span class="example-artists"
+                                    >{example.artists.join(" + ")}</span
+                                >
+                                <span class="example-lane">{example.lane}</span>
+                            </button>
+                        {/each}
+                    </div>
                 </div>
             {:else}
                 <div class="fine-row">
@@ -331,6 +333,14 @@
             <p class="error">{error}</p>
         {/if}
 
+        {#if datasetStats}
+            <div class="dataset-stats dataset-stats-mobile">
+                <span>🎵 {formatStat(datasetStats.track_count)} songs</span>
+                <span class="stats-sep">·</span>
+                <span>🎤 {formatStat(datasetStats.artist_count)} artists</span>
+            </div>
+        {/if}
+
         {#if isReturningUser}
             <button
                 class="landing-vibe-toggle"
@@ -378,8 +388,9 @@
         {/if}
 
     </div>
+
     {#if datasetStats}
-        <div class="dataset-stats">
+        <div class="dataset-stats dataset-stats-desktop">
             <span>🎵 {formatStat(datasetStats.track_count)} songs</span>
             <span class="stats-sep">·</span>
             <span>🎤 {formatStat(datasetStats.artist_count)} artists</span>
@@ -389,10 +400,6 @@
 
 <style>
     .dataset-stats {
-        position: absolute;
-        bottom: 1.5rem;
-        left: 0;
-        right: 0;
         font-size: 0.75rem;
         color: var(--text-3);
         text-align: center;
@@ -403,7 +410,30 @@
         opacity: 0.7;
     }
 
+    .dataset-stats-desktop {
+        position: absolute;
+        bottom: 1.5rem;
+        left: 0;
+        right: 0;
+    }
+
+    .dataset-stats-mobile {
+        display: none;
+        margin-top: auto;
+        padding-top: 1rem;
+    }
+
     .stats-sep {
         opacity: 0.5;
+    }
+
+    @media (max-width: 768px) {
+        .dataset-stats-desktop {
+            display: none;
+        }
+
+        .dataset-stats-mobile {
+            display: flex;
+        }
     }
 </style>
