@@ -121,11 +121,18 @@
         }
     }
 
+    function isLandingSearchRequest(
+        request: LandingExampleSearchRequest | undefined,
+    ): request is LandingExampleSearchRequest {
+        return Array.isArray(request?.artists);
+    }
+
     async function search(request?: LandingExampleSearchRequest) {
-        const searchArtists = request?.artists ?? selected;
-        const searchFineTune = request?.fineTune ?? fineTune;
-        const searchSettings = request?.settings
-            ? { ...$settings, ...request.settings }
+        const landingRequest = isLandingSearchRequest(request) ? request : undefined;
+        const searchArtists = landingRequest?.artists ?? selected;
+        const searchFineTune = landingRequest?.fineTune ?? fineTune;
+        const searchSettings = landingRequest?.settings
+            ? { ...$settings, ...landingRequest.settings }
             : $settings;
 
         if (!searchArtists.length) return;
@@ -156,8 +163,8 @@
                 target_genre: searchSettings.targetGenre !== 'match' ? searchSettings.targetGenre : undefined,
             }, (progress) => loadingProgress.set(progress));
 
-            if (request) {
-                applyLandingSearchRequest(request);
+            if (landingRequest) {
+                applyLandingSearchRequest(landingRequest);
             }
 
             recommendations.set(res.recommendations);
@@ -171,8 +178,8 @@
             });
             await finishProgress();
         } catch (e) {
-            if (request) {
-                applyLandingSearchRequest(request);
+            if (landingRequest) {
+                applyLandingSearchRequest(landingRequest);
             }
 
             error = e instanceof Error ? e.message : "Search failed";

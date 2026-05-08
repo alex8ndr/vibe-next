@@ -236,22 +236,24 @@
                                 disabled={$isLoading}
                             >
                                 <div class="example-card-top">
-                                    <span class="example-count"
-                                        >{example.artists.length} {example.artists.length ===
+                                    <span class="example-count">
+                                        {example.artists.length} {example.artists.length ===
                                         1
                                             ? "seed"
-                                            : "seeds"}</span
-                                    >
-                                    {#if getExampleSongCount(example) > 0}
-                                        <span class="example-song-badge"
-                                            >+{getExampleSongCount(example)} songs</span
-                                        >
-                                    {/if}
+                                            : "seeds"}
+                                        {#if getExampleSongCount(example) > 0}
+                                            <span class="example-song-badge"
+                                                >+{getExampleSongCount(example)} songs</span
+                                            >
+                                        {/if}
+                                    </span>
+                                    <span class="example-lane">{example.lane}</span>
                                 </div>
-                                <span class="example-artists"
-                                    >{example.artists.join(" + ")}</span
-                                >
-                                <span class="example-lane">{example.lane}</span>
+                                <div class="example-artists">
+                                    {#each example.artists as artist (artist)}
+                                        <span class="example-artist-line">{artist}</span>
+                                    {/each}
+                                </div>
                             </button>
                         {/each}
                     </div>
