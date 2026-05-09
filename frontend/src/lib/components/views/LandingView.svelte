@@ -220,7 +220,7 @@
             </p>
         {/if}
 
-        <div class="fine-section">
+        <div class="fine-section" class:selected={selected.length > 0}>
             {#if selected.length === 0}
                 <div class="example-heading">
                     <span class="fine-label">Click to try an example:</span>

@@ -329,6 +329,13 @@
     text-align: center;
 }
 
+.fine-section.selected {
+    width: 100%;
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .fine-row {
     display: flex;
     flex-wrap: wrap;
@@ -477,6 +484,11 @@
     max-width: 450px;
     margin-left: auto;
     margin-right: auto;
+}
+
+.fine-section.selected .songs-box {
+    max-width: none;
+    width: 100%;
 }
 
 .songs-header {
