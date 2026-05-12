@@ -368,6 +368,8 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.55rem;
     text-align: left;
+    max-width: 900px;
+    margin: 0 auto;
 }
 
 .example-card {
@@ -437,6 +439,18 @@
     font-size: 0.8rem;
     font-weight: 600;
     line-height: 1.16;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.example-song-line {
+    display: block;
+    margin-top: -0.02rem;
+    font-size: 0.68rem;
+    font-weight: 500;
+    line-height: 1.18;
+    color: var(--text-3);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

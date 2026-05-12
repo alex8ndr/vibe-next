@@ -4,7 +4,7 @@
     import VibeControls from "$lib/components/VibeControls.svelte";
     import { fetchArtistTracks } from "$lib/api";
     import {
-        LANDING_EXAMPLES,
+        LANDING_VISIBLE_EXAMPLES,
         LANDING_EXAMPLE_DEFAULTS,
         type LandingExample,
         type LandingExampleSearchRequest,
@@ -228,7 +228,7 @@
 
                 <div class="example-list">
                     <div class="example-grid">
-                        {#each LANDING_EXAMPLES as example (example.id)}
+                        {#each LANDING_VISIBLE_EXAMPLES as example (example.id)}
                             <button
                                 class="example-card"
                                 onclick={() => applyExampleAndSearch(example)}
@@ -239,11 +239,12 @@
                                     <span class="example-count">
                                         {example.artists.length} {example.artists.length ===
                                         1
-                                            ? "seed"
-                                            : "seeds"}
+                                            ? "artist"
+                                            : "artists"}
                                         {#if getExampleSongCount(example) > 0}
+                                            {@const songCount = getExampleSongCount(example)}
                                             <span class="example-song-badge"
-                                                >+{getExampleSongCount(example)} songs</span
+                                                >+{songCount} {songCount === 1 ? "song" : "songs"}</span
                                             >
                                         {/if}
                                     </span>
@@ -251,7 +252,11 @@
                                 </div>
                                 <div class="example-artists">
                                     {#each example.artists as artist (artist)}
+                                        {@const songs = example.songs?.[artist] || []}
                                         <span class="example-artist-line">{artist}</span>
+                                        {#if songs.length}
+                                            <span class="example-song-line">{songs.join(", ")}</span>
+                                        {/if}
                                     {/each}
                                 </div>
                             </button>

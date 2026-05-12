@@ -21,6 +21,7 @@ export interface LandingExample {
     lane: string;
     songs?: Record<string, string[]>;
     settings?: LandingExampleSettings;
+    hidden?: boolean;
 }
 
 export interface LandingExampleSearchRequest {
@@ -43,14 +44,14 @@ export const LANDING_EXAMPLE_DEFAULTS: LandingExampleSettings = {
 
 export const LANDING_EXAMPLES: LandingExample[] = [
     {
-        id: "foster-the-people",
-        artists: ["Foster The People"],
-        lane: "Bright indie-pop",
+        id: "lana-del-rey",
+        artists: ["Lana Del Rey"],
+        lane: "Alt-pop",
     },
     {
-        id: "anitta",
-        artists: ["Anitta"],
-        lane: "Brazilian funk-pop",
+        id: "frank-ocean",
+        artists: ["Frank Ocean"],
+        lane: "Alt-R&B",
     },
     {
         id: "paramore",
@@ -58,9 +59,26 @@ export const LANDING_EXAMPLES: LandingExample[] = [
         lane: "Emo / pop-punk",
     },
     {
-        id: "lana-del-rey",
-        artists: ["Lana Del Rey"],
-        lane: "Alt-pop",
+        id: "anitta",
+        artists: ["Anitta"],
+        lane: "Brazilian pop",
+    },
+    {
+        id: "billie-eilish-ilomilo",
+        artists: ["Billie Eilish"],
+        lane: "Bedroom pop",
+        songs: { "Billie Eilish": ["ilomilo"] },
+    },
+    {
+        id: "newjeans-omg",
+        artists: ["NewJeans"],
+        lane: "K-pop",
+        songs: { NewJeans: ["OMG"] },
+    },
+    {
+        id: "kavinsky-the-midnight",
+        artists: ["Kavinsky", "The Midnight"],
+        lane: "Synthwave",
     },
     {
         id: "bad-bunny-feid",
@@ -68,38 +86,71 @@ export const LANDING_EXAMPLES: LandingExample[] = [
         lane: "Latin urbano",
     },
     {
-        id: "arctic-monkeys-strokes",
-        artists: ["Arctic Monkeys", "The Strokes"],
-        lane: "Indie / garage rock",
-    },
-    {
-        id: "parcels-roosevelt",
-        artists: ["Parcels", "Roosevelt"],
-        lane: "Nu-disco / synth-pop",
-    },
-    {
         id: "marias-men-i-trust",
         artists: ["The Marías", "Men I Trust"],
         lane: "Dreamy indie-pop",
     },
     {
-        id: "newjeans-lesserafim-aespa",
-        artists: ["NewJeans", "LE SSERAFIM", "aespa"],
-        lane: "K-pop",
+        id: "parcels-roosevelt",
+        artists: ["Parcels", "Roosevelt"],
+        lane: "Nu-disco",
+    },
+    {
+        id: "tyler-childers-zach-bryan",
+        artists: ["Tyler Childers", "Zach Bryan"],
+        lane: "Americana",
+    },
+    {
+        id: "orelsan-pnl",
+        artists: ["Orelsan", "PNL"],
+        lane: "French rap",
+    },
+
+    // Bench
+    {
+        id: "arctic-monkeys-strokes",
+        artists: ["Arctic Monkeys", "The Strokes"],
+        lane: "Indie rock",
+        hidden: true,
     },
     {
         id: "yoasobi-aimer-hikaru-utada",
         artists: ["YOASOBI", "Aimer", "Hikaru Utada"],
         lane: "J-pop",
+        hidden: true,
     },
     {
         id: "phoebe-mitski-clairo",
         artists: ["Phoebe Bridgers", "Mitski", "Clairo"],
         lane: "Confessional indie-pop",
+        hidden: true,
     },
     {
-        id: "peso-pluma-fuerza-regida-chino-pacas",
-        artists: ["Peso Pluma", "Fuerza Regida", "Chino Pacas"],
-        lane: "Corridos",
+        id: "burna-boy-wizkid",
+        artists: ["Burna Boy", "Wizkid"],
+        lane: "Afrobeats",
+        hidden: true,
+    },
+    {
+        id: "spiritbox",
+        artists: ["Spiritbox"],
+        lane: "Metalcore",
+        hidden: true,
+    },
+    {
+        id: "polo-and-pan",
+        artists: ["Polo & Pan"],
+        lane: "French electro-pop",
+        hidden: true,
+    },
+    {
+        id: "clara-luciani-pomme",
+        artists: ["Clara Luciani", "Pomme"],
+        lane: "French pop",
+        hidden: true,
     },
 ];
+
+export const LANDING_VISIBLE_EXAMPLES = LANDING_EXAMPLES.filter(
+    (example) => !example.hidden,
+);
