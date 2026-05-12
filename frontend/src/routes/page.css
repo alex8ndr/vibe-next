@@ -90,6 +90,9 @@
     border-radius: 8px;
     white-space: nowrap;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    z-index: 1;
 }
 
 .btn-go:hover:not(:disabled) {
@@ -104,21 +107,26 @@
 .btn-go::after {
     content: '';
     position: absolute;
-    inset: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        color-mix(in srgb, var(--gold), white 30%) 100%
-    );
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: rgba(0, 0, 0, 0.4);
     transform-origin: left;
     transform: scaleX(var(--progress, 0));
     pointer-events: none;
     opacity: 0;
+    z-index: 2;
 }
 
 .btn-go[data-phase="active"]::after {
     opacity: 1;
     transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-go .btn-label {
+    position: relative;
+    z-index: 3;
 }
 
 .btn-go[data-phase="hiding"]::after {
@@ -732,26 +740,32 @@
     border-radius: 6px;
     position: relative;
     overflow: hidden;
+    z-index: 1;
 }
 
 .btn-update::after {
     content: '';
     position: absolute;
-    inset: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        color-mix(in srgb, var(--gold), white 30%) 100%
-    );
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: rgba(0, 0, 0, 0.35);
     transform-origin: left;
     transform: scaleX(var(--progress, 0));
     pointer-events: none;
     opacity: 0;
+    z-index: 2;
 }
 
 .btn-update[data-phase="active"]::after {
     opacity: 1;
     transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-update .btn-label {
+    position: relative;
+    z-index: 3;
 }
 
 .btn-update[data-phase="hiding"]::after {

@@ -210,7 +210,7 @@
                 onclick={() => onsearch()}
                 disabled={!selected.length || $isLoading}
             >
-                <span class="btn-label">Search</span>
+                <span class="btn-label">Discover</span>
             </button>
         </div>
 
