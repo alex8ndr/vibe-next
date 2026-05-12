@@ -56,6 +56,7 @@
     let songSearch = $state("");
     let exampleTracks = $state<Record<string, Track[]>>({});
     let previousSelectedKey = $state("");
+    let exampleSearchInFlight = $state(false);
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -167,16 +168,22 @@
     }
 
     async function applyExampleAndSearch(example: LandingExample) {
-        const exampleSearchRequest: LandingExampleSearchRequest = {
-            artists: [...example.artists],
-            fineTune: await resolveExampleFineTune(example),
-            settings: {
-                ...LANDING_EXAMPLE_DEFAULTS,
-                ...example.settings,
-            },
-        };
+        if (exampleSearchInFlight) return;
+        exampleSearchInFlight = true;
+        try {
+            const exampleSearchRequest: LandingExampleSearchRequest = {
+                artists: [...example.artists],
+                fineTune: await resolveExampleFineTune(example),
+                settings: {
+                    ...LANDING_EXAMPLE_DEFAULTS,
+                    ...example.settings,
+                },
+            };
 
-        await onsearch(exampleSearchRequest);
+            await onsearch(exampleSearchRequest);
+        } finally {
+            exampleSearchInFlight = false;
+        }
     }
 </script>
 
@@ -233,7 +240,7 @@
                                 class="example-card"
                                 onclick={() => applyExampleAndSearch(example)}
                                 title={`Search ${example.artists.join(", ")}`}
-                                disabled={$isLoading}
+                                disabled={$isLoading || exampleSearchInFlight}
                             >
                                 <div class="example-card-top">
                                     <span class="example-count">

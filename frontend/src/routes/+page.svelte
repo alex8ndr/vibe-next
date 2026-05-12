@@ -124,7 +124,11 @@
     function isLandingSearchRequest(
         request: LandingExampleSearchRequest | undefined,
     ): request is LandingExampleSearchRequest {
-        return Array.isArray(request?.artists);
+        return (
+            Array.isArray(request?.artists) &&
+            typeof request?.fineTune === "object" &&
+            request?.fineTune !== null
+        );
     }
 
     async function search(request?: LandingExampleSearchRequest) {
