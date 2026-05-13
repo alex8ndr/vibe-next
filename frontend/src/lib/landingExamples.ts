@@ -21,6 +21,7 @@ export interface LandingExample {
     lane: string;
     songs?: Record<string, string[]>;
     settings?: LandingExampleSettings;
+    wide?: boolean;
     hidden?: boolean;
 }
 
@@ -86,9 +87,10 @@ export const LANDING_EXAMPLES: LandingExample[] = [
         lane: "Latin urbano",
     },
     {
-        id: "marias-men-i-trust",
-        artists: ["The Marías", "Men I Trust"],
-        lane: "Dreamy indie-pop",
+        id: "far-caspian",
+        artists: ["Far Caspian"],
+        lane: "Dream-pop",
+        songs: { "Far Caspian": ["Blue", "Autofiction", "Finding My Way Home"] },
     },
     {
         id: "parcels-roosevelt",
@@ -98,12 +100,24 @@ export const LANDING_EXAMPLES: LandingExample[] = [
     {
         id: "tyler-childers-zach-bryan",
         artists: ["Tyler Childers", "Zach Bryan"],
-        lane: "Americana",
+        lane: "Country",
     },
     {
         id: "orelsan-pnl",
         artists: ["Orelsan", "PNL"],
         lane: "French rap",
+    },
+    {
+        id: "modern-alt-bundle",
+        artists: ["Valley", "Hippo Campus", "Wallows", "COIN", "Dayglow"],
+        lane: "Modern Indie",
+        wide: true,
+    },
+    {
+        id: "boiler-room-bundle",
+        artists: ["Fred again..", "Jamie xx", "Bicep", "Barry Can't Swim"],
+        lane: "House",
+        wide: true,
     },
 
     // Bench
@@ -111,18 +125,6 @@ export const LANDING_EXAMPLES: LandingExample[] = [
         id: "arctic-monkeys-strokes",
         artists: ["Arctic Monkeys", "The Strokes"],
         lane: "Indie rock",
-        hidden: true,
-    },
-    {
-        id: "yoasobi-aimer-hikaru-utada",
-        artists: ["YOASOBI", "Aimer", "Hikaru Utada"],
-        lane: "J-pop",
-        hidden: true,
-    },
-    {
-        id: "phoebe-mitski-clairo",
-        artists: ["Phoebe Bridgers", "Mitski", "Clairo"],
-        lane: "Confessional indie-pop",
         hidden: true,
     },
     {

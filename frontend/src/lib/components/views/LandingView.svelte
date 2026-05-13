@@ -238,6 +238,7 @@
                         {#each LANDING_VISIBLE_EXAMPLES as example (example.id)}
                             <button
                                 class="example-card"
+                                class:wide={example.wide}
                                 onclick={() => applyExampleAndSearch(example)}
                                 title={`Search ${example.artists.join(", ")}`}
                                 disabled={$isLoading || exampleSearchInFlight}
@@ -258,13 +259,17 @@
                                     <span class="example-lane">{example.lane}</span>
                                 </div>
                                 <div class="example-artists">
-                                    {#each example.artists as artist (artist)}
-                                        {@const songs = example.songs?.[artist] || []}
-                                        <span class="example-artist-line">{artist}</span>
-                                        {#if songs.length}
-                                            <span class="example-song-line">{songs.join(", ")}</span>
-                                        {/if}
-                                    {/each}
+                                    {#if example.wide}
+                                        <span class="example-artist-line">{example.artists.join(", ")}</span>
+                                    {:else}
+                                        {#each example.artists as artist (artist)}
+                                            {@const songs = example.songs?.[artist] || []}
+                                            <span class="example-artist-line">{artist}</span>
+                                            {#if songs.length}
+                                                <span class="example-song-line">{songs.join(", ")}</span>
+                                            {/if}
+                                        {/each}
+                                    {/if}
                                 </div>
                             </button>
                         {/each}
