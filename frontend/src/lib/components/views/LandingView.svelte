@@ -2,6 +2,13 @@
     import ArtistSelect from "$lib/components/ArtistSelect.svelte";
     import UserLibrary from "$lib/components/UserLibrary.svelte";
     import VibeControls from "$lib/components/VibeControls.svelte";
+    import { fetchArtistTracks } from "$lib/api";
+    import {
+        LANDING_VISIBLE_EXAMPLES,
+        LANDING_EXAMPLE_DEFAULTS,
+        type LandingExample,
+        type LandingExampleSearchRequest,
+    } from "$lib/landingExamples";
     import {
         settings,
         isLoading,
@@ -32,7 +39,7 @@
         artistTracks: Record<string, Track[]>;
         error: string | null;
         datasetStats?: { track_count: number; artist_count: number } | null;
-        onsearch: () => void;
+        onsearch: (request?: LandingExampleSearchRequest) => void | Promise<void>;
         onplay: (track: FavoriteTrack) => void;
     }>();
 
@@ -47,6 +54,9 @@
     let showVibePanel = $state(false);
     let heroExpandedArtist = $state<string | null>(null);
     let songSearch = $state("");
+    let exampleTracks = $state<Record<string, Track[]>>({});
+    let previousSelectedKey = $state("");
+    let exampleSearchInFlight = $state(false);
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -55,12 +65,27 @@
     );
 
     $effect(() => {
-        if (heroExpandedArtist && !selected.includes(heroExpandedArtist)) {
+        const nextSelectedKey = selected.join("\u0000");
+        const selectionChanged = nextSelectedKey !== previousSelectedKey;
+        const hadSelection = previousSelectedKey.length > 0;
+
+        if (!selectionChanged) {
+            return;
+        }
+
+        previousSelectedKey = nextSelectedKey;
+
+        if (selected.length === 0) {
             heroExpandedArtist = null;
+            songSearch = "";
+            return;
+        }
+
+        if (!hadSelection || !heroExpandedArtist || !selected.includes(heroExpandedArtist)) {
+            heroExpandedArtist = selected[0];
             songSearch = "";
         }
     });
-
 
     // Actions
     function toggleHeroExpanded(artist: string) {
@@ -85,6 +110,80 @@
         return (
             (fineTune[artist]?.length || 0) >= LIMITS.MAX_INPUT_SONGS_PER_ARTIST
         );
+    }
+
+    function normalizeTrackName(name: string): string {
+        return name.trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    async function getExampleTracks(artist: string): Promise<Track[]> {
+        if (exampleTracks[artist]) {
+            return exampleTracks[artist];
+        }
+
+        const tracks = await fetchArtistTracks(artist);
+        exampleTracks = { ...exampleTracks, [artist]: tracks };
+        return tracks;
+    }
+
+    async function resolveExampleFineTune(
+        example: LandingExample,
+    ): Promise<Record<string, string[]>> {
+        if (!example.songs) {
+            return {};
+        }
+
+        const fineTuneFromSongs: Record<string, string[]> = {};
+
+        for (const [artist, songNames] of Object.entries(example.songs)) {
+            if (!songNames.length) {
+                continue;
+            }
+
+            try {
+                const tracks = await getExampleTracks(artist);
+                const byName = new Map(
+                    tracks.map((track) => [normalizeTrackName(track.track_name), track.track_id]),
+                );
+                const resolvedTrackIds = songNames
+                    .map((songName) => byName.get(normalizeTrackName(songName)))
+                    .filter((trackId): trackId is string => Boolean(trackId));
+
+                if (resolvedTrackIds.length) {
+                    fineTuneFromSongs[artist] = resolvedTrackIds;
+                }
+            } catch {
+                // Ignore missing preset songs for landing examples and fall back to artist-only seeds.
+            }
+        }
+
+        return fineTuneFromSongs;
+    }
+
+    function getExampleSongCount(example: LandingExample): number {
+        return Object.values(example.songs || {}).reduce(
+            (total, songs) => total + songs.length,
+            0,
+        );
+    }
+
+    async function applyExampleAndSearch(example: LandingExample) {
+        if (exampleSearchInFlight) return;
+        exampleSearchInFlight = true;
+        try {
+            const exampleSearchRequest: LandingExampleSearchRequest = {
+                artists: [...example.artists],
+                fineTune: await resolveExampleFineTune(example),
+                settings: {
+                    ...LANDING_EXAMPLE_DEFAULTS,
+                    ...example.settings,
+                },
+            };
+
+            await onsearch(exampleSearchRequest);
+        } finally {
+            exampleSearchInFlight = false;
+        }
     }
 </script>
 
@@ -115,10 +214,10 @@
                 class="btn-go"
                 data-phase={$progressPhase}
                 style:--progress={$loadingProgress / 100}
-                onclick={onsearch}
+                onclick={() => onsearch()}
                 disabled={!selected.length || $isLoading}
             >
-                <span class="btn-label">Search</span>
+                <span class="btn-label">Discover</span>
             </button>
         </div>
 
@@ -128,8 +227,55 @@
             </p>
         {/if}
 
-        {#if selected.length > 0}
-            <div class="fine-section">
+        <div class="fine-section" class:selected={selected.length > 0}>
+            {#if selected.length === 0}
+                <div class="example-heading">
+                    <span class="fine-label">Click to try an example:</span>
+                </div>
+
+                <div class="example-list">
+                    <div class="example-grid">
+                        {#each LANDING_VISIBLE_EXAMPLES as example (example.id)}
+                            <button
+                                class="example-card"
+                                class:wide={example.wide}
+                                onclick={() => applyExampleAndSearch(example)}
+                                title={`Search ${example.artists.join(", ")}`}
+                                disabled={$isLoading || exampleSearchInFlight}
+                            >
+                                <div class="example-card-top">
+                                    <span class="example-count">
+                                        {example.artists.length} {example.artists.length ===
+                                        1
+                                            ? "artist"
+                                            : "artists"}
+                                        {#if getExampleSongCount(example) > 0}
+                                            {@const songCount = getExampleSongCount(example)}
+                                            <span class="example-song-badge"
+                                                >+{songCount} {songCount === 1 ? "song" : "songs"}</span
+                                            >
+                                        {/if}
+                                    </span>
+                                    <span class="example-lane">{example.lane}</span>
+                                </div>
+                                <div class="example-artists">
+                                    {#if example.wide}
+                                        <span class="example-artist-line">{example.artists.join(", ")}</span>
+                                    {:else}
+                                        {#each example.artists as artist (artist)}
+                                            {@const songs = example.songs?.[artist] || []}
+                                            <span class="example-artist-line">{artist}</span>
+                                            {#if songs.length}
+                                                <span class="example-song-line">{songs.join(", ")}</span>
+                                            {/if}
+                                        {/each}
+                                    {/if}
+                                </div>
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            {:else}
                 <div class="fine-row">
                     <span class="fine-label">Fine-tune:</span>
                     {#each selected as artist (artist)}
@@ -199,11 +345,19 @@
                         {/if}
                     </div>
                 {/if}
-            </div>
-        {/if}
+            {/if}
+        </div>
 
         {#if error}
             <p class="error">{error}</p>
+        {/if}
+
+        {#if datasetStats}
+            <div class="dataset-stats dataset-stats-mobile">
+                <span>🎵 {formatStat(datasetStats.track_count)} songs</span>
+                <span class="stats-sep">·</span>
+                <span>🎤 {formatStat(datasetStats.artist_count)} artists</span>
+            </div>
         {/if}
 
         {#if isReturningUser}
@@ -253,8 +407,9 @@
         {/if}
 
     </div>
+
     {#if datasetStats}
-        <div class="dataset-stats">
+        <div class="dataset-stats dataset-stats-desktop">
             <span>🎵 {formatStat(datasetStats.track_count)} songs</span>
             <span class="stats-sep">·</span>
             <span>🎤 {formatStat(datasetStats.artist_count)} artists</span>
@@ -264,10 +419,6 @@
 
 <style>
     .dataset-stats {
-        position: absolute;
-        bottom: 1.5rem;
-        left: 0;
-        right: 0;
         font-size: 0.75rem;
         color: var(--text-3);
         text-align: center;
@@ -278,7 +429,30 @@
         opacity: 0.7;
     }
 
+    .dataset-stats-desktop {
+        position: absolute;
+        bottom: 1.5rem;
+        left: 0;
+        right: 0;
+    }
+
+    .dataset-stats-mobile {
+        display: none;
+        margin-top: auto;
+        padding-top: 1rem;
+    }
+
     .stats-sep {
         opacity: 0.5;
+    }
+
+    @media (max-width: 768px) {
+        .dataset-stats-desktop {
+            display: none;
+        }
+
+        .dataset-stats-mobile {
+            display: flex;
+        }
     }
 </style>

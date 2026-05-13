@@ -1,6 +1,7 @@
 /* Landing */
 .landing {
     flex: 1;
+    min-height: 0;
     display: flex;
     position: relative;
     overflow-y: auto;
@@ -50,11 +51,18 @@
     position: relative;
     z-index: 1;
     width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 16vh 1.5rem 2rem;
+    text-align: center;
+}
+
+.search-row {
     max-width: 560px;
     margin: 0 auto;
-    margin: 0 auto;
-    padding: 20vh 1.5rem 2rem;
-    text-align: center;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
 }
 
 .hero h1 {
@@ -71,12 +79,6 @@
     margin-bottom: 1.5rem;
 }
 
-.search-row {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-}
-
 .btn-go {
     padding: 0.6rem 2rem;
     background: var(--gold);
@@ -87,6 +89,9 @@
     border-radius: 8px;
     white-space: nowrap;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    z-index: 1;
 }
 
 .btn-go:hover:not(:disabled) {
@@ -101,21 +106,26 @@
 .btn-go::after {
     content: '';
     position: absolute;
-    inset: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        color-mix(in srgb, var(--gold), white 30%) 100%
-    );
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: rgba(0, 0, 0, 0.4);
     transform-origin: left;
     transform: scaleX(var(--progress, 0));
     pointer-events: none;
     opacity: 0;
+    z-index: 2;
 }
 
 .btn-go[data-phase="active"]::after {
     opacity: 1;
     transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-go .btn-label {
+    position: relative;
+    z-index: 3;
 }
 
 .btn-go[data-phase="hiding"]::after {
@@ -326,6 +336,13 @@
     text-align: center;
 }
 
+.fine-section.selected {
+    width: 100%;
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .fine-row {
     display: flex;
     flex-wrap: wrap;
@@ -338,6 +355,131 @@
     font-size: 0.75rem;
     color: var(--text-3);
     margin-right: 0.25rem;
+}
+
+.example-heading {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.75rem;
+}
+
+.example-list {
+    min-height: 0;
+}
+
+.example-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.55rem;
+    text-align: left;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.example-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-height: 0;
+    padding: 0.65rem 0.8rem 0.7rem;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition:
+        border-color 0.18s ease,
+        background 0.18s ease,
+        transform 0.18s ease;
+}
+
+.example-card:hover {
+    border-color: var(--gold);
+    background: var(--surface);
+    transform: translateY(-1px);
+}
+
+.example-card:disabled {
+    opacity: 0.7;
+    cursor: wait;
+    transform: none;
+}
+
+.example-card.wide {
+    grid-column: span 2;
+    padding-inline: 0.95rem;
+}
+
+.example-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.example-count {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gold);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.3rem;
+}
+
+.example-song-badge {
+    font-size: 0.62rem;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.example-artists {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    min-width: 0;
+}
+
+.example-artist-line {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.16;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.example-song-line {
+    display: block;
+    margin-top: -0.02rem;
+    font-size: 0.68rem;
+    font-weight: 500;
+    line-height: 1.18;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.example-card.wide .example-artist-line {
+    font-size: 0.86rem;
+    line-height: 1.25;
+    white-space: normal;
+}
+
+.example-lane {
+    font-size: 0.68rem;
+    color: var(--text-2);
+    line-height: 1.15;
+    text-align: right;
+    max-width: 8.5rem;
 }
 
 .fine-btn {
@@ -374,6 +516,11 @@
     max-width: 450px;
     margin-left: auto;
     margin-right: auto;
+}
+
+.fine-section.selected .songs-box {
+    max-width: none;
+    width: 100%;
 }
 
 .songs-header {
@@ -431,6 +578,50 @@
 .song-chip.disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+    .example-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.4rem;
+    }
+
+    .example-card {
+        gap: 0.25rem;
+        padding: 0.5rem 0.6rem 0.55rem;
+    }
+
+    .example-count {
+        font-size: 0.54rem;
+        flex-wrap: nowrap;
+    }
+
+    .example-song-badge {
+        display: none;
+    }
+
+    .example-lane {
+        font-size: 0.6rem;
+        max-width: 6.5rem;
+    }
+
+    .example-artist-line {
+        font-size: 0.7rem;
+    }
+
+    .example-card.wide .example-artist-line {
+        font-size: 0.74rem;
+    }
+
+    .example-song-line {
+        font-size: 0.6rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .example-card {
+        min-height: 0;
+    }
 }
 
 @media (min-width: 769px) {
@@ -591,26 +782,32 @@
     border-radius: 6px;
     position: relative;
     overflow: hidden;
+    z-index: 1;
 }
 
 .btn-update::after {
     content: '';
     position: absolute;
-    inset: 0;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        color-mix(in srgb, var(--gold), white 30%) 100%
-    );
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: rgba(0, 0, 0, 0.35);
     transform-origin: left;
     transform: scaleX(var(--progress, 0));
     pointer-events: none;
     opacity: 0;
+    z-index: 2;
 }
 
 .btn-update[data-phase="active"]::after {
     opacity: 1;
     transition: transform 200ms linear, opacity 100ms ease;
+}
+
+.btn-update .btn-label {
+    position: relative;
+    z-index: 3;
 }
 
 .btn-update[data-phase="hiding"]::after {
@@ -1226,6 +1423,50 @@
 }
 
 @media (max-width: 768px) {
+    .landing {
+        overflow: hidden;
+    }
+
+    .hero {
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding-top: 2rem;
+        padding-bottom: 2.5rem;
+    }
+
+    .fine-section {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: 0.5rem;
+    }
+
+    .fine-section.selected .songs-box {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .fine-section.selected .songs-scroll {
+        flex: 1;
+        max-height: none;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .example-list {
+        flex: 1;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.25rem;
+    }
+
     .results-wrap,
     .results-wrap.right-open {
         grid-template-columns: 1fr;
@@ -1270,10 +1511,13 @@
     }
 
     .search-row {
+        width: 100%;
         flex-direction: column;
+        align-items: stretch;
     }
 
     .btn-go {
+        width: 100%;
         padding: 0.6rem 2rem;
     }
 
@@ -1564,5 +1808,3 @@
     border-radius: 3px;
     font-family: monospace;
 }
-
-

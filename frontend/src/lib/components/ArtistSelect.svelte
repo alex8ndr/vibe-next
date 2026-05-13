@@ -92,6 +92,13 @@
         onchange?.(selected);
     }
 
+    function clearAll() {
+        selected = [];
+        query = "";
+        isOpen = false;
+        onchange?.(selected);
+    }
+
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === "Enter" && filtered.length > 0) {
             e.preventDefault();
@@ -108,7 +115,7 @@
 </script>
 
 <div class="wrapper">
-    <div class="input-box">
+    <div class="input-box" class:has-clear={selected.length > 0}>
         {#each selected as artist (artist)}
             <button class="chip" onclick={() => remove(artist)} title="Remove {artist}">
                 {artist}
@@ -130,6 +137,9 @@
         {/if}
         {#if selected.length === max}
             <span class="limit-badge">{max}/{max}</span>
+        {/if}
+        {#if selected.length > 0}
+            <button class="clear-all" onclick={clearAll} title="Clear all artists" aria-label="Clear all artists"></button>
         {/if}
     </div>
 
@@ -177,6 +187,10 @@
         position: relative;
     }
 
+    .input-box.has-clear {
+        padding-right: 2.35rem;
+    }
+
     .input-box:focus-within {
         border-color: var(--gold);
         box-shadow: 0 0 0 2px var(--gold-glow);
@@ -185,11 +199,51 @@
     .limit-badge {
         position: absolute;
         bottom: 4px;
-        right: 8px;
+        right: 36px;
         font-size: 0.6rem;
         color: var(--text-3);
         font-weight: 600;
         pointer-events: none;
+    }
+
+    .clear-all {
+        position: absolute;
+        top: 50%;
+        right: 0.55rem;
+        transform: translateY(-50%);
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        color: var(--text-3);
+        cursor: pointer;
+    }
+
+    .clear-all::before,
+    .clear-all::after {
+        content: "";
+        position: absolute;
+        width: 9px;
+        height: 1.5px;
+        background: currentColor;
+        border-radius: 999px;
+    }
+
+    .clear-all::before {
+        transform: rotate(45deg);
+    }
+
+    .clear-all::after {
+        transform: rotate(-45deg);
+    }
+
+    .clear-all:hover {
+        border-color: var(--gold);
+        color: var(--text);
     }
 
     .chip {
@@ -265,11 +319,12 @@
         }
 
         .list {
-            position: fixed;
-            left: 1rem;
-            right: 1rem;
-            top: auto;
-            bottom: 50%;
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 100%;
+            bottom: auto;
+            margin-top: 4px;
             max-height: 40vh;
             border-radius: 12px;
             z-index: 9999;

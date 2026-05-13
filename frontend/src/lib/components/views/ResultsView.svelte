@@ -41,7 +41,7 @@
         lastSearchParams?: string;
         hitArtistLimit?: boolean;
         regenerationHistory?: Set<string>;
-        onsearch: () => void;
+        onsearch: () => void | Promise<void>;
         onregenerate: () => void;
         onplay: (track: FavoriteTrack) => void;
     }>();
@@ -292,7 +292,7 @@
                 class="btn-update"
                 data-phase={$progressPhase}
                 style:--progress={$loadingProgress / 100}
-                onclick={onsearch}
+                onclick={() => onsearch()}
                 disabled={!selected.length || $isLoading}
             >
                 <span class="btn-label">Update</span>
