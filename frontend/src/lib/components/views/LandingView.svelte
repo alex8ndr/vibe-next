@@ -199,35 +199,38 @@
     {/if}
 
     <div class="hero">
-        <h1>Discover your next<br />favourite artist</h1>
-        <p class="tagline">
-            Personalized music recommendations based on your unique taste
-        </p>
+        <div class="hero-content">
+            <div class="hero-primary">
+                <h1>Discover your next<br />favourite artist</h1>
+                <p class="tagline">
+                    Personalized music recommendations based on your unique taste
+                </p>
 
-        <div class="search-row">
-            <ArtistSelect
-                bind:selected
-                max={LIMITS.MAX_INPUT_ARTISTS}
-                placeholder="Search artists..."
-            />
-            <button
-                class="btn-go"
-                data-phase={$progressPhase}
-                style:--progress={$loadingProgress / 100}
-                onclick={() => onsearch()}
-                disabled={!selected.length || $isLoading}
-            >
-                <span class="btn-label">Discover</span>
-            </button>
-        </div>
+                <div class="search-row">
+                    <ArtistSelect
+                        bind:selected
+                        max={LIMITS.MAX_INPUT_ARTISTS}
+                        placeholder="Search artists..."
+                    />
+                    <button
+                        class="btn-go"
+                        data-phase={$progressPhase}
+                        style:--progress={$loadingProgress / 100}
+                        onclick={() => onsearch()}
+                        disabled={!selected.length || $isLoading}
+                    >
+                        <span class="btn-label">Discover</span>
+                    </button>
+                </div>
 
-        {#if atMaxArtists}
-            <p class="limit-msg">
-                Maximum {LIMITS.MAX_INPUT_ARTISTS} artists reached
-            </p>
-        {/if}
+                {#if atMaxArtists}
+                    <p class="limit-msg">
+                        Maximum {LIMITS.MAX_INPUT_ARTISTS} artists reached
+                    </p>
+                {/if}
+            </div>
 
-        <div class="fine-section" class:selected={selected.length > 0}>
+            <div class="fine-section" class:selected={selected.length > 0}>
             {#if selected.length === 0}
                 <div class="example-heading">
                     <span class="fine-label">Click to try an example:</span>
@@ -346,6 +349,7 @@
                     </div>
                 {/if}
             {/if}
+            </div>
         </div>
 
         {#if error}

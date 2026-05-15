@@ -53,8 +53,18 @@
     width: 100%;
     max-width: 1080px;
     margin: 0 auto;
-    padding: 16vh 1.5rem 2rem;
+    height: calc(100vh - 52px);
+    box-sizing: border-box;
+    padding: 0 1.5rem 2rem;
     text-align: center;
+}
+
+.hero-content {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .search-row {
@@ -334,6 +344,7 @@
 .fine-section {
     margin-top: 1.25rem;
     text-align: center;
+    min-height: 22rem;
 }
 
 .fine-section.selected {
@@ -1026,6 +1037,9 @@
 }
 
 .main-results {
+    width: 100%;
+    max-width: 1360px;
+    margin: 0 auto;
     padding: 0.75rem 1.25rem 1.25rem;
     overflow-y: auto;
     max-height: calc(100vh - 52px);
@@ -1436,8 +1450,17 @@
         padding-bottom: 2.5rem;
     }
 
+    .hero-content {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+    }
+
     .fine-section {
         flex: 1;
+        height: auto;
         min-height: 0;
         overflow: hidden;
         display: flex;
@@ -1461,6 +1484,7 @@
 
     .example-list {
         flex: 1;
+        max-height: none;
         overflow-y: auto;
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
