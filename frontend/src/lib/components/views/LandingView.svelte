@@ -106,6 +106,11 @@
         }
     }
 
+    function clearSongs(artist: string) {
+        const { [artist]: _removed, ...rest } = fineTune;
+        fineTune = rest;
+    }
+
     function isAtSongLimit(artist: string): boolean {
         return (
             (fineTune[artist]?.length || 0) >= LIMITS.MAX_INPUT_SONGS_PER_ARTIST
@@ -203,7 +208,7 @@
             <div class="hero-primary">
                 <h1>Discover your next<br />favourite artist</h1>
                 <p class="tagline">
-                    Personalized music recommendations based on your unique taste
+                    Select artists you like and get recommendations that match
                 </p>
 
                 <div class="search-row">
@@ -233,7 +238,7 @@
             <div class="fine-section" class:selected={selected.length > 0}>
             {#if selected.length === 0}
                 <div class="example-heading">
-                    <span class="fine-label">Click to try an example:</span>
+                    <span class="fine-label">Or click to try an example:</span>
                 </div>
 
                 <div class="example-list">
@@ -288,11 +293,6 @@
                             onclick={() => toggleHeroExpanded(artist)}
                         >
                             {artist}
-                            {#if (fineTune[artist]?.length || 0) > 0}
-                                <span class="badge"
-                                    >{fineTune[artist].length}</span
-                                >
-                            {/if}
                         </button>
                     {/each}
                 </div>
@@ -303,13 +303,22 @@
                             <span class="songs-title"
                                 >{heroExpandedArtist}</span
                             >
-                            <input
-                                type="text"
-                                class="landing-song-search"
-                                placeholder="Search..."
-                                bind:value={songSearch}
-                                onclick={(e) => e.stopPropagation()}
-                            />
+                            <div class="songs-actions">
+                                <button
+                                    class="clear-songs-btn"
+                                    onclick={() => clearSongs(heroExpandedArtist!)}
+                                    disabled={(fineTune[heroExpandedArtist]?.length || 0) === 0}
+                                >
+                                    Clear songs
+                                </button>
+                                <input
+                                    type="text"
+                                    class="landing-song-search"
+                                    placeholder="Search..."
+                                    bind:value={songSearch}
+                                    onclick={(e) => e.stopPropagation()}
+                                />
+                            </div>
                         </div>
                         <div class="songs-scroll">
                             {#each (artistTracks[heroExpandedArtist] || []).filter((t: Track) => !songSearch || t.track_name.toLowerCase().includes(songSearch.toLowerCase())) as t (t.track_id)}
