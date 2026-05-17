@@ -23,6 +23,9 @@
         type FavoriteTrack,
     } from "$lib/stores";
     import { trackAddKnown, trackRemoveKnown } from "$lib/analytics";
+    import { onMount } from "svelte";
+    import { driver } from "driver.js";
+    import "driver.js/dist/driver.css";
 
     let {
         selected = $bindable(),
@@ -285,6 +288,42 @@
         a.click();
         URL.revokeObjectURL(url);
     }
+
+    onMount(() => {
+        const hasSeenTour = localStorage.getItem("vibeTourSeen");
+        if (!hasSeenTour) {
+            setTimeout(() => {
+                startTour();
+                localStorage.setItem("vibeTourSeen", "true");
+            }, 500);
+        }
+    });
+
+    function startTour() {
+        const firstCard = document.querySelector('.grid .card') as HTMLElement | null;
+        const target = document.getElementById('tour-results-target');
+        if (firstCard && target) {
+            target.style.height = `${firstCard.offsetHeight}px`;
+        }
+
+        const steps = [
+            { element: '.tour-results-target', popover: { title: 'Results', description: 'Explore your tailored artist recommendations and their tracks.', side: "bottom", align: 'start' } },
+            { element: '.trk', popover: { title: 'Listen', description: 'Click on a track to listen to it. Click again to pause.', side: "bottom", align: 'start' } },
+            { element: '.fav-btn', popover: { title: 'Favorite', description: 'Favorite a track if you like it.', side: "bottom", align: 'start' } },
+            { element: '.btn-regenerate', popover: { title: 'Regenerate', description: 'Want more? Click here to get a fresh batch of recommendations for the same input.', side: "bottom", align: 'start' } },
+            { element: '.side-search', popover: { title: 'Add Artists', description: 'Search and add artists to serve as the foundation for your next recommendations.', side: "right", align: 'start' } },
+            selected.length > 0 ? { element: '.fine-tune-section', popover: { title: 'Fine-tune', description: 'Select specific songs from your chosen artists to narrow down the vibe.', side: "right", align: 'start' } } : null,
+            { element: '.customize-section', popover: { title: 'Customize Vibe', description: 'Adjust number of recommended artists and songs, and other audio features.', side: "right", align: 'start' } },
+            { element: '.btn-update', popover: { title: 'Update', description: 'Click update to generate new recommendations.', side: "right", align: 'start' } },
+        ].filter(Boolean);
+
+        const d = driver({
+            showProgress: true,
+            animate: true,
+            steps: steps as any
+        });
+        d.drive();
+    }
 </script>
 
 <div class="results-wrap" class:right-open={$rightPanelOpen}>
@@ -304,7 +343,7 @@
                 onclick={() => onsearch()}
                 disabled={!selected.length || $isLoading}
             >
-                <span class="btn-label">Update</span>
+                <span class="btn-label">Discover</span>
             </button>
             <button
                 class="btn-regenerate"
@@ -556,6 +595,16 @@
             {/if}
             <div class="results-actions" bind:this={exportTooltipRef}>
                 <button
+                    class="btn-action"
+                    onclick={startTour}
+                    title="Take a tour of the interface"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    Tour
+                </button>
+                <button
                     class="btn-export"
                     onclick={exportResults}
                     disabled={!hasRecommendations}
@@ -624,7 +673,9 @@
                 <p class="muted">Add artists and click Update to get started.</p>
             </div>
         {:else}
-        <div class="grid">
+        <div class="grid" style="position: relative;">
+            <!-- Invisible target for the tour to cleanly highlight the first row -->
+            <div id="tour-results-target" class="tour-results-target" style="position: absolute; top: 0; left: 0; right: 0; height: 310px; pointer-events: none; z-index: -1;"></div>
             {#each Object.entries($recommendations) as [artist, tracks], i (artist + '-' + (tracks[0]?.track_id || ''))}
                 <ArtistCard 
                     {artist} 
