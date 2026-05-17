@@ -50,7 +50,7 @@
     }>();
 
     // Local state
-    let expandedArtists = $state<Set<string>>(new Set());
+    let expandedArtists = $state<Set<string>>(new Set(selected.length > 0 ? [selected[0]] : []));
     let globalSongSearch = $state("");
 
     // Derived

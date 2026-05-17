@@ -478,24 +478,45 @@
         <div class="card-actions" class:visible={showActions}>
             {#if onAddToKnown}
                 <button
-                    class="action-btn"
+                    class="action-btn known-action"
                     class:active={isKnown}
                     onclick={onAddToKnown}
+                    aria-label={isKnown
+                        ? "Remove from known list"
+                        : "Add to known list"}
                     title={isKnown
                         ? "Remove from known list"
                         : "Add to known list"}
                 >
-                    {isKnown ? "✓" : "👁"}
+                    {#if isKnown}
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                    {:else}
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    {/if}
                 </button>
             {/if}
             {#if onAddToSearch}
                 <button
-                    class="action-btn"
+                    class="action-btn search-action"
                     onclick={onAddToSearch}
                     class:active={isAdded}
+                    aria-label={isAdded ? "Remove from search" : "Add to search"}
                     title={isAdded ? "Remove from search" : "Add to search"}
                 >
-                    {isAdded ? "-" : "+"}
+                    {#if isAdded}
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M5 12h14" />
+                        </svg>
+                    {:else}
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5v14M5 12h14" />
+                        </svg>
+                    {/if}
                 </button>
             {/if}
         </div>
@@ -646,8 +667,9 @@
     .card-actions {
         display: flex;
         gap: 0.25rem;
-        opacity: 0;
+        opacity: 0.82;
         transition: opacity 0.15s;
+        flex-shrink: 0;
     }
 
     .card-actions.visible {
@@ -655,26 +677,41 @@
     }
 
     .action-btn {
-        width: 24px;
-        height: 24px;
-        display: flex;
+        width: 26px;
+        height: 26px;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: var(--bg-alt);
+        padding: 0;
+        background: color-mix(in srgb, var(--bg-alt) 86%, transparent);
         border: 1px solid var(--border);
-        border-radius: 4px;
-        font-size: 0.7rem;
+        border-radius: 6px;
         color: var(--text-2);
-        transition: all 0.15s;
+        transition:
+            background 0.15s,
+            border-color 0.15s,
+            color 0.15s;
+    }
+
+    .action-btn svg {
+        width: 13px;
+        height: 13px;
+        flex-shrink: 0;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2.2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
     }
 
     .action-btn:hover:not(:disabled) {
         border-color: var(--gold);
+        background: var(--surface);
         color: var(--text);
     }
 
     .action-btn.active {
-        background: var(--gold-glow);
+        background: color-mix(in srgb, var(--gold-glow) 72%, var(--surface));
         border-color: var(--gold);
         color: var(--gold);
     }
