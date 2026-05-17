@@ -391,6 +391,8 @@
 }
 
 .example-card {
+    --example-progress: 0;
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
@@ -408,16 +410,47 @@
         transform 0.18s ease;
 }
 
-.example-card:hover {
+.example-card::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 3px;
+    background: conic-gradient(
+        from -90deg,
+        var(--gold) calc(var(--example-progress) * 1turn),
+        color-mix(in srgb, var(--gold) 22%, transparent) 0
+    );
+    -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.example-card.loading::before {
+    opacity: 1;
+}
+
+.example-card:hover:not(:disabled) {
     border-color: var(--gold);
     background: var(--surface);
     transform: translateY(-1px);
 }
 
 .example-card:disabled {
-    opacity: 0.7;
+    opacity: 0.45;
     cursor: wait;
     transform: none;
+}
+
+.example-card.loading {
+    opacity: 1;
+    border-color: color-mix(in srgb, var(--gold) 65%, var(--border));
+    background: var(--surface);
 }
 
 .example-card.wide {

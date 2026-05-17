@@ -57,6 +57,7 @@
     let exampleTracks = $state<Record<string, Track[]>>({});
     let previousSelectedKey = $state("");
     let exampleSearchInFlight = $state(false);
+    let exampleSearchId = $state<string | null>(null);
 
     // Derived
     const atMaxArtists = $derived(selected.length >= LIMITS.MAX_INPUT_ARTISTS);
@@ -175,6 +176,7 @@
     async function applyExampleAndSearch(example: LandingExample) {
         if (exampleSearchInFlight) return;
         exampleSearchInFlight = true;
+        exampleSearchId = example.id;
         try {
             const exampleSearchRequest: LandingExampleSearchRequest = {
                 artists: [...example.artists],
@@ -188,6 +190,7 @@
             await onsearch(exampleSearchRequest);
         } finally {
             exampleSearchInFlight = false;
+            exampleSearchId = null;
         }
     }
 </script>
@@ -219,7 +222,7 @@
                     />
                     <button
                         class="btn-go"
-                        data-phase={$progressPhase}
+                        data-phase={exampleSearchInFlight ? "idle" : $progressPhase}
                         style:--progress={$loadingProgress / 100}
                         onclick={() => onsearch()}
                         disabled={!selected.length || $isLoading}
@@ -247,6 +250,10 @@
                             <button
                                 class="example-card"
                                 class:wide={example.wide}
+                                class:loading={exampleSearchId === example.id}
+                                style:--example-progress={exampleSearchId === example.id
+                                    ? $loadingProgress / 100
+                                    : 0}
                                 onclick={() => applyExampleAndSearch(example)}
                                 title={`Search ${example.artists.join(", ")}`}
                                 disabled={$isLoading || exampleSearchInFlight}
