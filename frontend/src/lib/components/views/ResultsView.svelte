@@ -22,7 +22,7 @@
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
-    import { trackAddKnown, trackRemoveKnown } from "$lib/analytics";
+    import { trackAddKnown, trackRemoveKnown, trackTourStarted, trackTourCompleted, trackTourSkipped } from "$lib/analytics";
     import { onMount } from "svelte";
     import { driver } from "driver.js";
     import "driver.js/dist/driver.css";
@@ -320,8 +320,17 @@
         const d = driver({
             showProgress: true,
             animate: true,
-            steps: steps as any
+            steps: steps as any,
+            onDestroyStarted: () => {
+                if (!d.hasNextStep() || d.isLastStep()) {
+                    trackTourCompleted();
+                } else {
+                    trackTourSkipped(d.getActiveIndex() || 0);
+                }
+                d.destroy();
+            }
         });
+        trackTourStarted();
         d.drive();
     }
 </script>

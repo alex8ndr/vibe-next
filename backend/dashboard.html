@@ -162,6 +162,15 @@
         .badge.mood { background: #4caf50; }
         .badge.sound { background: #2196f3; }
         .badge.pop { background: #9c27b0; }
+        .badge.fav { background: #e91e63; color: #fff; }
+        .badge.unfav { background: #555; color: #fff; }
+        .badge.known { background: #ff9800; }
+        .badge.unkn { background: #555; color: #fff; }
+        .badge.play { background: #00bcd4; }
+        .badge.tour { background: #8bc34a; }
+        .badge.done { background: #4caf50; color: #fff; }
+        .badge.skip { background: #ff5722; color: #fff; }
+        .badge.example { background: #ffc107; }
 
         /* Detail Pane */
         .detail-header { padding: 16px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; text-transform: uppercase; color: #fff; }
@@ -222,9 +231,12 @@
                 </div>
 
                 <div class="tile">
-                    <div class="tile-header">Vibe Distribution</div>
-                    <div class="tile-body">
-                        <canvas id="chartScatter"></canvas>
+                    <div class="tile-header">Top Recommended Tracks</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableTopTracksGlobal">
+                            <thead><tr><th>TRACK</th><th>HITS</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
                     </div>
                 </div>
 
@@ -253,16 +265,20 @@
                     <div class="kpi-label">Favorites Added</div>
                 </div>
                 <div class="kpi-box">
-                    <div class="kpi-num" id="e_known">0</div>
-                    <div class="kpi-label">Known Artists</div>
-                </div>
-                <div class="kpi-box">
                     <div class="kpi-num" id="e_plays">0</div>
                     <div class="kpi-label">Track Plays</div>
                 </div>
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_tours">0</div>
+                    <div class="kpi-label">Tour Completion</div>
+                </div>
+                <div class="kpi-box">
+                    <div class="kpi-num" id="e_examples">0</div>
+                    <div class="kpi-label">Examples Tried</div>
+                </div>
             </div>
             
-            <div class="dashboard-grid" style="grid-template-rows: 1fr; grid-template-columns: 1fr 1fr 1fr; height: 100%;">
+            <div class="dashboard-grid" style="grid-template-rows: 1fr 1fr; grid-template-columns: 1fr 1fr; height: 100%;">
                 <div class="tile">
                     <div class="tile-header">Top Favorited Tracks</div>
                     <div class="tile-body" style="padding:0">
@@ -274,6 +290,16 @@
                 </div>
                 
                 <div class="tile">
+                    <div class="tile-header">Top Landing Examples</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableTopExamples">
+                            <thead><tr><th>EXAMPLE ID</th><th>CLICKS</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="tile">
                     <div class="tile-header">Top Known Artists</div>
                     <div class="tile-body" style="padding:0">
                         <table class="dense-table" id="tableKnownArtists">
@@ -284,10 +310,10 @@
                 </div>
                 
                 <div class="tile">
-                    <div class="tile-header">Recent Events</div>
-                    <div class="tile-body" style="padding:0; overflow-y:auto">
-                        <table class="dense-table" id="tableRecentEvents">
-                            <thead><tr><th>TIME</th><th>EVENT</th><th>DETAIL</th></tr></thead>
+                    <div class="tile-header">Tour Drop-off Analysis</div>
+                    <div class="tile-body" style="padding:0">
+                        <table class="dense-table" id="tableTourDropoffs">
+                            <thead><tr><th>STEP ABANDONED</th><th>DROPOFFS</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
@@ -354,9 +380,14 @@
             document.getElementById('g_depth').innerText = rawData.session_stats?.avg_per_user || 0;
 
             // Table
-            const tbody = document.querySelector('#tableTopArtists tbody');
-            tbody.innerHTML = rawData.top_artists.slice(0, 20).map(([n, c]) => `
+            const tbodyArtists = document.querySelector('#tableTopArtists tbody');
+            tbodyArtists.innerHTML = rawData.top_artists.slice(0, 20).map(([n, c]) => `
                 <tr><td>${n}</td><td>${c}</td></tr>
+            `).join('');
+
+            const tbodyTracks = document.querySelector('#tableTopTracksGlobal tbody');
+            tbodyTracks.innerHTML = rawData.top_tracks.slice(0, 20).map(([n, c]) => `
+                <tr><td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${n}">${n}</td><td>${c}</td></tr>
             `).join('');
 
             // Charts
@@ -369,13 +400,6 @@
                 },
                 options: { maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#1f1f1f'}}} }
             });
-
-            const ctxScat = document.getElementById('chartScatter').getContext('2d');
-            new Chart(ctxScat, {
-                type: 'scatter',
-                data: { datasets: [{ data: rawData.vibe_scatter.map(p=>({x:p.x,y:p.y})), backgroundColor:'rgba(212, 160, 23, 0.5)', pointRadius:2 }] },
-                options: { maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{min:-1,max:1,grid:{color:'#1f1f1f'}}, y:{min:-1,max:1,grid:{color:'#1f1f1f'}}} }
-            });
         }
 
         /* --- Events Renderer --- */
@@ -385,8 +409,15 @@
             
             document.getElementById('e_total').innerText = events.total || 0;
             document.getElementById('e_favorites').innerText = byType.add_favorite || 0;
-            document.getElementById('e_known').innerText = byType.add_known || 0;
             document.getElementById('e_plays').innerText = byType.play_track || 0;
+            
+            // Tour Completion Rate
+            const tourStarted = byType.tour_started || 0;
+            const tourCompleted = byType.tour_completed || 0;
+            const tourRate = tourStarted > 0 ? Math.round((tourCompleted / tourStarted) * 100) : 0;
+            document.getElementById('e_tours').innerText = `${tourRate}%`;
+            
+            document.getElementById('e_examples').innerText = byType.example_clicked || 0;
             
             // Top favorited tracks
             const favTbody = document.querySelector('#tableFavTracks tbody');
@@ -399,22 +430,18 @@
             knownTbody.innerHTML = (events.top_known_artists || []).map(([n, c]) => `
                 <tr><td>${n}</td><td>${c}</td></tr>
             `).join('') || '<tr><td colspan="2" style="color:#555">No known artists yet</td></tr>';
-            
-            // Recent events
-            const recentTbody = document.querySelector('#tableRecentEvents tbody');
-            const eventLabels = {
-                'add_favorite': '♥ FAV',
-                'remove_favorite': '✕ UNFAV',
-                'add_known': '👁 KNOWN',
-                'remove_known': '✕ UNKN',
-                'play_track': '▶ PLAY'
-            };
-            recentTbody.innerHTML = (events.recent || []).slice(0, 50).map(e => {
-                const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '-';
-                const label = eventLabels[e.event_type] || e.event_type;
-                const detail = e.track_name ? `${e.track_name} - ${e.artist_name}` : (e.artist_name || '-');
-                return `<tr><td>${time}</td><td>${label}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${detail}</td></tr>`;
-            }).join('') || '<tr><td colspan="3" style="color:#555">No events yet</td></tr>';
+
+            // Top Landing Examples
+            const exTbody = document.querySelector('#tableTopExamples tbody');
+            exTbody.innerHTML = (events.top_examples || []).map(([n, c]) => `
+                <tr><td style="color:var(--accent)">${n}</td><td>${c}</td></tr>
+            `).join('') || '<tr><td colspan="2" style="color:#555">No examples tried yet</td></tr>';
+
+            // Tour Dropoffs
+            const dropoffTbody = document.querySelector('#tableTourDropoffs tbody');
+            dropoffTbody.innerHTML = (events.tour_dropoffs || []).map(([n, c]) => `
+                <tr><td style="color:#ff5722">${n}</td><td>${c}</td></tr>
+            `).join('') || '<tr><td colspan="2" style="color:#555">No tour drop-offs recorded</td></tr>';
         }
 
         /* --- User Logic --- */

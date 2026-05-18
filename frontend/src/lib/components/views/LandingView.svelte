@@ -22,6 +22,7 @@
         type Track,
         type FavoriteTrack,
     } from "$lib/stores";
+    import { trackExampleClicked } from "$lib/analytics";
     import bgDark from "$lib/assets/background_dark.webp";
     import bgLight from "$lib/assets/background_light.webp";
 
@@ -175,6 +176,7 @@
 
     async function applyExampleAndSearch(example: LandingExample) {
         if (exampleSearchInFlight) return;
+        trackExampleClicked(example.id);
         exampleSearchInFlight = true;
         exampleSearchId = example.id;
         try {

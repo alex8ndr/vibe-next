@@ -836,6 +836,8 @@ async def analytics_data(username: str = Depends(get_admin)):
     event_counts = Counter()
     favorited_tracks = Counter()
     known_artists = Counter()
+    example_clicks = Counter()
+    tour_skips = Counter()
     recent_events = deque(maxlen=200)
     
     # Vibe lists for histograms
@@ -870,6 +872,10 @@ async def analytics_data(username: str = Depends(get_admin)):
                             favorited_tracks[track_key] += 1
                         elif event_type == "add_known":
                             known_artists[entry.get("artist_name", "?")] += 1
+                        elif event_type == "example_clicked":
+                            example_clicks[entry.get("example_id", "?")] += 1
+                        elif event_type == "tour_skipped":
+                            tour_skips[f"Step {entry.get('step', '?')}"] += 1
                         
                         ts = entry.get("timestamp", "")[:10]
                         if ts:
@@ -940,6 +946,8 @@ async def analytics_data(username: str = Depends(get_admin)):
                 "track_id": evt.get("track_id"),
                 "track_name": evt.get("track_name"),
                 "artist_name": evt.get("artist_name"),
+                "example_id": evt.get("example_id"),
+                "step": evt.get("step"),
             })
             
         avg_searches = 0
@@ -966,6 +974,8 @@ async def analytics_data(username: str = Depends(get_admin)):
                 "recent": formatted_events,
                 "top_favorited_tracks": favorited_tracks.most_common(20),
                 "top_known_artists": known_artists.most_common(20),
+                "top_examples": example_clicks.most_common(10),
+                "tour_dropoffs": tour_skips.most_common(10),
             },
         }
     except Exception as e:
