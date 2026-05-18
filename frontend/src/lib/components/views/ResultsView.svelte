@@ -309,12 +309,12 @@
         const steps = [
             { element: '.tour-results-target', popover: { title: 'Results', description: 'Explore your tailored artist recommendations and their tracks.', side: "bottom", align: 'start' } },
             { element: '.trk', popover: { title: 'Listen', description: 'Click on a track to listen to it. Click again to pause.', side: "bottom", align: 'start' } },
-            { element: '.fav-btn', popover: { title: 'Favorite', description: 'Favorite a track if you like it.', side: "bottom", align: 'start' } },
+            { element: '.fav-btn', popover: { title: 'Favourite', description: 'Favourite a track if you like it.', side: "bottom", align: 'start' } },
             { element: '.btn-regenerate', popover: { title: 'Regenerate', description: 'Want more? Click here to get a fresh batch of recommendations for the same input.', side: "bottom", align: 'start' } },
             { element: '.side-search', popover: { title: 'Add Artists', description: 'Search and add artists to serve as the foundation for your next recommendations.', side: "right", align: 'start' } },
-            selected.length > 0 ? { element: '.fine-tune-section', popover: { title: 'Fine-tune', description: 'Select specific songs from your chosen artists to narrow down the vibe.', side: "right", align: 'start' } } : null,
-            { element: '.customize-section', popover: { title: 'Customize Vibe', description: 'Adjust number of recommended artists and songs, and other audio features.', side: "right", align: 'start' } },
-            { element: '.btn-update', popover: { title: 'Update', description: 'Click update to generate new recommendations.', side: "right", align: 'start' } },
+            selected.length > 0 ? { element: '.fine-tune-section', popover: { title: 'Fine-tune', description: 'Select specific songs from your chosen artists to tailor the vibe.', side: "right", align: 'start' } } : null,
+            { element: '.customize-section', popover: { title: 'Customize Vibe', description: 'Adjust number of recommended artists, songs per artist, and other audio features.', side: "right", align: 'start' } },
+            { element: '.btn-update', popover: { title: 'Update', description: 'Click discover to generate new recommendations.', side: "right", align: 'start' } },
         ].filter(Boolean);
 
         const d = driver({
