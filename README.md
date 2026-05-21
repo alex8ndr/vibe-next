@@ -1,10 +1,14 @@
-﻿<p align="center">
+<p align="center">
   <img src="frontend/static/vibe_icon.png" alt="Vibe logo" width="88" />
 </p>
 
 <h1 align="center">Vibe</h1>
 
 <p align="center">Full-stack music recommendation app for artist and track discovery.</p>
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="Vibe App Screenshot" style="max-width: 100%; border-radius: 8px;" />
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />
