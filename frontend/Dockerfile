@@ -2,8 +2,10 @@ FROM node:24-alpine AS builder
 
 WORKDIR /app
 
+ARG PNPM_VERSION=11.2.2
+
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -24,6 +26,8 @@ FROM node:24-alpine
 
 WORKDIR /app
 
+ARG PNPM_VERSION=11.2.2
+
 # Copy built output
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
@@ -31,7 +35,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /app/pnpm-workspace.yaml ./
 
 # Minimal production deps
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 RUN pnpm install --frozen-lockfile --prod
 
 EXPOSE 3000
