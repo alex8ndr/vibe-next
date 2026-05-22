@@ -52,6 +52,7 @@
     // Local state
     let expandedArtists = $state<Set<string>>(new Set(selected.length > 0 ? [selected[0]] : []));
     let globalSongSearch = $state("");
+    let mobileControlsOpen = $state(false);
 
     // Derived
     const currentParams = $derived(JSON.stringify({ selected, fineTune, targetLanguage: $settings.targetLanguage, targetGenre: $settings.targetGenre }));
@@ -70,6 +71,7 @@
     const searchVectorAudio = $derived($recommendationsMeta?.search_vector_audio);
     const searchVectorGenre = $derived($recommendationsMeta?.search_vector_genre);
     const totalTracks = $derived(Object.values($recommendations).reduce((sum, tracks) => sum + tracks.length, 0));
+    const mobileTourQuery = "(max-width: 768px)";
     
     // Helper to format genre profile for display
     function formatGenreProfile(genres: Array<{genre: string, pct: number}>): string {
@@ -128,6 +130,16 @@
         if (window.confirm('Reset customize settings to defaults?')) {
             settings.set(DEFAULT_SETTINGS);
         }
+    }
+
+    function runSearchFromControls() {
+        void onsearch();
+        mobileControlsOpen = false;
+    }
+
+    function regenerateFromControls() {
+        onregenerate();
+        mobileControlsOpen = false;
     }
 
     function addToKnown(artist: string) {
@@ -291,7 +303,7 @@
 
     onMount(() => {
         const hasSeenTour = localStorage.getItem("vibeTourSeen");
-        if (!hasSeenTour) {
+        if (!hasSeenTour && !isMobileTourViewport()) {
             setTimeout(() => {
                 startTour();
                 localStorage.setItem("vibeTourSeen", "true");
@@ -299,7 +311,15 @@
         }
     });
 
+    function isMobileTourViewport() {
+        return window.matchMedia(mobileTourQuery).matches;
+    }
+
     function startTour() {
+        if (isMobileTourViewport()) {
+            return;
+        }
+
         const firstCard = document.querySelector('.grid .card') as HTMLElement | null;
         const target = document.getElementById('tour-results-target');
         if (firstCard && target) {
@@ -336,7 +356,28 @@
 </script>
 
 <div class="results-wrap" class:right-open={$rightPanelOpen}>
-    <aside class="side left">
+    {#if mobileControlsOpen}
+        <button
+            class="mobile-sheet-backdrop mobile-only"
+            onclick={() => mobileControlsOpen = false}
+            aria-label="Close search and vibe controls"
+        ></button>
+    {/if}
+
+    <aside id="results-mobile-controls" class="side left" class:mobile-open={mobileControlsOpen}>
+        <div class="mobile-sheet-header mobile-only">
+            <div>
+                <strong>Search & vibe</strong>
+                <span>{selected.length} artist{selected.length === 1 ? "" : "s"} selected</span>
+            </div>
+            <button
+                class="mobile-sheet-close"
+                onclick={() => mobileControlsOpen = false}
+                aria-label="Close search and vibe controls"
+            >
+                ×
+            </button>
+        </div>
         <div class="side-search">
             <ArtistSelect
                 bind:selected
@@ -349,7 +390,7 @@
                 class="btn-update"
                 data-phase={$progressPhase}
                 style:--progress={$loadingProgress / 100}
-                onclick={() => onsearch()}
+                onclick={runSearchFromControls}
                 disabled={!selected.length || $isLoading}
             >
                 <span class="btn-label">Discover</span>
@@ -357,7 +398,7 @@
             <button
                 class="btn-regenerate"
                 class:spinning={$isLoading}
-                onclick={onregenerate}
+                onclick={regenerateFromControls}
                 disabled={!canRegenerate || $isLoading || paramsChanged || hitArtistLimit}
                 title={hitArtistLimit || paramsChanged ? "Update search first" : canRegenerate ? "Regenerate with different artists" : "No more alternatives available"}
             >
@@ -582,7 +623,22 @@
 
     <section class="main-results">
         <div class="results-header">
-            <h2>{Object.keys($recommendations).length} artists, {totalTracks} songs</h2>
+            <div class="results-title-row">
+                <h2>{Object.keys($recommendations).length} artists, {totalTracks} songs</h2>
+                <button
+                    class="mobile-controls-btn mobile-only"
+                    onclick={() => mobileControlsOpen = true}
+                    aria-expanded={mobileControlsOpen}
+                    aria-controls="results-mobile-controls"
+                >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 6h18" />
+                        <path d="M7 12h10" />
+                        <path d="M10 18h4" />
+                    </svg>
+                    Update search
+                </button>
+            </div>
             {#if $devSettings.debugMode && inputGenreProfile && inputGenreProfile.length > 0}
                 <div class="debug-input-profile">
                     <span class="debug-label">Input profile:</span>
@@ -604,7 +660,7 @@
             {/if}
             <div class="results-actions" bind:this={exportTooltipRef}>
                 <button
-                    class="btn-action"
+                    class="btn-action tour-action"
                     onclick={startTour}
                     title="Take a tour of the interface"
                 >

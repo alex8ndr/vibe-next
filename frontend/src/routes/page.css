@@ -830,7 +830,7 @@
 
 .side-search {
     position: relative;
-    z-index: 50;
+    z-index: 120;
     width: 100%;
 }
 
@@ -1140,6 +1140,19 @@
     font-size: 0.95rem;
     font-weight: 500;
     color: var(--text-2);
+}
+
+.results-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.mobile-controls-btn,
+.mobile-sheet-header,
+.mobile-sheet-backdrop {
+    display: none;
 }
 
 .results-actions {
@@ -1580,20 +1593,85 @@
 
     .results-wrap,
     .results-wrap.right-open {
+        display: block;
         grid-template-columns: 1fr;
-        overflow: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .side.left {
-        position: relative;
-        top: 0;
-        height: auto;
-        max-height: none;
+        display: none;
+        position: fixed;
+        top: auto;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: min(82dvh, 680px);
+        max-height: calc(100dvh - 3rem);
         border-right: none;
+        border-top: 1px solid var(--border);
+        border-radius: 18px 18px 0 0;
+        z-index: 320;
+        padding: 0.8rem 0.9rem max(1rem, env(safe-area-inset-bottom));
+        overflow-y: auto;
+        box-shadow: 0 -10px 30px var(--shadow);
+        animation: mobileSheetIn 0.18s ease-out;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .side.left.mobile-open {
+        display: flex;
+    }
+
+    .mobile-sheet-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 310;
+        background: rgba(0, 0, 0, 0.45);
+        border: 0;
+        padding: 0;
+    }
+
+    .mobile-sheet-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-bottom: 0.65rem;
         border-bottom: 1px solid var(--border);
-        z-index: auto;
-        padding: 0.75rem;
-        overflow: visible;
+    }
+
+    .mobile-sheet-header strong,
+    .mobile-sheet-header span {
+        display: block;
+    }
+
+    .mobile-sheet-header strong {
+        font-size: 0.9rem;
+        color: var(--text);
+    }
+
+    .mobile-sheet-header span {
+        margin-top: 0.15rem;
+        font-size: 0.7rem;
+        color: var(--text-3);
+    }
+
+    .mobile-sheet-close {
+        width: 34px;
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        background: var(--bg-alt);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--text-2);
+        font-size: 1.2rem;
+        line-height: 1;
     }
 
     /* Compact fine-tune section on mobile */
@@ -1602,12 +1680,12 @@
     }
 
     .fine-tune-artists {
-        max-height: 120px;
+        max-height: 32dvh;
         overflow-y: auto;
     }
 
     .side-songs {
-        max-height: 100px;
+        max-height: 26dvh;
     }
 
     /* Compact customize section on mobile */
@@ -1637,9 +1715,78 @@
     }
 
     .main-results {
+        overflow: visible;
         max-height: none;
-        padding-bottom: 80px;
+        padding: 0.5rem 0.65rem 88px;
     }
+
+    .results-header {
+        position: sticky;
+        top: 0;
+        z-index: 80;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 0.45rem;
+        margin: -0.5rem -0.65rem 0.65rem;
+        padding: 0.55rem 0.65rem;
+        background: color-mix(in srgb, var(--surface) 94%, transparent);
+        border-bottom: 1px solid var(--border);
+        backdrop-filter: blur(12px);
+    }
+
+    .results-title-row {
+        width: auto;
+        flex: 1;
+        justify-content: flex-start;
+    }
+
+    .results-header h2 {
+        display: none;
+    }
+
+    .mobile-controls-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        gap: 0.45rem;
+        min-height: 36px;
+        padding: 0.42rem 0.7rem;
+        background: color-mix(in srgb, var(--gold-glow) 34%, var(--surface));
+        border: 1px solid color-mix(in srgb, var(--gold) 58%, var(--border));
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .mobile-controls-btn svg {
+        width: 14px;
+        height: 14px;
+        color: var(--gold);
+        flex-shrink: 0;
+    }
+
+    .results-actions {
+        width: auto;
+        justify-content: flex-end;
+        gap: 0.35rem;
+    }
+
+    .results-actions > .tour-action {
+        display: none;
+    }
+
+    .btn-action,
+    .btn-export {
+        padding: 0.38rem 0.55rem;
+        font-size: 0.7rem;
+    }
+}
+
+@keyframes mobileSheetIn {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
 }
 
 .vibe-header {
